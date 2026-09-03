@@ -1,11 +1,11 @@
-# MCP-сервер
+# MCP server
 
-`wiki-mcp` — окремий бінарник, stdio-транспорт (JSON-RPC 2.0), спавниться MCP-клієнтом
-(Claude Desktop, Claude Code) напряму. Read-only у MVP: жодних write-інструментів.
+`wiki-mcp` is a separate binary, stdio transport (JSON-RPC 2.0), spawned directly by an
+MCP client (Claude Desktop, Claude Code). Read-only in the MVP: no write tools at all.
 
-## Підключення в Claude Desktop
+## Connecting from Claude Desktop
 
-Додай у `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`,
+Add to `claude_desktop_config.json` (macOS: `~/Library/Application Support/Claude/`,
 Linux: `~/.config/Claude/`):
 
 ```json
@@ -20,56 +20,61 @@ Linux: `~/.config/Claude/`):
 }
 ```
 
-`cwd` має вказувати на директорію, де лежить `config.toml` (той самий, яким користується
-`wiki-server`) — `wiki-mcp` шукає його відносно поточної робочої директорії, як і
-`wiki-server`. Якщо `config.toml` відсутній — падає назад на `config.example.toml`
-(дефолти).
+`cwd` must point at the directory holding `config.toml` (the same one `wiki-server`
+uses) — `wiki-mcp` looks for it relative to the current working directory, same as
+`wiki-server`. If `config.toml` is missing, it falls back to `config.example.toml`
+(defaults).
 
-**Важливо**: `wiki-mcp` НЕ рескание vault при кожному старті (на відміну від
-`wiki-server`) — повний обхід на кожен спавн MCP-клієнта суперечив би вимозі
-"стартує миттєво". Він довіряє наявному індексу. Переконайся, що `wiki-server`
-хоч раз запускався (він рескание при старті) або виконай `wiki-server --reindex`
-вручну перед першим підключенням MCP-клієнта.
+**Important**: `wiki-mcp` does NOT rescan the vault on every start (unlike
+`wiki-server`) — a full walk on every MCP client spawn would contradict the
+"starts instantly" requirement. It trusts the existing index. Make sure `wiki-server`
+has run at least once (it rescans at startup) or run `wiki-server --reindex` manually
+before the first MCP client connection.
 
-## Інструменти (read-only)
+## Tools (read-only)
 
 - **search_documents**(query: string, tags?: string[], type?: string, limit?: number) —
-  повнотекстовий пошук (FTS5, ранжування bm25), сніпет з підсвіткою збігів
-  (`**термін**`, markdown bold — не HTML, MCP-клієнт читає текст, не рендерить сторінку).
-- **get_document**(id_or_path: string) — повне тіло документа + метадані. Приймає і
-  vault-relative шлях (`notes/foo.md`), і `id` (uuid) — резолвиться через індекс.
-- **list_tags**() — усі теги з лічильниками документів.
+  full-text search (FTS5, bm25 ranking), a snippet with matches highlighted
+  (`**term**`, markdown bold — not HTML, an MCP client reads text, it doesn't render a
+  page).
+- **get_document**(id_or_path: string) — the full document body + metadata. Accepts
+  either a vault-relative path (`notes/foo.md`) or an `id` (uuid) — resolved via the
+  index.
+- **list_tags**() — every tag with its document count.
 - **list_documents**(tag?: string, type?: string, folder?: string, limit?: number,
-  offset?: number) — перегляд без пошукового запиту, з пагінацією. `folder` — префікс
-  шляху (`"notes/"` знаходить `notes/foo.md`, `notes/sub/bar.md`).
+  offset?: number) — browsing without a search query, with pagination. `folder` is a
+  path prefix (`"notes/"` matches `notes/foo.md`, `notes/sub/bar.md`).
 
-Усі чотири visibility-aware: private-документ не потрапляє в жоден результат, поки
-`[mcp].scope` у `config.toml` не `"admin"` (дефолт). `scope = "public"` обмежує MCP-клієнта
-лише публічним контентом — той самий fail-safe-private принцип, що й у HTTP-шарі, застосований
-до іншої межі довіри (локальний spawn процесу власником машини, а не анонімний веб-візит).
+All four are visibility-aware: a private document never appears in any result unless
+`[mcp].scope` in `config.toml` is `"admin"` (the default). `scope = "public"` restricts
+the MCP client to public content only — the same fail-safe-private principle as the
+HTTP layer, applied to a different trust boundary (a local process spawn by the
+machine's owner, not an anonymous web visit).
 
-## Реалізація
+## Implementation
 
-- Протокольний шар: [hkr04/cpp-mcp](https://github.com/hkr04/cpp-mcp), вендориться через
-  CMake `FetchContent`, запінений на конкретний commit (немає порту у vcpkg). Spike під
-  GCC 16.2.1/C++20 пройшов чисто з першої спроби — жодного фолбеку на ручний JSON-RPC не
-  знадобилось (порівняно з планом, де він був заявлений як запасний варіант).
-- `src/mcp/McpServer.cpp` — реєстрація 4 tools + обгортка над `index::FtsSearch`,
-  `index::NavQueries`, `index::IndexUpdater::findPathByUuid`, `vault::DocumentService::get` —
-  усе це вже існує в `libwikicore` з M2/M3, MCP-шар лише перекладає результати в `mcp::json`.
-- `mcp::json` = `nlohmann::ordered_json`, вендорений окремою копією всередині cpp-mcp
-  (`common/json.hpp`) — НЕ той самий `nlohmann_json`, що з vcpkg для решти проєкту.
-  `McpServer.cpp` свідомо ніколи не включає обидва в одній єдиній точці компіляції
-  (ризик ODR при двох копіях того самого хедера).
+- Protocol layer: [hkr04/cpp-mcp](https://github.com/hkr04/cpp-mcp), vendored via CMake
+  `FetchContent`, pinned to a specific commit (no vcpkg port exists). The spike against
+  GCC 16.2.1/C++20 compiled clean on the first try — no fallback to a hand-rolled
+  JSON-RPC was needed (compared to the plan, where it was listed as a backup option).
+- `src/mcp/McpServer.cpp` — registers the 4 tools + wraps `index::FtsSearch`,
+  `index::NavQueries`, `index::IndexUpdater::findPathByUuid`,
+  `vault::DocumentService::get` — all of this already exists in `libwikicore` from
+  M2/M3, the MCP layer only translates results into `mcp::json`.
+- `mcp::json` = `nlohmann::ordered_json`, vendored as a separate copy inside cpp-mcp
+  (`common/json.hpp`) — NOT the same `nlohmann_json` the rest of the project gets from
+  vcpkg. `McpServer.cpp` deliberately never includes both in the same single
+  compilation unit (ODR risk with two copies of the same header).
 
-## Верифікація
+## Verification
 
-Живого Claude Desktop у середовищі розробки нема (headless sandbox, без GUI) — тому
-E2E-перевірка це скриптований JSON-RPC клієнт (`/tmp/mcp_e2e_test.py` під час розробки,
-не в репо), що жене справжні MCP-повідомлення (`initialize` → `notifications/initialized`
-→ `tools/list` → `tools/call` ×N) у реальний `wiki-mcp` процес через stdin/stdout і
-звіряє відповіді. Прогнано двічі проти одного й того ж індексу — з `scope=admin` і
-`scope=public` — 17/17 перевірок в обох режимах: усі 4 tools зареєстровані, пошук з
-підсвіткою, `get_document` і по шляху, і по uuid, path traversal і "не знайдено" коректно
-дають `isError:true` замість протокольного краху, а головне — visibility-gating реально
-перемикається разом зі scope, а не просто "виглядає підключеним".
+No live Claude Desktop exists in the dev environment (a headless sandbox, no GUI) — so
+E2E verification is a scripted JSON-RPC client (`/tmp/mcp_e2e_test.py` during
+development, not in the repo) that drives real MCP messages (`initialize` →
+`notifications/initialized` → `tools/list` → `tools/call` ×N) into a real `wiki-mcp`
+process over stdin/stdout and checks the responses. Run twice against the same index —
+with `scope=admin` and `scope=public` — 17/17 checks passing in both modes: all 4 tools
+register, search with highlighting works, `get_document` works by both path and uuid,
+path traversal and "not found" correctly produce `isError:true` instead of a protocol
+crash, and, most importantly, visibility gating actually flips along with scope, not
+just "looks connected".

@@ -1,41 +1,41 @@
-# Розгортання
+# Deployment
 
-## Статус перевірки на реальному залізі
+## Real-hardware verification status
 
-**Чесно, без прикрас**: повна нативна збірка (`cmake --build` з нуля, не крос-компіляція)
-перевірена лише на x86_64 Linux (Arch) — `cmake --install`, запуск встановленого дерева,
-повний security/E2E-прохід (`ctest`), живий VaultWatcher. **Нативної збірки на самому
-Raspberry Pi (компіляція просто на пристрої, як описано нижче в "Збірка") ще не
-виконано** — у середовищі розробки немає часу ганяти багатогодинний білд Drogon+OpenSSL
-на слабкому SBC щоразу.
+**Honestly, no sugar-coating**: a full native build (`cmake --build` from scratch, not
+cross-compilation) has been verified on x86_64 Linux (Arch) only — `cmake --install`,
+running the installed tree, a full security/E2E pass (`ctest`), a live VaultWatcher.
+**A native build on the Raspberry Pi itself (compiling right on the device, as
+described below under "Build") has not been done yet** — the dev environment has no
+time to run an hours-long Drogon+OpenSSL build on a weak SBC every time.
 
-Натомість **крос-компільовані бінарники реально розгорнуто й перевірено на живому
-цільовому залізі** — armv7l, Debian 9 (stretch, EOL, glibc 2.24) — через
-`arm-linux-musleabihf`+musl+static (див. "Крос-компіляція" нижче): `wiki-server` і
-`wiki-mcp` запущені НАТИВНО (не під емуляцією) на реальному пристрої, `unit_tests`
-пройшов під `qemu-arm-static` (112 assertions, 52 test cases), повний цикл
-login → CSRF → створення документа → атомарний запис на диск → FTS5-пошук з
-підсвіткою snippet — перевірено живим HTTP-трафіком проти реального systemd-юніту
-(`ProtectSystem=strict` та інше хардненинг з розділу нижче включно), поруч із живими
-nginx/Samba/NFS/ProFTPD/mosquitto/munin, без жодного впливу на них. Код не містить
-нічого свідомо x86-специфічного, і зараз це емпірично підтверджено, а не лише
-"має працювати за конструкцією".
+Instead, **cross-compiled binaries HAVE actually been deployed to and verified on a
+live target device** — armv7l, Debian 9 (stretch, EOL, glibc 2.24) — via
+`arm-linux-musleabihf`+musl+static (see "Cross-compilation" below): `wiki-server` and
+`wiki-mcp` running NATIVELY (not emulated) on the real device, `unit_tests` passing
+under `qemu-arm-static` (112 assertions, 52 test cases), the full
+login → CSRF → document creation → atomic disk write → FTS5 search with snippet
+highlighting cycle verified with live HTTP traffic against a real systemd unit
+(`ProtectSystem=strict` and the rest of the hardening below included), alongside live
+nginx/Samba/NFS/ProFTPD/mosquitto/munin, with zero impact on any of them. The code
+contains nothing deliberately x86-specific, and this is now empirically confirmed, not
+just "should work by construction".
 
-## Передумови (на цільовому пристрої — Raspberry Pi чи інший Linux/ARM64/x86_64 SBC)
+## Prerequisites (on the target device — Raspberry Pi or another Linux/ARM64/x86_64 SBC)
 
-- GCC з підтримкою C++20 (перевірено на GCC 16.2.1; C++20 у GCC доступний з версії 10,
-  але чим свіжіший — тим менше сюрпризів)
+- A C++20-capable GCC (verified on GCC 16.2.1; GCC has had C++20 since version 10, but
+  newer means fewer surprises)
 - CMake ≥ 3.21, Ninja
 - git, curl
-- Python 3 (для `ctest`-інтеграційного security-прогону; не потрібен у рантаймі)
-- ядро Linux з увімкненим inotify (стандартно на будь-якому сучасному дистрибутиві)
+- Python 3 (for the `ctest` integration security run; not needed at runtime)
+- A Linux kernel with inotify enabled (standard on any modern distro)
 
-## Збірка (нативна, на самому пристрої)
+## Build (native, on the device itself)
 
 ```sh
 git clone <repo-url> wiki && cd wiki
 
-# vcpkg — не вендориться, клонується окремо (див. CLAUDE.md)
+# vcpkg is not vendored, cloned separately (see CLAUDE.md)
 git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
@@ -44,38 +44,38 @@ cmake -S . -B build -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build -j"$(nproc)"
 
-# security/E2E-прохід перед тим, як довіряти збірці (auth, CSRF, path
-# traversal, session fixation, visibility gating, VaultWatcher — див.
+# security/E2E pass before trusting the build (auth, CSRF, path
+# traversal, session fixation, visibility gating, VaultWatcher — see
 # tests/integration/security_e2e.py)
 ctest --test-dir build --output-on-failure
 ```
 
-На слабкому SBC це може зайняти суттєво довше, ніж на десктопі (Drogon+OpenSSL+trantor
-з нуля — не швидко); це одноразова вартість.
+On a weak SBC this can take substantially longer than on a desktop
+(Drogon+OpenSSL+trantor from scratch isn't fast); it's a one-time cost.
 
-## Встановлення
+## Install
 
 ```sh
 sudo cmake --install build --prefix /opt/wiki
 ```
 
-Кладе `bin/wiki-server`, `bin/wiki-mcp`, `static/`, `config.example.toml` та
-`share/wiki/systemd/{wiki.service,wiki.env.example}` під `/opt/wiki`. **Не** створює
-робочий `config.toml` — тільки приклад (свідомо: реальний конфіг ніколи не має
-матеріалізуватись мовчки з дефолтів).
+Places `bin/wiki-server`, `bin/wiki-mcp`, `static/`, `config.example.toml`, and
+`share/wiki/systemd/{wiki.service,wiki.env.example}` under `/opt/wiki`. Does **not**
+create a working `config.toml` — only the example (deliberately: a real config should
+never silently materialize from defaults).
 
-## Перше налаштування
+## First-time setup
 
 ```sh
-# виділений непривілейований користувач/група — юніт-файл очікує саме їх
+# a dedicated unprivileged user/group — the unit file expects exactly these
 sudo useradd --system --home-dir /opt/wiki --shell /usr/sbin/nologin wiki
 sudo chown -R wiki:wiki /opt/wiki
 
 cd /opt/wiki
 sudo -u wiki cp config.example.toml config.toml
-# відредагуй за потреби: [server].port, [vault].path, [mcp].scope
+# edit as needed: [server].port, [server].base_path, [vault].path, [mcp].scope
 
-# створити admin-акаунт (пароль вводиться інтерактивно, echo вимкнено)
+# create the admin account (password entered interactively, echo disabled)
 sudo -u wiki ./bin/wiki-server --create-admin
 ```
 
@@ -88,52 +88,53 @@ sudo systemctl enable --now wiki.service
 sudo systemctl status wiki.service
 ```
 
-Юніт вже налаштований з хардненням (`ProtectSystem=strict`, `NoNewPrivileges=yes`,
-`ReadWritePaths=/opt/wiki/vault_data` — єдине місце, куди сервіс реально пише).
-`EnvironmentFile=-/etc/wiki/wiki.env` опціональний — на зараз жодна змінна оточення
-застосунком не читається (адмін-креденшли живуть у SQLite, сесії — випадкові токени
-без підпису секретом); файл лишається як задокументований гачок під майбутнє
-(наприклад, bearer-токен для remote MCP-транспорту у Фазі 2).
+The unit already ships with hardening (`ProtectSystem=strict`, `NoNewPrivileges=yes`,
+`ReadWritePaths=/opt/wiki/vault_data` — the only place the service actually writes).
+`EnvironmentFile=-/etc/wiki/wiki.env` is optional — right now no environment variable
+is read by the app at all (admin credentials live in SQLite, sessions are random
+tokens with no secret-based signature); the file stays as a documented hook for the
+future (e.g. a bearer token for a remote MCP transport in Phase 2).
 
-## TLS / публічний доступ в інтернет
+## TLS / public internet access
 
-`wiki-server` сам TLS не термінує. Для доступу поза локальною мережею — реверс-проксі
-(nginx/Caddy/traefik) перед ним, що займається TLS і проксує на `127.0.0.1:8080`
-(чи що вказано в `config.toml`). Без цього кроку — тримати `listen_addr = "127.0.0.1"`
-і не відкривати порт назовні напряму.
+`wiki-server` doesn't terminate TLS itself. For access outside the local network, put a
+reverse proxy (nginx/Caddy/traefik) in front of it to handle TLS and proxy to
+`127.0.0.1:8080` (or whatever `config.toml` specifies). Without that step, keep
+`listen_addr = "127.0.0.1"` and don't expose the port directly.
 
-## Бекап
+## Backup
 
-Джерело правди — `[vault].path` (директорія з `.md`-файлами та `.trash/`). SQLite-індекс
-(`[index].db_path`) повністю одноразовий і перебудовується `wiki-server --reindex` —
-бекапити не обов'язково, але й не завадить (швидше при відновленні, ніж повний рескан
-з нуля на дуже великому vault). Мінімум: регулярний бекап `[vault].path`.
+The source of truth is `[vault].path` (the directory of `.md` files plus `.trash/`).
+The SQLite index (`[index].db_path`) is fully disposable and gets rebuilt by
+`wiki-server --reindex` — backing it up isn't required, but doesn't hurt either
+(faster to restore than a full rescan from scratch on a very large vault). Minimum:
+back up `[vault].path` regularly.
 
-## Оновлення
+## Update
 
 ```sh
 cd wiki && git pull
 cmake --build build -j"$(nproc)"
-ctest --test-dir build --output-on-failure   # перш ніж рестартити прод
+ctest --test-dir build --output-on-failure   # before restarting prod
 sudo cmake --install build --prefix /opt/wiki
 sudo systemctl restart wiki.service
 ```
 
-## Крос-компіляція (armv7, musl, static) — для старого/слабкого таргета
+## Cross-compilation (armv7, musl, static) — for an old/weak target
 
-Коли нативна збірка на самому пристрої непрактична (старий дистрибутив без сучасного
-компілятора, або просто шкода часу на багатогодинний білд Drogon+OpenSSL на слабкому
-SBC) — крос-компіляція з x86_64 dev-машини через [zig](https://ziglang.org/)
-(`zig cc`/`zig c++`) як самодостатній C/C++ крос-компілятор з вбудованим musl libc +
-libc++, повністю статичне лінкування (`-static`). Чому musl+static, а не glibc
-крос-тулчейн: старий таргет (наприклад, Debian 9 stretch, glibc 2.24 з 2016 року)
-зламався б на рантаймі (`GLIBC_2.XX not found`) проти будь-якого сучасного glibc
-крос-тулчейну; статичний musl-бінарник узагалі не чіпає glibc таргета.
+When a native build on the device itself is impractical (an old distro with no modern
+compiler, or just not worth an hours-long Drogon+OpenSSL build on a weak SBC) —
+cross-compile from an x86_64 dev machine via [zig](https://ziglang.org/)
+(`zig cc`/`zig c++`) as a self-contained C/C++ cross-compiler with a bundled musl libc +
+libc++, fully static linking (`-static`). Why musl+static rather than a glibc
+cross-toolchain: an old target (e.g. Debian 9 stretch, glibc 2.24 from 2016) would
+break at runtime (`GLIBC_2.XX not found`) against any modern glibc cross-toolchain; a
+fully static musl binary doesn't touch the target's glibc at all.
 
 ```sh
-# 1. крос-збірка залежностей через vcpkg (classic mode — drogon[ctl] не
-#    підтримує cross-таргет, тому ctl-фіча пропускається; вже зібраний
-#    x64-linux drogon_ctl передається окремо нижче)
+# 1. cross-build the dependencies via vcpkg (classic mode — drogon[ctl]
+#    isn't supported on a cross target, so the ctl feature is skipped; an
+#    already-built x64-linux drogon_ctl is passed in separately below)
 cd vcpkg
 ./vcpkg install --classic --triplet arm-musl \
   --overlay-triplets=../cross/arm-musl --overlay-ports=../cross/overlay-ports \
@@ -142,7 +143,7 @@ cd vcpkg
   tomlplusplus catch2
 cd ..
 
-# 2. конфіг+білд проєкту проти крос-встановленого префікса
+# 2. configure+build the project against the cross-installed prefix
 export PKG_CONFIG_LIBDIR="$PWD/vcpkg_installed_arm/arm-musl/lib/pkgconfig:$PWD/vcpkg_installed_arm/arm-musl/share/pkgconfig"
 export PKG_CONFIG_SYSROOT_DIR=""
 cmake -S . -B build-arm -G Ninja \
@@ -153,52 +154,53 @@ cmake -S . -B build-arm -G Ninja \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build-arm -j"$(nproc)"
 
-# 3. верифікація ПЕРЕД перенесенням на реальне залізо — під qemu-user-mode
-qemu-arm-static ./build-arm/tests/unit_tests   # має пройти всі кейси, не лише не впасти
-qemu-arm-static ./build-arm/wiki-server --create-admin   # smoke: реальний бінарник, не тільки "скомпілювалось"
+# 3. verify BEFORE shipping to real hardware — under qemu user-mode
+qemu-arm-static ./build-arm/tests/unit_tests   # must pass every case, not just not-crash
+qemu-arm-static ./build-arm/wiki-server --create-admin   # smoke test: a real binary, not just "it compiled"
 ```
 
-**Відомий баг zig 0.16.0**: лінк багатьох статичних `.a`-архівів для
-`arm-linux-musleabihf` SIGSEGV-ить (`code=139`) у вбудованому lld — але не через
-кількість архівів чи паралелізм (обидві гіпотези перевірено й відкинуто), а через
-конкретний прапорець: CMake (Ninja-генератор, ≥3.20) автоматично додає
-`-Xlinker --dependency-file=...` для трекінгу залежностей на рівні лінкера, і саме
-цей прапорець валить lld для цього таргета детерміновано, 100% випадків. Фікс —
-`set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)` у `cross/arm-musl/toolchain.cmake`
-(CMake сам падає назад на не-лінкерне трекання залежностей). Два menші оверлей-порти
-(`cross/overlay-ports/{brotli,libuuid}`) вимикають побудову їхніх CLI/test-бінарників
-з тієї самої причини (лінк маленького виконуваного файлу проти одного `.a` теж падав).
+**Known zig 0.16.0 bug**: linking many static `.a` archives for
+`arm-linux-musleabihf` SIGSEGVs (`code=139`) in the bundled lld — but not because of
+archive count or parallelism (both hypotheses were tested and ruled out), but because
+of a specific flag: CMake (Ninja generator, ≥3.20) automatically adds
+`-Xlinker --dependency-file=...` for linker-level dependency tracking, and that exact
+flag crashes lld for this target deterministically, 100% of the time. Fix:
+`set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)` in `cross/arm-musl/toolchain.cmake` (CMake
+falls back to non-linker-based dependency tracking on its own). Two smaller overlay
+ports (`cross/overlay-ports/{brotli,libuuid}`) disable building their CLI/test
+binaries for the same reason (linking a small executable against a single `.a` also
+crashed).
 
-**Reverse-proxy nginx впритул до вже живого nginx на таргеті**: `wiki-server`
-навмисно слухає лише `127.0.0.1:8080` (див. `config.toml`), TLS сам не термінує —
-додавання окремого `server{}`-блоку в існуючий nginx (новий піддомен або `location`)
-лишається за адміністратором вручну, воно НЕ чіпає жодну наявну конфігурацію nginx
-автоматично.
+**nginx reverse proxy right next to an nginx that's already live on the target**:
+`wiki-server` deliberately listens only on `127.0.0.1:8080` (see `config.toml`), it
+doesn't terminate TLS itself — adding a dedicated `server{}` block to the existing
+nginx (a new subdomain or a `location`) is left to the administrator by hand, it does
+NOT touch any existing nginx configuration automatically.
 
-## Reverse-proxy під підшляхом (наприклад `/wiki`)
+## Reverse-proxying under a subpath (e.g. `/wiki`)
 
-Коли застосунок мають розкрити не на окремому (під)домені, а під шляхом на вже
-існуючому сайті (`https://example.com/wiki/`) — застосунок сам генерує КОЖЕН
-`href`/`action`/`hx-get`/redirect Location/збережений шлях у своєму JS як абсолютний
-шлях від кореня (`/login`, `/d/...`, `/css/...`). Без якоїсь домовленості з проксі
-про префікс це виглядало б чисто на самій `/wiki/`-сторінці, але зламало б усе, що
-на неї посилається (CSS/JS 404, форма логіну постить на `/login` замість
-`/wiki/login`, і так далі).
+When the app needs to be exposed not on its own (sub)domain but under a path on an
+already-existing site (`https://example.com/wiki/`) — the app itself generates EVERY
+`href`/`action`/`hx-get`/redirect Location/saved path in its own JS as an absolute path
+rooted at "/" (`/login`, `/d/...`, `/css/...`). Without some agreement with the proxy
+about the prefix, this would look clean on the `/wiki/` page itself but break
+everything that page links to (CSS/JS 404s, the login form posting to `/login` instead
+of `/wiki/login`, and so on).
 
-**Правильне рішення — `[server].base_path` в `config.toml`**, не хаки на боці nginx:
+**The correct fix is `[server].base_path` in `config.toml`**, not hacks on the nginx
+side:
 
 ```toml
 [server]
 base_path = "/wiki"
 ```
 
-Коли встановлено, застосунок сам вшиває префікс у КОЖЕН `href`/`action`/`hx-*`/
-redirect/JS-шлях, який генерує (сторінки логіну/перегляду/редагування/пошуку,
-`edit.js`, CSP-шаблони `EditPage`/`SearchPage`) — маршрути всередині лишаються
-незмінними (`/login`, `/d/{path}`, ...), оскільки проксі знімає префікс ще ДО
-переадресації запиту всередину. Це означає, що nginx-сторона — звичайний
-prefix-stripping `proxy_pass`, без жодного переписування тіла відповіді чи
-заголовків:
+Once set, the app itself bakes the prefix into EVERY `href`/`action`/`hx-*`/redirect/JS
+path it generates (login/view/edit/search pages, `edit.js`, the `EditPage`/`SearchPage`
+CSP templates) — the routes themselves stay unchanged (`/login`, `/d/{path}`, ...),
+because the proxy strips the prefix BEFORE forwarding the request inward. That means
+the nginx side is a plain prefix-stripping `proxy_pass`, with no response-body or
+header rewriting at all:
 
 ```nginx
 location = /wiki {
@@ -214,8 +216,8 @@ location /wiki/ {
 }
 ```
 
-Ніякого `sub_filter`, ніякого `proxy_redirect`, ніякого `Accept-Encoding ""`-хака —
-усе це були потрібні милиці ДО того, як `base_path` зʼявився в самому застосунку
-(історично перший робочий варіант деплою на це залізо якраз через них і пройшов;
-`base_path` — прибирає потребу в них повністю й раз назавжди, а не латає симптом
-на проксі щоразу заново).
+No `sub_filter`, no `proxy_redirect`, no `Accept-Encoding ""` hack — all of those were
+necessary crutches BEFORE `base_path` existed in the app itself (the first working
+version of this exact deployment actually went live through them); `base_path` removes
+the need for them completely and permanently, rather than patching the symptom on the
+proxy side over and over.

@@ -1,280 +1,264 @@
-# Архітектура
+# Architecture
 
-Повний план розробки: `/home/slayer/.claude/plans/zazzy-twirling-sundae.md`. Цей файл —
-короткий довідник по прийнятих рішеннях і результатах M0-спайків, щоб не гортати план
-щоразу.
+Full development plan: `/home/slayer/.claude/plans/zazzy-twirling-sundae.md`. This file is
+a short reference for the decisions actually made and the M0-spike results, so the plan
+doesn't need re-reading every time.
 
-## Прийняті рішення (не переглядати без явного запиту користувача)
+## Decisions made (do not revisit without an explicit user request)
 
-- **Storage**: Markdown-файли на диску = джерело правди. SQLite — лише вторинний
-  індекс (FTS5 + метадані), повністю відновлюваний повним рескануванням vault.
-- **MCP**: сервіс сам є MCP-сервером (stdio), не клієнтом. Read/search only у MVP.
-- **Auth**: один адмін, argon2id, SQLite-сесії. `visibility: public|private` у
-  front-matter, за замовчуванням `private` (fail-safe).
-- **Frontend**: Drogon CSP views + htmx, Toast UI Editor точково на сторінці
-  редагування. Без SPA build-пайплайна в рантаймі.
-- **Деплой**: голий бінарник + systemd. arm64 crosscompile — Фаза 1.5/2; MVP
-  збирається нативно на цільовому Raspberry Pi.
+- **Storage**: markdown files on disk = source of truth. SQLite is only a secondary
+  index (FTS5 + metadata), fully rebuildable via a full vault rescan.
+- **MCP**: the service itself is an MCP server (stdio), not a client. Read/search only
+  in the MVP.
+- **Auth**: a single admin, argon2id, SQLite-backed sessions. `visibility: public|private`
+  in front-matter, defaults to `private` (fail-safe).
+- **Frontend**: Drogon CSP views + htmx, Toast UI Editor scoped to the edit page only.
+  No SPA build pipeline at runtime.
+- **Deployment**: a bare binary + systemd. arm64 cross-compile — Phase 1.5/2; the MVP
+  builds natively on the target Raspberry Pi.
 
-## M0 — результати спайків
+## M0 — spike results
 
-- **FTS5**: підтверджено доступний (системний `sqlite3` CLI, `CREATE VIRTUAL TABLE
-  ... USING fts5(...)` компілюється й працює). У vcpkg-порту `sqlite3` явно
-  запитана фіча `fts5` (`vcpkg.json`) — вона не default-feature, без цього її б не
-  було в зібраній бібліотеці.
-- **Markdown-рендер**: обрано **md4c** замість `cmark-gfm`. Обидва порти є у vcpkg;
-  md4c — чистий C, легший, GFM-розширення (tables/strikethrough/tasklists)
-  вмикаються прапорцями парсера напряму, без окремого GFM-форку бібліотеки.
-- **Front-matter YAML**: обрано **yaml-cpp**, не рукописний парсер. Front-matter
-  редагується користувачем напряму в текстовому редакторі (поза Web UI, синхронізується
-  через `VaultWatcher`) — довільне квотування/списки/дати мають парситись коректно;
-  "Norway problem" (`no`/`yes`/`on`/`off` як булеві) та інші YAML-пастки краще
-  делегувати перевіреній бібліотеці, ніж перевинаходити.
-- **Package manager**: vcpkg, manifest mode, `builtin-baseline` запінений на конкретний
-  commit vcpkg (див. `vcpkg.json`) для відтворюваності збірки на іншій машині/RPi.
-  vcpkg **не вендориться в git** (`vcpkg/` у `.gitignore`) — клонується bootstrap-кроком.
+- **FTS5**: confirmed available (the system `sqlite3` CLI compiles and runs
+  `CREATE VIRTUAL TABLE ... USING fts5(...)`). The vcpkg `sqlite3` port has the `fts5`
+  feature explicitly requested (`vcpkg.json`) — it's not a default feature, without this
+  it wouldn't be in the built library.
+- **Markdown rendering**: chose **md4c** over `cmark-gfm`. Both ports exist in vcpkg;
+  md4c is plain C, lighter, and GFM extensions (tables/strikethrough/tasklists) are
+  enabled directly via parser flags, with no separate GFM fork of the library needed.
+- **Front-matter YAML**: chose **yaml-cpp**, not a hand-rolled parser. Front-matter gets
+  edited by the user directly in a text editor (outside the Web UI, synced back via
+  `VaultWatcher`) — arbitrary quoting/lists/dates need to parse correctly; the
+  "Norway problem" (`no`/`yes`/`on`/`off` as booleans) and other YAML pitfalls are
+  better delegated to a battle-tested library than reinvented.
+- **Package manager**: vcpkg, manifest mode, `builtin-baseline` pinned to a specific
+  vcpkg commit (see `vcpkg.json`) for reproducible builds on another machine/RPi.
+  vcpkg is **not vendored in git** (`vcpkg/` is in `.gitignore`) — it's cloned via a
+  bootstrap step.
 
-## M1 — auth, PathGuard-backed read, результати
+## M1 — auth, PathGuard-backed read: results
 
-- **auth/ і controllers/ — НЕ частина libwikicore.** vault/index/config/util
-  лишаються в wikicore (потрібні і wiki-server, і майбутньому wiki-mcp);
-  auth/ (sessions, argon2, CSRF, Drogon-фільтри) і controllers/ — суто
-  веб-турбота, лінкуються тільки в wiki-server. MCP-інструменти read-only
-  й не потребують сесій.
-- **Drogon HttpFilter — пастка з іменем.** `registerHandler(..., {Get,
-  "AuthFilter"})` шукає фільтр у `DrClassMap` за **повним кваліфікованим,
-  демангленим** іменем типу (`__cxa_demangle(typeid(T).name())`), тобто
-  `"wikicore::auth::AuthFilter"`, а не голим `"AuthFilter"` — інакше падає
-  мовчки в рантаймі з `middleware X not found` (лог, не крах процесу, тож
-  легко пропустити). Другий нюанс: `DrObject<T>::alloc_` — static-член
-  шаблону, компілятор інстанціює (а отже й реєструє клас) лише якщо його
-  реально ODR-юзнути; жоден фільтр ніде більше не конструюється й не
-  згадується напряму, тож без явного форс-виклику `AuthFilter::
-  classTypeName()`/`CsrfFilter::classTypeName()` у `main()` реєстратор
-  ніколи не збирається лінкером. Обидва нюанси задокументовано прямо в
-  коді (`main.cpp`, коментар перед реєстрацією роутів) — не приберати
-  той виклик, він не "мертвий код".
-- **CSRF-токен: двокукі доставка.** Синхронізатор-токен зберігається
-  server-side в `sessions.csrf_token`; клієнту він доставляється окремим
-  НЕ-HttpOnly cookie (`wiki_csrf_token`), виставленим паралельно з
-  сесійним при логіні. `CsrfFilter` звіряє заголовок/форм-поле з
-  server-side значенням, cookie — лише канал доставки, не джерело правди.
-- **Fail-safe-private підтверджено тестами й E2E**: відсутній/зламаний
-  YAML front-matter, відсутнє поле `visibility`, будь-яке значення крім
-  рівно `"public"` — усе колапсує в `private`. Приватний документ
-  анонімному запиту повертає `404`, не `403` (не розкривати існування).
-- **`--create-admin` CLI**: пише/перезаписує єдиний admin-рядок
-  (`users`, `id=1` enforced CHECK), пароль вводиться з вимкненим echo
-  термінала (termios), не логується.
+- **auth/ and controllers/ are NOT part of libwikicore.** vault/index/config/util stay
+  in wikicore (needed by both wiki-server and the future wiki-mcp); auth/
+  (sessions, argon2, CSRF, Drogon filters) and controllers/ are purely a web concern,
+  linked only into wiki-server. MCP tools are read-only and don't need sessions.
+- **Drogon HttpFilter — a naming trap.** `registerHandler(..., {Get, "AuthFilter"})`
+  looks the filter up in `DrClassMap` by its **fully-qualified, demangled** type name
+  (`__cxa_demangle(typeid(T).name())`), i.e. `"wikicore::auth::AuthFilter"`, not the
+  bare `"AuthFilter"` — get it wrong and it fails silently at runtime with
+  `middleware X not found` (a log line, not a crash, so it's easy to miss). Second
+  gotcha: `DrObject<T>::alloc_` is a static member of a class template — the compiler
+  only instantiates it (and thus registers the class) if it's actually ODR-used; no
+  filter is ever constructed or referenced directly anywhere else, so without an
+  explicit forced call to `AuthFilter::classTypeName()`/`CsrfFilter::classTypeName()`
+  in `main()`, the registrar never gets linked in at all. Both gotchas are documented
+  right in the code (`main.cpp`, the comment right before route registration) — don't
+  remove that call, it's not "dead code".
+- **CSRF token: two-cookie delivery.** The synchronizer token is stored server-side in
+  `sessions.csrf_token`; it reaches the client via a separate, NOT-HttpOnly cookie
+  (`wiki_csrf_token`), set alongside the session cookie at login. `CsrfFilter` checks
+  the header/form field against the server-side value — the cookie is only the delivery
+  channel, never the source of truth.
+- **Fail-safe-private confirmed by tests and E2E**: missing/broken YAML front-matter, a
+  missing `visibility` field, any value other than exactly `"public"` — all of it
+  collapses to `private`. A private document returns `404` to an anonymous request, not
+  `403` (don't reveal existence).
+- **`--create-admin` CLI**: writes/overwrites the single admin row (`users`, `id=1`
+  enforced via a CHECK constraint), password entered with terminal echo disabled
+  (termios), never logged.
 
-## M2 — CRUD, WYSIWYG, CSP views: результати
+## M2 — CRUD, WYSIWYG, CSP views: results
 
-- **Drogon CSP `[[key]]` НЕ екранує HTML.** Перевірено прямо у згенерованому
-  коді (`drogon_ctl create view`): `[[key]]` компілюється буквально в
-  `stream << *any_cast<std::string>(&viewData["key"])` — жодного
-  екранування. Кожне недовірене значення (title, tags, будь-що з
-  документа) МАЄ пройти через `util::escapeHtml` ще ДО `HttpViewData::
-  insert`. Другий нюанс: `[[key]]` — це фіксований lookup по ключу
-  в даних вʼю, а НЕ посилання на C++-змінну з `for`-циклу всередині
-  code-блоку з тим самим іменем; для виводу значення, обчисленого в
-  циклі/умові, треба писати напряму в потік виводу всередині code-блоку,
-  не через `[[key]]`. Третій: `[[key]]` рендерить лише значення, вставлені
-  як `std::string`/`const char*` — інший тип мовчки дає порожній вивід.
-- **CSP-tag парсер не має escape-механізму.** Якщо коментар усередині
-  `.csp`-файлу згадує сам синтаксис тегів (`<%c++`/`%>`/`[[`/`]]`) у
-  прозі, парсер сприймає це за реальний тег і ламає файл навпіл —
-  зловлено на власному House Rules коментарі в `EditPage.csp` (уламки
-  коментаря полізли просто у HTML-вивід сторінки). Висновок: детальні
-  пояснення синтаксису CSP тримати поза `.csp`-файлами (тут, в
-  CMakeLists.txt), а всередині `.csp` — лише короткий покажчик.
-- **`newHttpViewResponse("EditPage", ...)` — та сама DrClassMap-пастка**,
-  що й у HttpFilter: `DrTemplate<T>` теж успадковує `DrObject<T>`, тому
-  реєстрація вимагає (а) `EditPage::classTypeName()` десь ODR-юзнутого
-  (форс-виклик у `main.cpp`) і (б) імені без C++-namespace — .csp-файли
-  тут генеруються без `-n`/path-to-namespace прапорця саме тому, щоб рядок
-  `"EditPage"` збігався з тим, під чим клас реально зареєстрований.
-- **`documentRoot` = `static/`, НІКОЛИ не корінь репо** — інакше через
-  статичний файловий сервер Drogon стає доступним `config.toml`, вихідники
-  і все інше під git-коренем. URL-и статики без префікса `/static`
-  (напр. `/js/edit.js`), бо `documentRoot` вже вказує прямо на `static/`.
-- **Toast UI Editor вендориться і КОМІТИТЬСЯ** (`static/js/toastui-editor/`,
-  з `SHA256SUMS`+`VENDORED.md` для провенансу) — на відміну від
-  `vcpkg/`, це не перебудовується щоразу; чекаут має збиратись і йти в
-  деплой без мережі за межами vcpkg.
-- **Атомарний запис документа**: temp-файл (`<name>.tmp-<uuid>`) в тій же
-  директорії + `rename()` (атомарний у межах однієї файлової системи).
-  Soft-delete: `rename()` документа й, якщо є, його `<stem>.assets/`
-  папки в `.trash/<той самий відносний шлях>` — окремо, з поверненням
-  помилки, якщо переїхав документ, а assets-папка ні (не намагається
-  відкатити сам документ назад).
-- **Attachments**: allowlist розширень (не blocklist), sanitize імені
-  файлу (`[A-Za-z0-9._-]`, інше → `_`), ліміт 25 MiB, де-дуп через
-  короткий UUID-суфікс при колізії імені. `GET /assets/{path...}`
-  визначає видимість через ВЛАСНИКА-документ (`<stem>.assets/` →
-  `<stem>.md`), не через окремий прапорець на самому файлі.
+- **Drogon CSP `[[key]]` does NOT escape HTML.** Verified directly in the generated
+  code (`drogon_ctl create view`): `[[key]]` compiles literally to
+  `stream << *any_cast<std::string>(&viewData["key"])` — no escaping whatsoever. Every
+  untrusted value (title, tags, anything from a document) MUST go through
+  `util::escapeHtml` before `HttpViewData::insert`. Second gotcha: `[[key]]` is a
+  fixed key lookup into the view's data, NOT a reference to a C++ variable of the same
+  name from a `for` loop inside a code block; to output a value computed in a loop/
+  condition, write straight to the output stream inside the code block instead of
+  `[[key]]`. Third: `[[key]]` only renders values inserted as `std::string`/
+  `const char*` — any other type silently produces empty output.
+- **The CSP tag parser has no escape mechanism.** If a comment inside a `.csp` file
+  mentions the tag syntax itself (`<%c++`/`%>`/`[[`/`]]`) in prose, the parser treats it
+  as a real tag and breaks the file in half — caught on my own House Rules comment in
+  `EditPage.csp` (fragments of the comment leaked straight into the page's HTML
+  output). Takeaway: keep detailed explanations of CSP syntax out of `.csp` files
+  (here, or in CMakeLists.txt) — inside a `.csp` file, only a short pointer.
+- **`newHttpViewResponse("EditPage", ...)` hits the same DrClassMap trap** as
+  HttpFilter: `DrTemplate<T>` also inherits `DrObject<T>`, so registration requires
+  (a) `EditPage::classTypeName()` being ODR-used somewhere (a forced call in
+  `main.cpp`) and (b) a name with no C++ namespace — `.csp` files are generated here
+  without the `-n`/path-to-namespace flag specifically so the string `"EditPage"`
+  matches whatever the class is actually registered under.
+- **`documentRoot` = `static/`, NEVER the repo root** — otherwise Drogon's static file
+  server would expose `config.toml`, source, and everything else under the git root
+  over HTTP. Static URLs carry no `/static` prefix (e.g. `/js/edit.js`), because
+  `documentRoot` already points straight at `static/`.
+- **Toast UI Editor is vendored and COMMITTED** (`static/js/toastui-editor/`, with
+  `SHA256SUMS`+`VENDORED.md` for provenance) — unlike `vcpkg/`, this isn't rebuilt every
+  time; a checkout needs to build and deploy with no network access beyond vcpkg.
+- **Atomic document write**: a temp file (`<name>.tmp-<uuid>`) in the same directory +
+  `rename()` (atomic within one filesystem). Soft-delete: `rename()` the document and,
+  if present, its `<stem>.assets/` folder into `.trash/<same relative path>` —
+  separately, returning an error if the document moved but the assets folder didn't
+  (doesn't try to roll the document itself back).
+- **Attachments**: an extension allowlist (not a blocklist), filename sanitization
+  (`[A-Za-z0-9._-]`, everything else → `_`), a 25 MiB cap, de-duped via a short UUID
+  suffix on a name collision. `GET /assets/{path...}` resolves visibility through the
+  OWNING document (`<stem>.assets/` → `<stem>.md`), not via a separate flag on the file
+  itself.
 
-## M2 постмортем: непідтверджена автентифікація на mutating-роутах
+## M2 postmortem: unauthenticated mutating routes
 
-Знайдено власним E2E-скриптом, до комміту, не після: `POST /api/documents`
-без жодної сесії повернув **201 Created** — документ реально створився.
-Причина: `AuthFilter` лише пише `kAttrUserId` в атрибути запиту (не
-блокує нічого), а `CsrfFilter` СВІДОМО пропускає запит без сесії (немає
-чого звіряти) і лишає перевірку авторизації на сам хендлер — саме так,
-як задокументовано в `CsrfFilter.h`. Для `GET /d/`/`GET /edit/` я цю
-перевірку написав, а для create/update/delete/upload — просто забув,
-хоча коментар у власному ж коді прямо попереджав. Фікс:
-`requireAdminApi()` — явний виклик першим рядком у КОЖНОМУ mutating-
-хендлері в `DocumentRoutes.cpp`. Урок: наявність `AuthFilter`/`CsrfFilter`
-у списку `{Post, "...AuthFilter", "...CsrfFilter"}` — це НЕ гарантія
-захисту роута, обидва фільтри в цій архітектурі свідомо не блокують,
-тільки анотують/звіряють токен. Перевіряти читанням коду кожного нового
-mutating-хендлера, не покладатись на "фільтр же підключений".
+Found by my own E2E script, before the commit, not after: `POST /api/documents` with no
+session at all returned **201 Created** — the document was genuinely created. Root
+cause: `AuthFilter` only writes `kAttrUserId` into request attributes (blocks nothing),
+and `CsrfFilter` DELIBERATELY passes a request with no session straight through
+(nothing to check against), leaving the authorization check to the handler itself —
+exactly as documented in `CsrfFilter.h`. For `GET /d/`/`GET /edit/` I did write that
+check; for create/update/delete/upload I simply forgot, even though a comment in my own
+code explicitly warned about it. Fix: `requireAdminApi()` — an explicit call as the
+first line in EVERY mutating handler in `DocumentRoutes.cpp`. Lesson: `AuthFilter`/
+`CsrfFilter` being listed in `{Post, "...AuthFilter", "...CsrfFilter"}` is NOT proof the
+route is protected — both filters in this architecture deliberately don't block,
+they only annotate/check a token. Verify by reading the code of every new mutating
+handler, don't rely on "the filter's already attached".
 
-## M3 — FTS5 search + навігація: результати
+## M3 — FTS5 search + navigation: results
 
-- **FTS5 `snippet()` — та сама небезпека, що й CSP `[[key]]`, дзеркально.**
-  `snippet()` бере сирий текст із `documents_fts` (нефільтрований markdown
-  документа) і вставляє власні маркери навколо збігів. Якщо вставити
-  буквальні `<mark>`/`</mark>` як маркери — екранувати результат після
-  цього не можна (зламає теги); не екранувати — контент документа стає
-  вектором XSS. Фікс: маркери — контрольні байти `\x01`/`\x02`, передані
-  як bind-параметри `snippet(documents_fts, 1, ?, ?, '...', 12)`, а не
-  літерали в SQL-тексті; на рендері — спершу `escapeHtml()` усього
-  сніпета, і лише ПОТІМ заміна `\x01`→`<mark>`, `\x02`→`</mark>`.
-  Порядок операцій тут — увесь сенс захисту.
-- **Рескан — безумовний при кожному старті** (`IndexBuilder::fullRescan()`
-  у `main.cpp`, до реєстрації роутів), не лише за запитом. БД — одноразовий
-  кеш, якому не довіряють на слово: якщо файл додали/змінили напряму на
-  диску (зовнішній редактор, `git pull`), стартовий рескан підхоплює це
-  без ручного втручання. Перевірено E2E: файл, покладений напряму у vault
-  поза застосунком, недоступний у пошуку до рескану — і зникає з індексу
-  (stale sweep) одразу після видалення файлу напряму + повторного рескану.
-- **Nav/tag-запити visibility-aware так само суворо, як усе інше**:
-  приватний документ не додає НІ шляху в дереві, НІ навіть +1 до лічильника
-  тега для анонімного запиту — перевірено E2E (тег з тільки приватними
-  документами дає різний count для admin і anon).
-- **htmx теж вендориться й комітиться** (`static/js/htmx/`, той самий
-  `tools/build-editor-bundle/fetch.sh`, тепер вендорить обидва бандли).
+- **FTS5 `snippet()` has the same hazard as CSP `[[key]]`, mirrored.** `snippet()`
+  pulls raw text straight from `documents_fts` (unfiltered document markdown) and
+  inserts its own markers around matches. Insert literal `<mark>`/`</mark>` as the
+  markers and you can't escape the result afterward (breaks the tags); don't escape it
+  and the document's own content becomes an XSS vector. Fix: the markers are control
+  bytes `\x01`/`\x02`, passed as bind parameters to
+  `snippet(documents_fts, 1, ?, ?, '...', 12)`, never literals in the SQL text; at
+  render time, `escapeHtml()` the whole snippet FIRST, and only THEN swap
+  `\x01`→`<mark>`, `\x02`→`</mark>`. The order of operations here is the entire point
+  of the protection.
+- **The rescan is unconditional on every startup** (`IndexBuilder::fullRescan()` in
+  `main.cpp`, before route registration), not just on request. The DB is a disposable
+  cache never trusted on faith: if a file was added/changed directly on disk (external
+  editor, `git pull`), the startup rescan picks it up with no manual step. Verified
+  E2E: a file dropped straight into the vault outside the app is unsearchable until a
+  rescan — and disappears from the index (stale sweep) right after the file is deleted
+  directly plus another rescan.
+- **Nav/tag queries are visibility-aware just as strictly as everything else**: a
+  private document contributes NEITHER a path to the tree NOR even +1 to a tag's
+  count for an anonymous request — verified E2E (a tag used only by private documents
+  gives a different count for admin vs. anon).
+- **htmx is also vendored and committed** (`static/js/htmx/`, the same
+  `tools/build-editor-bundle/fetch.sh` now vendors both bundles).
 
-## M4 — MCP-сервер: результати
+## M4 — MCP server: results
 
-- **Spike hkr04/cpp-mcp — успішний з першої спроби.** Клонував, зібрав
-  ізольовано (`cmake --build --target mcp`) під точний GCC 16.2.1/C++20
-  цього середовища — компілюється чисто, жодного фолбеку на ручний
-  JSON-RPC не знадобилось (він був у плані як запасний варіант). Бібліотека
-  тягне `mcp_sse_client.cpp`/`httplib.h` в один нероздільний пакет разом
-  зі stdio-частиною (нема CMake-прапорця відділити тільки stdio) — без
-  `MCP_SSL` це не тягне OpenSSL, прийнятно.
-- **`FetchContent`, не vcpkg**: порту для cpp-mcp немає. Запінено на
-  конкретний commit. Її власний CMakeLists.txt збирає `examples/`
-  безумовно (нема прапорця вимкнути) — прийнято як кілька зайвих секунд
-  білда, а не боротьба з чужою build-системою заради економії часу.
-  `mcp`-таргет виставляє include-шляхи через **directory-scoped**
-  `include_directories()`, не `target_include_directories()` — тому вони
-  НЕ прокидаються автоматично на `wiki-mcp`; довелось додати вручну
+- **The hkr04/cpp-mcp spike succeeded on the first try.** Cloned, built in isolation
+  (`cmake --build --target mcp`) against this environment's exact GCC 16.2.1/C++20 —
+  compiles clean, no fallback to a hand-rolled JSON-RPC was needed (it was in the plan
+  as a backup option). The library pulls `mcp_sse_client.cpp`/`httplib.h` into one
+  inseparable package together with the stdio part (no CMake flag to split out just
+  stdio) — without `MCP_SSL` this doesn't pull in OpenSSL, acceptable.
+- **`FetchContent`, not vcpkg**: no port exists for cpp-mcp. Pinned to a specific
+  commit. Its own CMakeLists.txt builds `examples/` unconditionally (no flag to turn
+  it off) — accepted as a few extra seconds of build time rather than fighting someone
+  else's build system to save time. The `mcp` target exposes include paths via
+  **directory-scoped** `include_directories()`, not `target_include_directories()` —
+  so they do NOT propagate to `wiki-mcp` automatically; had to add them manually
   (`${cpp_mcp_SOURCE_DIR}/include`, `.../common`).
-- **`mcp::json` — ОКРЕМА копія nlohmann::json** (вендорена всередині
-  cpp-mcp як `common/json.hpp`, аліас на `nlohmann::ordered_json`), не та
-  сама бібліотека, що з vcpkg для решти проєкту. `McpServer.cpp` свідомо
-  ніколи не включає vcpkg-шний `<nlohmann/json.hpp>` — тільки `mcp::json`
-  скрізь, щоб не ризикувати ODR-конфліктом двох копій того самого хедера
-  в одній точці компіляції.
-- **JSON-RPC "notification" все одно друкує рядок відповіді** (`{}`) у
-  цій бібліотеці, попри що `notifications/initialized` не має `id` і за
-  специфікацією відповіді не потребує. Клієнт має фільтрувати вхідні
-  рядки за очікуваним `id`, а не наївно читати "наступний рядок" —
-  зловлено власним E2E-скриптом (`tools/list` спершу повертав порожній
-  масив, бо тест з'їдав не той рядок).
-- **MCP-visibility — та сама fail-safe-private дисципліна, продубльована
-  на рівні tool-хендлера**, а не тільки через `includePrivate`, що
-  протікає з конфігу: `get_document` перевіряє `visibility` знайденого
-  документа НАВІТЬ якщо `id_or_path` зрезолвився успішно — той самий клас
-  бага, що й M2 (пропущена перевірка на рівні хендлера), тут спіймано
-  заздалегідь, а не постфактум.
-- **`wiki-mcp` НЕ рескание vault при старті** (на відміну від
-  `wiki-server`) — MCP-клієнт може спавнити процес часто, повний обхід
-  щоразу суперечив би вимозі "стартує миттєво". Довіряє наявному індексу;
-  `wiki-server --reindex` — окремий, явний крок.
-- **Верифіковано скриптованим JSON-RPC клієнтом, не живим Claude
-  Desktop** (headless середовище розробки, без GUI) — 17/17 перевірок у
-  двох прогонах (`scope=admin` і `scope=public`) проти одного й того ж
-  індексу, включно з реальним перемиканням видимості приватного
-  документа залежно від scope. Деталі та приклад
+- **`mcp::json` is a SEPARATE copy of nlohmann::json** (vendored inside cpp-mcp as
+  `common/json.hpp`, an alias for `nlohmann::ordered_json`), not the same library the
+  rest of the project gets from vcpkg. `McpServer.cpp` deliberately never includes the
+  vcpkg `<nlohmann/json.hpp>` — only `mcp::json` everywhere, to avoid risking an ODR
+  conflict between two copies of the same header in one compilation unit.
+- **A JSON-RPC "notification" still prints a response line** (`{}`) in this library,
+  even though `notifications/initialized` has no `id` and, per spec, needs no response.
+  A client has to filter incoming lines by the expected `id`, not naively read "the
+  next line" — caught by my own E2E script (`tools/list` initially returned an empty
+  array because the test consumed the wrong line).
+- **MCP visibility gets the same fail-safe-private discipline, duplicated at the
+  tool-handler level**, not just through `includePrivate` leaking from config:
+  `get_document` checks the resolved document's own `visibility` EVEN IF
+  `id_or_path` resolved successfully — the same class of bug as M2 (a check skipped
+  at the handler level), caught here ahead of time instead of after the fact.
+- **`wiki-mcp` does NOT rescan the vault at startup** (unlike `wiki-server`) — an MCP
+  client may spawn the process often, a full walk on every spawn would contradict the
+  "starts instantly" requirement. It trusts the existing index; `wiki-server --reindex`
+  is a separate, explicit step.
+- **Verified with a scripted JSON-RPC client, not a live Claude Desktop** (a headless
+  dev environment, no GUI) — 17/17 checks across two runs (`scope=admin` and
+  `scope=public`) against the same index, including a private document's visibility
+  actually flipping depending on scope. Details and a sample
   `claude_desktop_config.json` — `docs/mcp.md`.
 
-## M5 — hardening & deployment: результати
+## M5 — hardening & deployment: results
 
-- **Реальний race condition у `VaultWatcher::start()`, зловлений власним
-  тестом, не теорією.** `start()` спавнить потік і одразу повертається;
-  фактична реєстрація `inotify_add_watch()` на корені відбувається
-  асинхронно всередині нового потоку. Тест "файл у щойно створеній
-  піддиректорії" падав стабільно 3/3 рази — зміна на диску, зроблена в
-  вузькому вікні між `start()` і завершенням початкового обходу дерева,
-  губилась НАЗАВЖДИ (ядро не чергує подію для watch, якого ще не існує).
-  Той самий клас вікна існував і в `main.cpp` між `vaultWatcher.start()`
-  і `drogon::app().run()`. Фікс: `start()` тепер блокується на
-  `std::promise`/`std::future`, поки початковий рекурсивний обхід не
-  завершиться — гарантія "зміна одразу після start() буде побачена"
-  тепер частина контракту, не випадковість таймінгу.
-- **`VaultWatcher` отримує ОКРЕМЕ sqlite3-з'єднання**, не те, яким
-  користуються Drogon-потоки. `IndexUpdater::upsertOne`/`removeOne`
-  обгортають `BEGIN IMMEDIATE...COMMIT`; два потоки, що намагаються
-  почати транзакцію на ОДНОМУ й тому ж `sqlite3*`-хендлі одночасно, —
-  це "cannot start a transaction within a transaction", не безпечна
-  серіалізація. WAL-режим (уже увімкнений у `Database::Database`) якраз
-  для цього: окремі З'ЄДНАННЯ до одного файлу координуються на рівні
-  файлу коректно, на відміну від одного З'ЄДНАННЯ, яке ділять кілька
-  необізнаних один про одного викликачів.
-- **`wiki.env.example`/`EnvironmentFile` у systemd-юніті — застарілий
-  артефакт з M0**, виявлений при звірці з реальним кодом: жодна змінна
-  оточення ніде фактично не читається (admin-креденшли — в SQLite,
-  сесії — випадкові токени без підпису секретом). Без провідного `-`
-  перед `EnvironmentFile=` systemd відмовився б стартувати юніт, якщо
-  файл відсутній — заради файлу, який застосунку не потрібен. Виправлено:
-  `EnvironmentFile=-/etc/wiki/wiki.env` (опціональний), файл лишається
-  задокументованим гачком під майбутній реальний секрет (Фаза 2, remote
-  MCP bearer-токен), а не мовчазною обіцянкою, якої код не виконує.
-- **`tests/integration/security_e2e.py` — закриває прогалину, яку я сам
-  документував чотири мілстоуни поспіль.** Консолідований, закомічений,
-  підключений через `ctest` (не одноразовий bash у терміналі) прохід:
-  анонімні записи на всі mutating-роути, CSRF, path traversal, **session
-  fixation** (атакерський cookie-токен підставлений ДО логіну — сервер
-  видає новий токен після автентифікації, старий ніколи не приймається
-  як авторизований), visibility-gating одночасно на `/d/`, `/api/search`,
-  `/api/nav/tree`, `/api/nav/tags`, `/assets/`, rate limiting, і живий
-  `VaultWatcher` (файл на диску напряму → зʼявляється в пошуку без
-  `--reindex`, зникає при видаленні). 32/32 у зеленому прогоні.
-- **`cmake --install` перевірено живцем**: реальний install tree
-  (`--prefix /tmp/...`), реальний запуск встановленого бінарника з
-  `config.toml`, скопійованим з прикладу, `/healthz` і статика (htmx з
-  `static/js/htmx/`) обидва відповіли `200`.
-- **Raspberry Pi — НЕ перевірено**: середовище розробки без фізичного
-  ARM-заліза. Див. `docs/deployment.md`, розділ "Статус перевірки на
-  реальному залізі" — чесно позначено як залишковий крок, не приховано
-  за "має працювати".
+- **A real race condition in `VaultWatcher::start()`, caught by its own test, not by
+  theory.** `start()` spawns a thread and returns immediately; the actual
+  `inotify_add_watch()` registration on the root happens asynchronously inside the new
+  thread. The "file in a just-created subdirectory" test failed reliably 3/3 times — a
+  disk change made in the narrow window between `start()` and the initial tree walk
+  finishing was lost FOREVER (the kernel can't queue an event for a watch that doesn't
+  exist yet). The same class of window also existed in `main.cpp` between
+  `vaultWatcher.start()` and `drogon::app().run()`. Fix: `start()` now blocks on a
+  `std::promise`/`std::future` until the initial recursive walk finishes — "a change
+  right after `start()` returns will be seen" is now part of the contract, not a
+  timing accident.
+- **`VaultWatcher` gets its OWN sqlite3 connection**, not the one Drogon's request
+  threads share. `IndexUpdater::upsertOne`/`removeOne` wrap
+  `BEGIN IMMEDIATE...COMMIT`; two threads trying to start a transaction on the SAME
+  `sqlite3*` handle at the same time is "cannot start a transaction within a
+  transaction", not safe serialization. WAL mode (already enabled in
+  `Database::Database`) exists exactly for this: separate CONNECTIONS to the same file
+  coordinate correctly at the file level, unlike one CONNECTION shared by several
+  callers unaware of each other.
+- **`wiki.env.example`/`EnvironmentFile` in the systemd unit — a stale artifact from
+  M0**, caught while cross-checking against the actual code: no environment variable is
+  actually read anywhere (admin credentials live in SQLite, sessions are random tokens
+  with no secret-based signature). Without a leading `-` in front of
+  `EnvironmentFile=`, systemd would refuse to start the unit if the file is missing —
+  over a file the app doesn't need. Fixed:
+  `EnvironmentFile=-/etc/wiki/wiki.env` (optional), the file stays as a documented hook
+  for a future real secret (Phase 2, a remote MCP bearer token), not a silent promise
+  the code doesn't keep.
+- **`tests/integration/security_e2e.py` closes a gap I'd documented myself, four
+  milestones running.** A consolidated, committed pass, wired through `ctest` (not a
+  one-off bash session in a terminal): anonymous writes against every mutating route,
+  CSRF, path traversal, **session fixation** (an attacker-chosen cookie token set
+  BEFORE login — the server issues a fresh token after authentication, the old one is
+  never accepted as authorized), visibility gating checked simultaneously across
+  `/d/`, `/api/search`, `/api/nav/tree`, `/api/nav/tags`, `/assets/`, rate limiting, and
+  a live `VaultWatcher` check (a file written directly to disk → becomes searchable
+  with no `--reindex`, disappears on delete). 32/32 in a green run.
+- **`cmake --install` verified live**: a real install tree (`--prefix /tmp/...`), a
+  real run of the installed binary with `config.toml` copied from the example,
+  `/healthz` and a static asset (htmx from `static/js/htmx/`) both returned `200`.
+- **Raspberry Pi — NOT verified**: the dev environment has no physical ARM hardware.
+  See `docs/deployment.md`, the "Real-hardware verification status" section — honestly
+  flagged as a remaining step, not hidden behind "should work".
 
-## Двобінарна структура
+## Two-binary layout
 
-`libwikicore` (vault + index + MCP tool logic) — без залежності від Drogon/OpenSSL.
-Лінкується в обидва виконувані файли:
+`libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
+Linked into both executables:
 
-- `wiki-server` — HTTP (Drogon), контролери, CSP views.
-- `wiki-mcp` — stdio MCP entrypoint, спавниться Claude Desktop/Code напряму, без
-  накладних витрат HTTP-стеку.
+- `wiki-server` — HTTP (Drogon), controllers, CSP views.
+- `wiki-mcp` — stdio MCP entrypoint, spawned directly by Claude Desktop/Code, no HTTP
+  stack overhead.
 
 ## Build
 
 ```sh
-# перший раз: клонувати й забутстрапити vcpkg (не в git)
+# one-time: clone + bootstrap vcpkg (not in git)
 git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-# configure + build (сам встановить залежності з vcpkg.json)
+# configure + build (installs deps from vcpkg.json automatically)
 cmake -S . -B build -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build -j"$(nproc)"
 
-# запуск
-./build/wiki-server        # слухає 127.0.0.1:8080, GET /healthz
+# run
+./build/wiki-server        # listens on 127.0.0.1:8080, GET /healthz
 ```
