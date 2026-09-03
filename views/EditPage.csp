@@ -29,6 +29,7 @@
   <div class="sidebar-section"><h3>Documents</h3><div id="nav-tree"></div></div>
 </nav>
 <main class="content">
+[[breadcrumbHtml]]
 <form id="doc-form" autocomplete="off">
   <div class="field-row">
     <label>Path <input type="text" id="f-path" required></label>

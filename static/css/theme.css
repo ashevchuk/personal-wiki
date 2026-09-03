@@ -102,8 +102,44 @@ h3 {
 .sidebar-section li {
   margin: 0.15rem 0;
 }
-.nav-folder {
+.nav-folder-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
   color: var(--fg-dim);
+  font: inherit;
+  text-shadow: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.nav-folder-btn:hover {
+  background: none;
+  color: var(--fg);
+}
+.nav-arrow {
+  display: inline-block;
+  width: 0.9em;
+}
+.nav-children.collapsed {
+  display: none;
+}
+
+.breadcrumbs {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+}
+.breadcrumbs a {
+  color: var(--fg-dim);
+}
+.breadcrumbs a:hover {
+  color: var(--fg);
+}
+.breadcrumbs .crumb-current {
+  color: var(--fg-bright);
 }
 
 .content {

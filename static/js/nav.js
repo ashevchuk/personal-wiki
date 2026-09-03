@@ -41,14 +41,30 @@
       node.docs.push(d);
     });
 
-    function render(node, parent) {
+    // Folders are purely a client-side grouping of the flat path list —
+    // there's no folder entity anywhere in the data model (see
+    // NavQueries), so a folder button here has nowhere to navigate TO
+    // (no "browse this folder" route exists); it only expands/collapses
+    // its own children in place. Expanded by default.
+    function render(node, targetEl) {
       var ul = el("ul");
       Object.keys(node.children)
         .sort()
         .forEach(function (name) {
           var li = el("li");
-          li.appendChild(el("span", { class: "nav-folder", text: name + "/" }));
-          render(node.children[name], li);
+          var childUl = el("ul", { class: "nav-children" });
+          var arrow = el("span", { class: "nav-arrow", text: "▾" });
+          var label = el("span", { class: "nav-folder-label", text: name + "/" });
+          var btn = el("button", { type: "button", class: "nav-folder-btn" });
+          btn.appendChild(arrow);
+          btn.appendChild(label);
+          btn.addEventListener("click", function () {
+            var collapsed = childUl.classList.toggle("collapsed");
+            arrow.textContent = collapsed ? "▸" : "▾";
+          });
+          li.appendChild(btn);
+          render(node.children[name], childUl);
+          li.appendChild(childUl);
           ul.appendChild(li);
         });
       node.docs
@@ -66,7 +82,7 @@
           li.appendChild(a);
           ul.appendChild(li);
         });
-      parent.appendChild(ul);
+      targetEl.appendChild(ul);
     }
     render(root, container);
   }

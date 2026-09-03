@@ -17,6 +17,8 @@
 
 #include <filesystem>
 #include <optional>
+#include <sstream>
+#include <vector>
 
 using namespace drogon;
 using namespace wikicore::auth;
@@ -48,6 +50,31 @@ HttpResponsePtr jsonOk(const std::string& path) {
   return HttpResponse::newHttpJsonResponse(body);
 }
 
+// "Home / notes / sub / foo.md" — folder segments are plain text, not
+// links: there's no "browse this folder" route to link them to (folders
+// aren't a real entity anywhere in the data model, see NavQueries), only
+// the sidebar's client-side grouping in nav.js. Only "Home" and the
+// current document's own segments exist as concepts here; the trailing
+// segment (the document itself) is styled, not linked — it's the current
+// page.
+std::string renderBreadcrumbs(const std::string& basePath, const std::string& docPath) {
+  std::string html =
+      "<nav class=\"breadcrumbs\"><a href=\"" + util::withBasePath(basePath, "/") + "\">Home</a>";
+  std::istringstream stream(docPath);
+  std::string segment;
+  std::vector<std::string> segments;
+  while (std::getline(stream, segment, '/')) {
+    if (!segment.empty()) segments.push_back(segment);
+  }
+  for (size_t i = 0; i < segments.size(); ++i) {
+    const bool isLast = (i + 1 == segments.size());
+    html += " / <span class=\"" + std::string(isLast ? "crumb-current" : "crumb") + "\">" +
+            util::escapeHtml(segments[i]) + "</span>";
+  }
+  html += "</nav>";
+  return html;
+}
+
 // Renders a document view. When `authenticated`, adds an Edit link and a
 // logout form (its hidden csrf field comes straight from what AuthFilter
 // already put in req->attributes() — see kAttrCsrfToken).
@@ -69,8 +96,8 @@ HttpResponsePtr renderDocument(const std::string& basePath, const std::string& d
         "\"><button type=\"submit\">Log out</button></form></p>";
   }
 
-  const std::string pageBody =
-      chrome + "<h1>" + escapedTitle + "</h1>" + util::renderMarkdownToHtml(body);
+  const std::string pageBody = renderBreadcrumbs(basePath, docPath) + chrome + "<h1>" +
+                                escapedTitle + "</h1>" + util::renderMarkdownToHtml(body);
 
   auto resp = HttpResponse::newHttpResponse();
   resp->setContentTypeCode(CT_TEXT_HTML);
@@ -211,6 +238,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         // HttpViewData::insert here does: never make an exception "because
         // this one's trusted".
         data.insert("basePath", util::escapeHtml(basePath));
+        data.insert("breadcrumbHtml", renderBreadcrumbs(basePath, docPath));
         callback(HttpResponse::newHttpViewResponse("EditPage", data));
       },
       {Get, "wikicore::auth::AuthFilter"});
