@@ -160,6 +160,42 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
       },
       {Get, "wikicore::auth::AuthFilter"});
 
+  // --- GET /api/documents/{path...}/raw — literal file bytes -------------
+  // Same read/visibility-gating as /d/{path...} above, minus the HTML
+  // render — the exact front-matter + body as stored on disk, for
+  // anything that wants the source rather than a rendered page (was in
+  // the original plan's route sketch as GET /api/documents/{id}/raw;
+  // built here keyed by path like every other /api/documents/* route,
+  // not a separate id-based lookup).
+  app.registerHandlerViaRegex(
+      "^/api/documents/(.*)/raw$",
+      [&vault](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback,
+               const std::string& docPath) {
+        std::string raw;
+        try {
+          raw = vault.readRaw(docPath);
+        } catch (const PathTraversalError&) {
+          callback(notFound());
+          return;
+        } catch (const std::filesystem::filesystem_error&) {
+          callback(notFound());
+          return;
+        }
+
+        const ParsedDocument parsed = parseFrontMatter(raw);
+        if (parsed.frontMatter.visibility != "public" && !isAuthenticated(req)) {
+          callback(notFound());
+          return;
+        }
+
+        auto resp = HttpResponse::newHttpResponse();
+        resp->setContentTypeCode(CT_TEXT_PLAIN);
+        resp->setBody(raw);
+        callback(resp);
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
   // --- GET /edit/{path...} — WYSIWYG edit page, admin-only ---------------
   app.registerHandlerViaRegex(
       "^/edit/(.*)$",
