@@ -1,6 +1,7 @@
 #include "controllers/SearchRoutes.h"
 
 #include "auth/RequireAdmin.h"
+#include "util/BasePath.h"
 #include "util/HtmlEscape.h"
 
 #include <drogon/HttpResponse.h>
@@ -36,13 +37,15 @@ std::string renderSnippet(const SearchResultItem& item) {
   return out;
 }
 
-std::string renderResultsHtml(const std::vector<SearchResultItem>& results) {
+std::string renderResultsHtml(const std::string& basePath,
+                               const std::vector<SearchResultItem>& results) {
   if (results.empty()) {
     return "<p class=\"empty\">No documents found.</p>";
   }
   std::string html = "<ul class=\"results\">";
   for (const auto& item : results) {
-    html += "<li><a href=\"/d/" + util::escapeHtml(item.path) + "\">" +
+    html += "<li><a href=\"" + util::withBasePath(basePath, "/d/") +
+            util::escapeHtml(item.path) + "\">" +
             util::escapeHtml(item.title.empty() ? item.path : item.title) +
             "</a>";
     if (item.visibility != "public") html += " <em>(private)</em>";
@@ -72,28 +75,33 @@ SearchQuery buildQuery(const HttpRequestPtr& req, bool includePrivate) {
 
 }  // namespace
 
-void registerSearchRoutes(HttpAppFramework& app, FtsSearch& search) {
+void registerSearchRoutes(HttpAppFramework& app, FtsSearch& search,
+                           const std::string& basePath) {
   app.registerHandler(
       "/search",
-      [&search](const HttpRequestPtr& req,
+      [&search, basePath](const HttpRequestPtr& req,
                 std::function<void(const HttpResponsePtr&)>&& callback) {
         const auto results = search.search(buildQuery(req, isAuthenticated(req)));
 
         HttpViewData data;
-        data.insert("resultsHtml", renderResultsHtml(results));
+        data.insert("resultsHtml", renderResultsHtml(basePath, results));
+        // [[key]] does NOT escape (see docs/architecture.md) — same
+        // "always pre-escape, no trusted-source exception" discipline as
+        // DocumentRoutes.cpp's EditPage basePath insert.
+        data.insert("basePath", util::escapeHtml(basePath));
         callback(HttpResponse::newHttpViewResponse("SearchPage", data));
       },
       {Get, "wikicore::auth::AuthFilter"});
 
   app.registerHandler(
       "/api/search",
-      [&search](const HttpRequestPtr& req,
+      [&search, basePath](const HttpRequestPtr& req,
                 std::function<void(const HttpResponsePtr&)>&& callback) {
         const auto results = search.search(buildQuery(req, isAuthenticated(req)));
 
         auto resp = HttpResponse::newHttpResponse();
         resp->setContentTypeCode(CT_TEXT_HTML);
-        resp->setBody(renderResultsHtml(results));
+        resp->setBody(renderResultsHtml(basePath, results));
         callback(resp);
       },
       {Get, "wikicore::auth::AuthFilter"});

@@ -10,6 +10,17 @@ struct AppConfig {
   std::string listenAddr = "127.0.0.1";
   uint16_t port = 8080;
   size_t threads = 2;
+  // Mount-point prefix for reverse-proxying this app under a subpath
+  // (e.g. "/wiki") instead of a whole (sub)domain. Empty by default — the
+  // app then behaves exactly as before, every route/link/redirect at
+  // domain root. Normalized by util::normalizeBasePath (see AppConfig::load)
+  // so callers never need to think about trailing slashes. See
+  // docs/deployment.md's reverse-proxy section for the nginx recipe this
+  // enables: a PLAIN prefix-stripping proxy_pass, no sub_filter/
+  // proxy_redirect body/header rewriting needed on the proxy side, because
+  // every href/action/hx-*/redirect this app emits already carries the
+  // prefix when it's set.
+  std::string basePath;
 
   // [vault]
   std::string vaultPath = "./vault_data";

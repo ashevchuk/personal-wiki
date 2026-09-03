@@ -26,6 +26,12 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     const data = JSON.parse(document.getElementById("doc-data").textContent);
+    // Mirrors [server].base_path (see AppConfig::basePath / BasePath.h) —
+    // every path this file builds itself (save target, post-save redirect)
+    // needs the same prefix the server-rendered chrome already carries, or
+    // they'd point at the wrong place when this app is reverse-proxied
+    // under a subpath.
+    const basePath = data.basePath || "";
 
     const pathInput = document.getElementById("f-path");
     const titleInput = document.getElementById("f-title");
@@ -70,7 +76,9 @@
       };
 
       const isNew = data.isNew;
-      const url = isNew ? "/api/documents" : "/api/documents/" + encodeVaultPath(path);
+      const url = isNew
+        ? basePath + "/api/documents"
+        : basePath + "/api/documents/" + encodeVaultPath(path);
       if (isNew) payload.path = path;
 
       fetch(url, {
@@ -89,7 +97,7 @@
             });
           }
           setStatus("Saved.", "ok");
-          window.location.href = "/d/" + encodeVaultPath(path);
+          window.location.href = basePath + "/d/" + encodeVaultPath(path);
         })
         .catch(function (err) {
           setStatus("Save failed: " + err.message, "error");

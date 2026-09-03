@@ -6,6 +6,7 @@
 #include "auth/PasswordHasher.h"
 #include "auth/RateLimiter.h"
 #include "auth/SessionStore.h"
+#include "util/BasePath.h"
 #include "util/HtmlEscape.h"
 
 #include <drogon/HttpResponse.h>
@@ -19,7 +20,8 @@ namespace wikicore::controllers {
 
 namespace {
 
-std::string renderLoginPage(std::optional<std::string> errorMessage) {
+std::string renderLoginPage(const std::string& basePath,
+                             std::optional<std::string> errorMessage) {
   std::string errorHtml;
   if (errorMessage) {
     errorHtml = "<p style=\"color:#b00020\">" +
@@ -30,7 +32,7 @@ std::string renderLoginPage(std::optional<std::string> errorMessage) {
       "<title>Sign in — wiki</title></head><body>"
       "<h1>Sign in</h1>" +
       errorHtml +
-      "<form method=\"post\" action=\"/login\">"
+      "<form method=\"post\" action=\"" + util::withBasePath(basePath, "/login") + "\">"
       "<p><label>Username <input type=\"text\" name=\"username\" "
       "autocomplete=\"username\" required></label></p>"
       "<p><label>Password <input type=\"password\" name=\"password\" "
@@ -71,30 +73,31 @@ Cookie makeCsrfCookie(const std::string& csrfToken, bool secure, int maxAgeSecon
 
 }  // namespace
 
-void registerAuthRoutes(HttpAppFramework& app) {
+void registerAuthRoutes(HttpAppFramework& app, const std::string& basePath) {
   app.registerHandler(
       "/login",
-      [](const HttpRequestPtr& req,
-         std::function<void(const HttpResponsePtr&)>&& callback) {
+      [basePath](const HttpRequestPtr& req,
+                 std::function<void(const HttpResponsePtr&)>&& callback) {
         const std::string& existing = req->getCookie(kSessionCookieName);
         if (!existing.empty() &&
             AuthServices::sessions().validate(existing)) {
-          callback(HttpResponse::newRedirectionResponse("/"));
+          callback(HttpResponse::newRedirectionResponse(
+              util::withBasePath(basePath, "/")));
           return;
         }
-        callback(htmlResponse(renderLoginPage(std::nullopt)));
+        callback(htmlResponse(renderLoginPage(basePath, std::nullopt)));
       },
       {Get});
 
   app.registerHandler(
       "/login",
-      [](const HttpRequestPtr& req,
-         std::function<void(const HttpResponsePtr&)>&& callback) {
+      [basePath](const HttpRequestPtr& req,
+                 std::function<void(const HttpResponsePtr&)>&& callback) {
         const std::string ip = req->getPeerAddr().toIp();
 
         if (!AuthServices::rateLimiter().allow(ip)) {
           callback(htmlResponse(
-              renderLoginPage("Too many attempts. Try again shortly."),
+              renderLoginPage(basePath, "Too many attempts. Try again shortly."),
               k429TooManyRequests));
           return;
         }
@@ -108,8 +111,9 @@ void registerAuthRoutes(HttpAppFramework& app) {
 
         if (!ok) {
           AuthServices::rateLimiter().recordFailure(ip);
-          callback(htmlResponse(renderLoginPage("Invalid username or password."),
-                                 k401Unauthorized));
+          callback(htmlResponse(
+              renderLoginPage(basePath, "Invalid username or password."),
+              k401Unauthorized));
           return;
         }
 
@@ -118,7 +122,8 @@ void registerAuthRoutes(HttpAppFramework& app) {
             admin->id, std::string(req->getHeader("User-Agent")), ip);
 
         constexpr int kMaxAgeSeconds = 60 * 60 * 24 * 14;
-        auto resp = HttpResponse::newRedirectionResponse("/");
+        auto resp = HttpResponse::newRedirectionResponse(
+            util::withBasePath(basePath, "/"));
         resp->addCookie(makeSessionCookie(session.rawToken,
                                            req->isOnSecureConnection(),
                                            kMaxAgeSeconds));
@@ -131,13 +136,14 @@ void registerAuthRoutes(HttpAppFramework& app) {
 
   app.registerHandler(
       "/logout",
-      [](const HttpRequestPtr& req,
-         std::function<void(const HttpResponsePtr&)>&& callback) {
+      [basePath](const HttpRequestPtr& req,
+                 std::function<void(const HttpResponsePtr&)>&& callback) {
         const std::string& token = req->getCookie(kSessionCookieName);
         if (!token.empty()) {
           AuthServices::sessions().destroy(token);
         }
-        auto resp = HttpResponse::newRedirectionResponse("/");
+        auto resp = HttpResponse::newRedirectionResponse(
+            util::withBasePath(basePath, "/"));
         resp->removeCookie(kSessionCookieName);
         resp->removeCookie(kCsrfCookieName);
         callback(resp);

@@ -2,6 +2,7 @@
 
 #include "auth/AuthContext.h"
 #include "auth/RequireAdmin.h"
+#include "util/BasePath.h"
 #include "util/HtmlEscape.h"
 #include "util/MarkdownRenderer.h"
 #include "vault/FrontMatter.h"
@@ -49,17 +50,19 @@ HttpResponsePtr jsonOk(const std::string& path) {
 // Renders a document view. When `authenticated`, adds an Edit link and a
 // logout form (its hidden csrf field comes straight from what AuthFilter
 // already put in req->attributes() — see kAttrCsrfToken).
-HttpResponsePtr renderDocument(const std::string& docPath, const FrontMatter& fm,
-                                const std::string& body, bool authenticated,
-                                const std::string& csrfToken) {
+HttpResponsePtr renderDocument(const std::string& basePath, const std::string& docPath,
+                                const FrontMatter& fm, const std::string& body,
+                                bool authenticated, const std::string& csrfToken) {
   const std::string title = fm.title.empty() ? "(untitled)" : fm.title;
   const std::string escapedTitle = util::escapeHtml(title);
 
   std::string chrome;
   if (authenticated) {
     chrome =
-        "<p><a href=\"/edit/" + util::escapeHtml(docPath) + "\">Edit</a> | "
-        "<form style=\"display:inline\" method=\"post\" action=\"/logout\">"
+        "<p><a href=\"" + util::withBasePath(basePath, "/edit/") +
+        util::escapeHtml(docPath) + "\">Edit</a> | "
+        "<form style=\"display:inline\" method=\"post\" action=\"" +
+        util::withBasePath(basePath, "/logout") + "\">"
         "<input type=\"hidden\" name=\"csrf_token\" value=\"" +
         util::escapeHtml(csrfToken) +
         "\"><button type=\"submit\">Log out</button></form></p>";
@@ -111,11 +114,12 @@ DocumentInput parseDocumentInput(const Json::Value& json) {
 
 void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
                              DocumentService& documentService,
-                             AttachmentService& attachmentService) {
+                             AttachmentService& attachmentService,
+                             const std::string& basePath) {
   // --- GET /d/{path...} — view (M1, now with Edit/Logout chrome) --------
   app.registerHandlerViaRegex(
       "^/d/(.*)$",
-      [&vault](const HttpRequestPtr& req,
+      [&vault, basePath](const HttpRequestPtr& req,
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& docPath) {
         std::string raw;
@@ -140,7 +144,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
 
         const std::string csrfToken =
             req->attributes()->get<std::string>(kAttrCsrfToken);
-        callback(renderDocument(docPath, parsed.frontMatter, parsed.body,
+        callback(renderDocument(basePath, docPath, parsed.frontMatter, parsed.body,
                                  authenticated, csrfToken));
       },
       {Get, "wikicore::auth::AuthFilter"});
@@ -148,11 +152,12 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
   // --- GET /edit/{path...} — WYSIWYG edit page, admin-only ---------------
   app.registerHandlerViaRegex(
       "^/edit/(.*)$",
-      [&vault](const HttpRequestPtr& req,
+      [&vault, basePath](const HttpRequestPtr& req,
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& docPath) {
         if (!isAuthenticated(req)) {
-          callback(HttpResponse::newRedirectionResponse("/login"));
+          callback(HttpResponse::newRedirectionResponse(
+              util::withBasePath(basePath, "/login")));
           return;
         }
 
@@ -178,6 +183,10 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         docData["type"] = fm.type;
         docData["visibility"] = fm.visibility;
         docData["body"] = body;
+        // edit.js needs this too — it builds the save-target URL and the
+        // post-save redirect itself, client-side, so it needs the same
+        // prefix the server-rendered chrome/redirects already carry.
+        docData["basePath"] = basePath;
         std::string docDataJson = docData.dump();
         // Escaped so a body containing "</script>" can't break out of the
         // <script type="application/json"> block it's embedded in — valid
@@ -195,6 +204,12 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         HttpViewData data;
         data.insert("pageTitle", util::escapeHtml(pageTitle));
         data.insert("docDataJson", escaped);
+        // [[key]] interpolation in .csp views does NOT escape (see
+        // docs/architecture.md) — basePath comes from config.toml, not a
+        // request, but pre-escape anyway for the same reason every other
+        // HttpViewData::insert here does: never make an exception "because
+        // this one's trusted".
+        data.insert("basePath", util::escapeHtml(basePath));
         callback(HttpResponse::newHttpViewResponse("EditPage", data));
       },
       {Get, "wikicore::auth::AuthFilter"});

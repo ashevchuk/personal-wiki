@@ -1,5 +1,7 @@
 #include "config/AppConfig.h"
 
+#include "util/BasePath.h"
+
 #include <toml++/toml.h>
 
 #include <filesystem>
@@ -28,6 +30,7 @@ AppConfig AppConfig::load(const std::string& path) {
         (*server)["port"].value_or(static_cast<int64_t>(cfg.port)));
     cfg.threads = static_cast<size_t>(
         (*server)["threads"].value_or(static_cast<int64_t>(cfg.threads)));
+    cfg.basePath = util::normalizeBasePath((*server)["base_path"].value_or(std::string()));
   }
   if (auto* vault = root["vault"].as_table()) {
     cfg.vaultPath = (*vault)["path"].value_or(cfg.vaultPath);

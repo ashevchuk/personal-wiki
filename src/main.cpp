@@ -247,10 +247,10 @@ int main(int argc, char** argv) {
       },
       {drogon::Get});
 
-  wikicore::controllers::registerAuthRoutes(drogon::app());
+  wikicore::controllers::registerAuthRoutes(drogon::app(), cfg.basePath);
   wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
-                                                 attachmentService);
-  wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
+                                                 attachmentService, cfg.basePath);
+  wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch, cfg.basePath);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);
 

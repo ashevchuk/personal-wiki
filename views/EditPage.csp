@@ -11,8 +11,8 @@
 <head>
 <meta charset="utf-8">
 <title>[[pageTitle]]</title>
-<link rel="stylesheet" href="/js/toastui-editor/toastui-editor.css">
-<link rel="stylesheet" href="/css/edit.css">
+<link rel="stylesheet" href="[[basePath]]/js/toastui-editor/toastui-editor.css">
+<link rel="stylesheet" href="[[basePath]]/css/edit.css">
 </head>
 <body>
 <form id="doc-form" autocomplete="off">
@@ -33,7 +33,7 @@
 </form>
 
 <script type="application/json" id="doc-data">[[docDataJson]]</script>
-<script src="/js/toastui-editor/toastui-editor.min.js"></script>
-<script src="/js/edit.js"></script>
+<script src="[[basePath]]/js/toastui-editor/toastui-editor.min.js"></script>
+<script src="[[basePath]]/js/edit.js"></script>
 </body>
 </html>

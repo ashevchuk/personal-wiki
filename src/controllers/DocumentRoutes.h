@@ -6,6 +6,8 @@
 
 #include <drogon/HttpAppFramework.h>
 
+#include <string>
+
 namespace wikicore::controllers {
 
 // Registers:
@@ -26,9 +28,14 @@ namespace wikicore::controllers {
 // classTypeName() call, and docs/architecture.md for the fully-qualified-
 // name gotcha in the {Get, "wikicore::auth::AuthFilter"}-style strings
 // below.
+// `basePath` (already normalized, see AppConfig::basePath) — see
+// AuthRoutes.h's doc comment for what it does and why: it's prepended to
+// every href/action/redirect this registers emits; the routes themselves
+// stay unprefixed.
 void registerDocumentRoutes(drogon::HttpAppFramework& app,
                              wikicore::vault::VaultRepository& vault,
                              wikicore::vault::DocumentService& documentService,
-                             wikicore::vault::AttachmentService& attachmentService);
+                             wikicore::vault::AttachmentService& attachmentService,
+                             const std::string& basePath);
 
 }  // namespace wikicore::controllers

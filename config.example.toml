@@ -9,6 +9,14 @@
 listen_addr = "127.0.0.1"   # put behind a reverse proxy for TLS/public exposure
 port = 8080
 threads = 2
+# Mount-point prefix for reverse-proxying this app under a subpath (e.g.
+# "/wiki") instead of a whole (sub)domain. Leave unset/empty for on-root
+# deployment (default) — nothing below needs to change in that case.
+# When set, every href/action/hx-*/redirect this app emits carries the
+# prefix, so the proxy only needs a PLAIN prefix-stripping proxy_pass —
+# no sub_filter/proxy_redirect response-rewriting required. See
+# docs/deployment.md's reverse-proxy section for the nginx recipe.
+# base_path = "/wiki"
 
 [vault]
 # Root directory of the markdown vault (source of truth for all content).
