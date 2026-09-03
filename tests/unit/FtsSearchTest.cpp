@@ -1,0 +1,140 @@
+#include "index/Database.h"
+#include "index/FtsSearch.h"
+#include "index/IndexUpdater.h"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <filesystem>
+
+namespace fs = std::filesystem;
+using namespace wikicore::index;
+
+namespace {
+
+class TempDb {
+ public:
+  TempDb()
+      : path_(fs::temp_directory_path() /
+              fs::path("wiki-fts-test-" +
+                        std::to_string(reinterpret_cast<std::uintptr_t>(this)) +
+                        ".db")) {
+    fs::remove(path_);
+  }
+  ~TempDb() { fs::remove(path_); }
+  TempDb(const TempDb&) = delete;
+  TempDb& operator=(const TempDb&) = delete;
+  const fs::path& path() const { return path_; }
+
+ private:
+  fs::path path_;
+};
+
+DocumentIndexEntry makeEntry(std::string path, std::string title,
+                              std::string visibility, std::string docType,
+                              std::vector<std::string> tags, std::string body) {
+  DocumentIndexEntry e;
+  e.uuid = path;  // unique enough for a test fixture
+  e.path = std::move(path);
+  e.title = std::move(title);
+  e.visibility = std::move(visibility);
+  e.docType = std::move(docType);
+  e.createdAt = "2026-01-01T00:00:00Z";
+  e.updatedAt = "2026-01-01T00:00:00Z";
+  e.tags = std::move(tags);
+  e.body = std::move(body);
+  e.excerpt = e.body.substr(0, 100);
+  return e;
+}
+
+}  // namespace
+
+TEST_CASE("FtsSearch text search excludes private docs unless includePrivate",
+          "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+
+  updater.upsertOne(makeEntry("a.md", "Public A", "public", "note", {"x"},
+                               "systemd timers are great"));
+  updater.upsertOne(makeEntry("b.md", "Private B", "private", "note", {"x"},
+                               "systemd migration secret plan"));
+
+  FtsSearch search(database);
+
+  SearchQuery anonQuery;
+  anonQuery.text = "systemd";
+  anonQuery.includePrivate = false;
+  const auto anonResults = search.search(anonQuery);
+  REQUIRE(anonResults.size() == 1);
+  REQUIRE(anonResults[0].path == "a.md");
+
+  SearchQuery adminQuery = anonQuery;
+  adminQuery.includePrivate = true;
+  const auto adminResults = search.search(adminQuery);
+  REQUIRE(adminResults.size() == 2);
+}
+
+TEST_CASE("FtsSearch highlights matches with control-byte markers, not raw "
+          "document content unescaped",
+          "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "A", "public", "note", {},
+                               "the quick brown fox jumps"));
+
+  FtsSearch search(database);
+  SearchQuery q;
+  q.text = "fox";
+  q.includePrivate = true;
+  const auto results = search.search(q);
+  REQUIRE(results.size() == 1);
+  REQUIRE(results[0].snippetIsHighlighted);
+  REQUIRE(results[0].snippet.find(FtsSearch::kSnippetMatchStart) != std::string::npos);
+  REQUIRE(results[0].snippet.find(FtsSearch::kSnippetMatchEnd) != std::string::npos);
+  // Raw literal "<mark>" must NOT appear -- see docs/architecture.md on
+  // why the markers are control bytes, not the literal tag text.
+  REQUIRE(results[0].snippet.find("<mark>") == std::string::npos);
+}
+
+TEST_CASE("FtsSearch browse mode (empty text) lists by tag/type filters "
+          "without requiring a MATCH query",
+          "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "A", "public", "recipe", {"food"}, "pasta"));
+  updater.upsertOne(makeEntry("b.md", "B", "public", "note", {"linux"}, "systemd"));
+
+  FtsSearch search(database);
+  SearchQuery q;
+  q.includePrivate = true;
+  q.docType = "recipe";
+  const auto results = search.search(q);
+  REQUIRE(results.size() == 1);
+  REQUIRE(results[0].path == "a.md");
+  REQUIRE_FALSE(results[0].snippetIsHighlighted);
+}
+
+TEST_CASE("FtsSearch tag filter narrows results", "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "A", "public", "note", {"food", "quick"},
+                               "pasta recipe"));
+  updater.upsertOne(makeEntry("b.md", "B", "public", "note", {"linux"},
+                               "pasta is not mentioned here but systemd is"));
+
+  FtsSearch search(database);
+  SearchQuery q;
+  q.text = "pasta";
+  q.includePrivate = true;
+  q.tag = "food";
+  const auto results = search.search(q);
+  REQUIRE(results.size() == 1);
+  REQUIRE(results[0].path == "a.md");
+}

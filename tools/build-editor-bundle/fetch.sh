@@ -1,33 +1,47 @@
 #!/usr/bin/env bash
-# Re-vendors the Toast UI Editor static bundle into static/js/toastui-editor/.
-# This is a build-time-only step (per docs/architecture.md — "Frontend"):
+# Re-vendors the static/js frontend bundles (Toast UI Editor, htmx). This
+# is a build-time-only step (per docs/architecture.md — "Frontend"):
 # nothing here runs on the deployed server, and Node/npm are NOT a runtime
-# dependency. Re-run this only when deliberately bumping the editor version.
+# dependency. Re-run this only when deliberately bumping a version.
 set -euo pipefail
 
-VERSION="3.2.2"
-DEST="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../static/js/toastui-editor" && pwd)"
-BASE="https://cdn.jsdelivr.net/npm/@toast-ui/editor@${VERSION}/dist"
+STATIC_JS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../static/js" && pwd)"
 
-echo "Fetching @toast-ui/editor ${VERSION} into ${DEST} ..."
-curl -sSf --max-time 30 -o "${DEST}/toastui-editor.min.js" "${BASE}/toastui-editor.min.js"
-curl -sSf --max-time 30 -o "${DEST}/toastui-editor.css" "${BASE}/toastui-editor.css"
+vendor() {
+  local name="$1" version="$2" url="$3" dest="$4" license="$5"
+  echo "Fetching ${name} ${version} into ${dest} ..."
+  mkdir -p "${dest}"
+  local file
+  file="$(basename "${url}")"
+  curl -sSf --max-time 30 -o "${dest}/${file}" "${url}"
+  sha256sum "${dest}/${file}" | sed "s|${dest}/||" > "${dest}/SHA256SUMS"
+  cat > "${dest}/VENDORED.md" <<EOF
+# Vendored: ${name}
 
-sha256sum "${DEST}/toastui-editor.min.js" "${DEST}/toastui-editor.css" \
-  | sed "s|${DEST}/||" > "${DEST}/SHA256SUMS"
-
-cat > "${DEST}/VENDORED.md" <<EOF
-# Vendored: @toast-ui/editor
-
-- Version: ${VERSION}
-- Source: ${BASE}
+- Version: ${version}
+- Source: ${url}
 - Fetched: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-- License: MIT (NHN Cloud FE Development Lab)
+- License: ${license}
 - Checksums: see SHA256SUMS in this directory
 
-Re-vendor with \`tools/build-editor-bundle/fetch.sh\`. Bump \$VERSION in that
-script deliberately, not silently — verify the new checksums before
+Re-vendor with \`tools/build-editor-bundle/fetch.sh\`. Bump the version in
+that script deliberately, not silently — verify the new checksums before
 committing.
 EOF
+}
 
-echo "Done. Verify with: sha256sum -c ${DEST}/SHA256SUMS"
+TOASTUI_VERSION="3.2.2"
+vendor "@toast-ui/editor" "${TOASTUI_VERSION}" \
+  "https://cdn.jsdelivr.net/npm/@toast-ui/editor@${TOASTUI_VERSION}/dist/toastui-editor.min.js" \
+  "${STATIC_JS}/toastui-editor" "MIT (NHN Cloud FE Development Lab)"
+curl -sSf --max-time 30 -o "${STATIC_JS}/toastui-editor/toastui-editor.css" \
+  "https://cdn.jsdelivr.net/npm/@toast-ui/editor@${TOASTUI_VERSION}/dist/toastui-editor.css"
+sha256sum "${STATIC_JS}"/toastui-editor/toastui-editor.min.js "${STATIC_JS}"/toastui-editor/toastui-editor.css \
+  | sed "s|${STATIC_JS}/toastui-editor/||" > "${STATIC_JS}/toastui-editor/SHA256SUMS"
+
+HTMX_VERSION="2.0.10"
+vendor "htmx.org" "${HTMX_VERSION}" \
+  "https://cdn.jsdelivr.net/npm/htmx.org@${HTMX_VERSION}/dist/htmx.min.js" \
+  "${STATIC_JS}/htmx" "BSD 2-Clause"
+
+echo "Done. Verify with: sha256sum -c <dest>/SHA256SUMS in each vendored dir."

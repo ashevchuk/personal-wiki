@@ -7,6 +7,9 @@ add_executable(unit_tests
   unit/RateLimiterTest.cpp
   unit/DocumentServiceTest.cpp
   unit/AttachmentServiceTest.cpp
+  unit/FtsSearchTest.cpp
+  unit/NavQueriesTest.cpp
+  unit/IndexBuilderTest.cpp
   # PasswordHasher/RateLimiter are auth/-only (see root CMakeLists.txt
   # comment on why auth/ isn't part of wikicore) but have zero Drogon/
   # OpenSSL dependency themselves, so it's cheap to compile them straight

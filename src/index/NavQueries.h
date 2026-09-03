@@ -1,0 +1,42 @@
+#pragma once
+
+#include "index/Database.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace wikicore::index {
+
+struct DocSummary {
+  std::string path;
+  std::string title;
+  std::string visibility;
+};
+
+struct TagCount {
+  std::string tag;
+  int64_t count;
+};
+
+// Read-only queries backing the nav tree and tag cloud. Both are
+// visibility-aware in the same fail-safe-private direction as everything
+// else: with includePrivate=false, a private document contributes
+// nothing — not its path/title to the tree, not a count to a tag it
+// carries. A tag used only by private documents simply doesn't appear at
+// all for an anonymous caller, rather than showing up with a
+// suspiciously nonzero count for something they can't open.
+class NavQueries {
+ public:
+  explicit NavQueries(Database& db) : db_(db) {}
+
+  // Ordered by path — callers build a folder tree by splitting on '/'.
+  std::vector<DocSummary> listVisibleDocuments(bool includePrivate) const;
+
+  std::vector<TagCount> tagCounts(bool includePrivate) const;
+
+ private:
+  Database& db_;
+};
+
+}  // namespace wikicore::index

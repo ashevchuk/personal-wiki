@@ -1,6 +1,7 @@
 #include "controllers/DocumentRoutes.h"
 
 #include "auth/AuthContext.h"
+#include "auth/RequireAdmin.h"
 #include "util/HtmlEscape.h"
 #include "util/MarkdownRenderer.h"
 #include "vault/FrontMatter.h"
@@ -22,26 +23,6 @@ using namespace wikicore::vault;
 namespace wikicore::controllers {
 
 namespace {
-
-bool isAuthenticated(const HttpRequestPtr& req) {
-  return req->attributes()->get<std::optional<int64_t>>(kAttrUserId).has_value();
-}
-
-// CsrfFilter deliberately passes an unauthenticated request straight
-// through (see CsrfFilter.h) — it treats "no session" as an authentication
-// problem, not a CSRF one, and leaves it for the handler to reject. Every
-// mutating handler below MUST call this first: AuthFilter only annotates
-// the request, it never blocks anything itself either. Skipping this call
-// on any handler is a full unauthenticated write — see the M2 postmortem
-// in docs/architecture.md for exactly how easy that is to do by accident.
-std::optional<HttpResponsePtr> requireAdminApi(const HttpRequestPtr& req) {
-  if (isAuthenticated(req)) return std::nullopt;
-  Json::Value body;
-  body["error"] = "authentication required";
-  auto resp = HttpResponse::newHttpJsonResponse(body);
-  resp->setStatusCode(k401Unauthorized);
-  return resp;
-}
 
 HttpResponsePtr notFound() {
   auto resp = HttpResponse::newHttpResponse();

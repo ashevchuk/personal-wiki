@@ -37,9 +37,13 @@ add_library(wikicore STATIC
   src/vault/AttachmentService.cpp
   src/index/Database.cpp
   src/index/IndexUpdater.cpp
+  src/index/IndexBuilder.cpp
+  src/index/FtsSearch.cpp
+  src/index/NavQueries.cpp
   src/util/Time.cpp
   src/util/Uuid.cpp
   src/util/HtmlEscape.cpp
+  src/util/Excerpt.cpp
   src/util/MarkdownRenderer.cpp
 )
 target_include_directories(wikicore PUBLIC src)
@@ -69,8 +73,12 @@ add_executable(wiki-server
   src/auth/AuthServices.cpp
   src/auth/AuthFilter.cpp
   src/auth/CsrfFilter.cpp
+  src/auth/RequireAdmin.cpp
   src/controllers/AuthRoutes.cpp
   src/controllers/DocumentRoutes.cpp
+  src/controllers/SearchRoutes.cpp
+  src/controllers/NavRoutes.cpp
+  src/controllers/AdminRoutes.cpp
 )
 target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
 

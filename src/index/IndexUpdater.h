@@ -43,6 +43,10 @@ class IndexUpdater {
   // path isn't indexed.
   void removeOne(const std::string& path);
 
+  // Every currently-indexed document path — used by IndexBuilder's stale
+  // sweep to find rows whose file no longer exists on disk.
+  std::vector<std::string> allIndexedPaths() const;
+
  private:
   Database& db_;
 };

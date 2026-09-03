@@ -1,5 +1,6 @@
 #include "vault/DocumentService.h"
 
+#include "util/Excerpt.h"
 #include "util/Time.h"
 #include "util/Uuid.h"
 
@@ -11,29 +12,6 @@ namespace {
 
 std::string normalizeVisibility(const std::string& v) {
   return v == "public" ? "public" : "private";  // fail-safe, same rule as parsing
-}
-
-// Short plain-text preview for search results/listings — collapse
-// whitespace, hard-truncate. Not markdown-aware (M3's search UI can do
-// better later); good enough to show something readable in a list.
-std::string makeExcerpt(const std::string& body, size_t maxLen = 240) {
-  std::string flat;
-  flat.reserve(std::min(body.size(), maxLen + 1));
-  bool lastWasSpace = false;
-  for (char c : body) {
-    const bool isSpace = (c == '\n' || c == '\r' || c == '\t' || c == ' ');
-    if (isSpace) {
-      if (!lastWasSpace && !flat.empty()) flat += ' ';
-      lastWasSpace = true;
-    } else {
-      flat += c;
-      lastWasSpace = false;
-    }
-    if (flat.size() >= maxLen) break;
-  }
-  while (!flat.empty() && flat.back() == ' ') flat.pop_back();
-  if (flat.size() >= maxLen) flat += "...";
-  return flat;
 }
 
 }  // namespace
@@ -114,7 +92,7 @@ DocumentRecord DocumentService::writeAndIndex(const std::string& relativePath,
   entry.updatedAt = fm.updated;
   entry.fileMtime = stat.mtimeUnix;
   entry.fileSize = stat.size;
-  entry.excerpt = makeExcerpt(input.body);
+  entry.excerpt = util::plainTextExcerpt(input.body);
   entry.tags = fm.tags;
   entry.body = input.body;
   indexUpdater_.upsertOne(entry);

@@ -130,6 +130,15 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
   }
 }
 
+std::vector<std::string> IndexUpdater::allIndexedPaths() const {
+  Statement stmt(db_.handle(), "SELECT path FROM documents;");
+  std::vector<std::string> paths;
+  while (stmt.step()) {
+    paths.push_back(stmt.columnText(0));
+  }
+  return paths;
+}
+
 void IndexUpdater::removeOne(const std::string& path) {
   Statement begin(db_.handle(), "BEGIN IMMEDIATE;");
   begin.run();

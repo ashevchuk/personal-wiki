@@ -13,11 +13,17 @@
 #include "auth/RateLimiter.h"
 #include "auth/SessionStore.h"
 #include "config/AppConfig.h"
+#include "controllers/AdminRoutes.h"
 #include "controllers/AuthRoutes.h"
 #include "controllers/DocumentRoutes.h"
+#include "controllers/NavRoutes.h"
+#include "controllers/SearchRoutes.h"
 #include "core/wikicore.h"
 #include "index/Database.h"
+#include "index/FtsSearch.h"
+#include "index/IndexBuilder.h"
 #include "index/IndexUpdater.h"
+#include "index/NavQueries.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/VaultRepository.h"
@@ -26,9 +32,10 @@
 #include <termios.h>
 #include <unistd.h>
 
-// Generated from views/EditPage.csp by drogon_ctl (see CMakeLists.txt's
+// Generated from views/*.csp by drogon_ctl (see CMakeLists.txt's
 // drogon_create_views call).
 #include "EditPage.h"
+#include "SearchPage.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -92,6 +99,21 @@ int runCreateAdmin(wikicore::index::Database& db) {
   return 0;
 }
 
+// `wiki-server --reindex`: full vault rescan without starting the HTTP
+// server — recovery path for a deleted/corrupted index db, or documents
+// added/edited outside the app (external editor, git pull, ...).
+int runReindex(const wikicore::config::AppConfig& cfg, wikicore::index::Database& db) {
+  std::filesystem::create_directories(cfg.vaultPath);
+  wikicore::vault::VaultRepository vault(cfg.vaultPath);
+  wikicore::index::IndexUpdater indexUpdater(db);
+  wikicore::index::IndexBuilder builder(vault, indexUpdater);
+
+  const wikicore::index::RescanStats stats = builder.fullRescan();
+  std::cout << "Reindexed " << stats.documentsIndexed << " document(s), removed "
+            << stats.staleRowsRemoved << " stale row(s).\n";
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -104,10 +126,11 @@ int main(int argc, char** argv) {
   wikicore::index::Database db(cfg.dbPath);
   db.migrate();
 
-  const bool createAdmin =
-      argc > 1 && std::string(argv[1]) == "--create-admin";
-  if (createAdmin) {
+  if (argc > 1 && std::string(argv[1]) == "--create-admin") {
     return runCreateAdmin(db);
+  }
+  if (argc > 1 && std::string(argv[1]) == "--reindex") {
+    return runReindex(cfg, db);
   }
 
   std::filesystem::create_directories(cfg.vaultPath);
@@ -126,6 +149,19 @@ int main(int argc, char** argv) {
   wikicore::index::IndexUpdater indexUpdater(db);
   wikicore::vault::DocumentService documentService(vault, indexUpdater);
   wikicore::vault::AttachmentService attachmentService(vault);
+  wikicore::index::IndexBuilder indexBuilder(vault, indexUpdater);
+  wikicore::index::FtsSearch ftsSearch(db);
+  wikicore::index::NavQueries navQueries(db);
+
+  // The db is a disposable cache, never assumed correct on faith — rescan
+  // unconditionally at every startup so the index reflects whatever's
+  // actually on disk (including edits made outside the app since the last
+  // run). Cheap at personal-wiki scale; `--reindex` / POST /api/admin/reindex
+  // exist for re-running this without a restart.
+  const wikicore::index::RescanStats startupRescan = indexBuilder.fullRescan();
+  LOG_INFO << "startup reindex: " << startupRescan.documentsIndexed
+           << " document(s), " << startupRescan.staleRowsRemoved
+           << " stale row(s) removed";
 
   // Force these classes' DrObject<T> static registrar to actually
   // instantiate. It's a namespace-scope static (DrObject<T>::alloc_) whose
@@ -141,6 +177,7 @@ int main(int argc, char** argv) {
   (void)wikicore::auth::AuthFilter::classTypeName();
   (void)wikicore::auth::CsrfFilter::classTypeName();
   (void)EditPage::classTypeName();
+  (void)SearchPage::classTypeName();
 
   // static/ is the ONLY thing served as static files — never the project
   // root, which would also expose config.toml/source/etc. over HTTP.
@@ -161,6 +198,9 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerAuthRoutes(drogon::app());
   wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
                                                  attachmentService);
+  wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
+  wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
+  wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)
