@@ -93,14 +93,39 @@ drogon_create_views(wiki-server ${CMAKE_CURRENT_SOURCE_DIR}/views ${GENERATED_VI
 target_include_directories(wiki-server PRIVATE ${GENERATED_VIEWS_DIR})
 
 # ---------------------------------------------------------------------------
-# wiki-mcp — MCP stdio entrypoint. Deliberately NOT linked against Drogon.
-# Implementation lands in Milestone 4; placeholder keeps the two-binary
-# layout real from day one so nothing has to be re-architected later.
+# wiki-mcp — MCP stdio entrypoint. Deliberately NOT linked against Drogon
+# (see the wikicore comment above) — read-only MCP tools have no reason to
+# carry the HTTP stack, and MCP clients spawn this per-session so it needs
+# to start fast.
+#
+# MCP protocol layer: hkr04/cpp-mcp, vendored via FetchContent and pinned
+# to a commit (no vcpkg port exists for it). Spiked clean against this
+# exact toolchain (GCC 16.2.1, C++20) before committing to it over the
+# plan's hand-rolled-JSON-RPC fallback — see docs/architecture.md. Its own
+# CMakeLists.txt builds its examples/ too (no option to skip); accepted as
+# a few extra seconds of build time rather than fighting its build system's
+# internals to cherry-pick just the `mcp` library target.
 # ---------------------------------------------------------------------------
+include(FetchContent)
+set(MCP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  cpp_mcp
+  GIT_REPOSITORY https://github.com/hkr04/cpp-mcp.git
+  GIT_TAG 13a8bef5f1885b10b8d6038c4b319b7024744fa5
+)
+FetchContent_MakeAvailable(cpp_mcp)
+
 add_executable(wiki-mcp
   src/mcp_main.cpp
+  src/mcp/McpServer.cpp
 )
-target_link_libraries(wiki-mcp PRIVATE wikicore)
+target_link_libraries(wiki-mcp PRIVATE wikicore mcp)
+# cpp-mcp's own CMakeLists.txt sets these up via directory-scoped
+# include_directories() rather than target_include_directories() on the
+# `mcp` target, so they don't propagate to us automatically — add them
+# explicitly.
+target_include_directories(wiki-mcp PRIVATE ${cpp_mcp_SOURCE_DIR}/include
+                                              ${cpp_mcp_SOURCE_DIR}/common)
 
 enable_testing()
 add_subdirectory(tests)

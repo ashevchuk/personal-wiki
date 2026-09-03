@@ -3,6 +3,7 @@
 #include "index/Database.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,6 +47,12 @@ class IndexUpdater {
   // Every currently-indexed document path — used by IndexBuilder's stale
   // sweep to find rows whose file no longer exists on disk.
   std::vector<std::string> allIndexedPaths() const;
+
+  // Resolves a document's uuid to its current vault-relative path — used
+  // by the MCP get_document tool's "id_or_path" parameter. nullopt if
+  // unknown (including: not indexed yet, e.g. a document created directly
+  // on disk before any rescan).
+  std::optional<std::string> findPathByUuid(const std::string& uuid) const;
 
  private:
   Database& db_;

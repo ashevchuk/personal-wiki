@@ -11,13 +11,22 @@ namespace wikicore::index {
 struct SearchQuery {
   std::string text;               // FTS5 MATCH pattern; empty = "browse" mode
   std::optional<std::string> tag;
+  // AND semantics: a matching document must carry every tag listed here.
+  // Independent of `tag` above (both can be set; used by different
+  // callers — the HTTP search API sets `tag`, the MCP tools set `tags`).
+  std::vector<std::string> tags;
   std::optional<std::string> docType;
-  // Set true only when the caller is an authenticated admin — this is
-  // what keeps a private document's title/snippet out of an anonymous
-  // visitor's results, matching the fail-safe-private rule everywhere
-  // else (see docs/architecture.md).
+  // Path prefix, e.g. "notes/" — matches "notes/foo.md" and
+  // "notes/sub/bar.md" alike. Used by the MCP list_documents tool's
+  // `folder` parameter.
+  std::optional<std::string> folderPrefix;
+  // Set true only when the caller is an authenticated admin (HTTP) or the
+  // configured MCP scope is "admin" (stdio) — this is what keeps a
+  // private document's title/snippet out of results, matching the
+  // fail-safe-private rule everywhere else (see docs/architecture.md).
   bool includePrivate = false;
   int limit = 50;
+  int offset = 0;
 };
 
 struct SearchResultItem {

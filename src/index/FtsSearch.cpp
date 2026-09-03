@@ -65,9 +65,16 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
 
   if (query.docType) sql << " AND d.doc_type = ?";
   if (query.tag) sql << " AND " << kTagFilterClause;
+  // One EXISTS per requested tag -> AND semantics (must carry all of them).
+  for (size_t i = 0; i < query.tags.size(); ++i) sql << " AND " << kTagFilterClause;
+  if (query.folderPrefix) {
+    // Exact-length prefix comparison rather than LIKE, so a folder name
+    // containing a literal '%'/'_' can't be misread as a wildcard.
+    sql << " AND substr(d.path, 1, ?) = ?";
+  }
 
-  sql << (textSearch ? " ORDER BY bm25(documents_fts) LIMIT ?;"
-                      : " ORDER BY d.updated_at DESC LIMIT ?;");
+  sql << (textSearch ? " ORDER BY bm25(documents_fts) " : " ORDER BY d.updated_at DESC ")
+      << "LIMIT ? OFFSET ?;";
 
   Statement stmt(db_.handle(), sql.str());
   int idx = 1;
@@ -81,7 +88,13 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
   stmt.bind(idx++, static_cast<int64_t>(query.includePrivate ? 1 : 0));
   if (query.docType) stmt.bind(idx++, *query.docType);
   if (query.tag) stmt.bind(idx++, *query.tag);
+  for (const auto& t : query.tags) stmt.bind(idx++, t);
+  if (query.folderPrefix) {
+    stmt.bind(idx++, static_cast<int64_t>(query.folderPrefix->size()));
+    stmt.bind(idx++, *query.folderPrefix);
+  }
   stmt.bind(idx++, static_cast<int64_t>(query.limit));
+  stmt.bind(idx++, static_cast<int64_t>(query.offset));
 
   return runQuery(stmt, textSearch);
 }
