@@ -26,17 +26,27 @@
 </nav>
 <main class="content">
 <h1>Search</h1>
-<form onsubmit="return false">
-  <input type="search" name="q" placeholder="Search documents..."
+<form onsubmit="return false" class="search-form">
+  <input type="search" name="q" placeholder="Search documents..." value="[[qValue]]"
          hx-get="[[basePath]]/api/search" hx-trigger="keyup changed delay:300ms, search"
          hx-target="#results" hx-include="[name='tag'],[name='type']" autofocus>
+  <input type="text" name="tag" placeholder="tag" value="[[tagValue]]"
+         hx-get="[[basePath]]/api/search" hx-trigger="keyup changed delay:300ms, change"
+         hx-target="#results" hx-include="[name='q'],[name='type']">
+  <input type="text" name="type" placeholder="type" value="[[typeValue]]"
+         hx-get="[[basePath]]/api/search" hx-trigger="keyup changed delay:300ms, change"
+         hx-target="#results" hx-include="[name='q'],[name='tag']">
 </form>
 <div id="results">
 [[resultsHtml]]
 </div>
 </main>
 </div>
+<!-- common.js MUST load before nav.js/folder.js — both read
+     window.WikiCommon at their own top level. -->
+<script src="[[basePath]]/js/common.js"></script>
 <script src="[[basePath]]/js/matrix.js"></script>
 <script src="[[basePath]]/js/nav.js"></script>
+<script src="[[basePath]]/js/folder.js"></script>
 </body>
 </html>

@@ -6,25 +6,9 @@
 (function () {
   "use strict";
 
-  function basePath() {
-    var meta = document.querySelector('meta[name="wiki-base-path"]');
-    return meta ? meta.content : "";
-  }
-
-  function encodeVaultPath(path) {
-    return path.split("/").map(encodeURIComponent).join("/");
-  }
-
-  function el(tag, attrs) {
-    var e = document.createElement(tag);
-    if (attrs) {
-      Object.keys(attrs).forEach(function (k) {
-        if (k === "text") e.textContent = attrs[k];
-        else e.setAttribute(k, attrs[k]);
-      });
-    }
-    return e;
-  }
+  var basePath = WikiCommon.basePath;
+  var encodeVaultPath = WikiCommon.encodeVaultPath;
+  var el = WikiCommon.el;
 
   // /api/nav/tree returns a FLAT list of {path, title, visibility} — the
   // folder tree is built here from '/' segments in each path (see

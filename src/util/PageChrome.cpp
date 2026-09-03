@@ -30,9 +30,14 @@ std::string renderPage(const std::string& basePath, const std::string& escapedTi
       "</nav>"
       "<main class=\"content\">" + bodyContent + "</main>"
       "</div>"
+      // common.js MUST load first — every other script here reads from
+      // window.WikiCommon at its own top level, not lazily inside an
+      // event handler.
+      "<script src=\"" + withBasePath(basePath, "/js/common.js") + "\"></script>"
       "<script src=\"" + withBasePath(basePath, "/js/matrix.js") + "\"></script>"
       "<script src=\"" + withBasePath(basePath, "/js/nav.js") + "\"></script>"
       "<script src=\"" + withBasePath(basePath, "/js/folder.js") + "\"></script>"
+      "<script src=\"" + withBasePath(basePath, "/js/document.js") + "\"></script>"
       "</body></html>";
 }
 

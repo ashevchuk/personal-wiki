@@ -59,14 +59,24 @@ HttpResponsePtr renderDocument(const std::string& basePath, const std::string& d
 
   std::string chrome;
   if (authenticated) {
+    const std::string escapedDocPath = util::escapeHtml(docPath);
     chrome =
-        "<p><a href=\"" + util::withBasePath(basePath, "/edit/") +
-        util::escapeHtml(docPath) + "\">Edit</a> | "
+        "<p><a href=\"" + util::withBasePath(basePath, "/edit/") + escapedDocPath +
+        "\">Edit</a> | "
         "<form style=\"display:inline\" method=\"post\" action=\"" +
         util::withBasePath(basePath, "/logout") + "\">"
         "<input type=\"hidden\" name=\"csrf_token\" value=\"" +
         util::escapeHtml(csrfToken) +
-        "\"><button type=\"submit\">Log out</button></form></p>";
+        "\"><button type=\"submit\">Log out</button></form> | "
+        // DELETE isn't a valid HTML form method, so this is a plain
+        // button wired by document.js (loaded at the end of body — see
+        // PageChrome.cpp) rather than a real <form>, unlike Logout above.
+        "<button type=\"button\" id=\"doc-delete-btn\" data-path=\"" + escapedDocPath +
+        "\">Delete</button>"
+        "<script>document.addEventListener(\"DOMContentLoaded\",function(){"
+        "var b=document.getElementById(\"doc-delete-btn\");"
+        "if(b&&window.WikiDocument)window.WikiDocument.wireDeleteButton(b);"
+        "});</script></p>";
   }
 
   const std::string pageBody = util::renderBreadcrumbs(basePath, docPath) + chrome + "<h1>" +

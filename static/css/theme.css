@@ -160,6 +160,19 @@ h3 {
 form p {
   margin: 0.6rem 0;
 }
+.search-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.search-form input[name="q"] {
+  flex: 1 1 240px;
+}
+.search-form input[name="tag"],
+.search-form input[name="type"] {
+  flex: 0 1 140px;
+}
 label {
   display: flex;
   flex-direction: column;

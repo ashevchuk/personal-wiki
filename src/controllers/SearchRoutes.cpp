@@ -87,8 +87,15 @@ void registerSearchRoutes(HttpAppFramework& app, FtsSearch& search,
         data.insert("resultsHtml", renderResultsHtml(basePath, results));
         // [[key]] does NOT escape (see docs/architecture.md) — same
         // "always pre-escape, no trusted-source exception" discipline as
-        // DocumentRoutes.cpp's EditPage basePath insert.
+        // DocumentRoutes.cpp's EditPage basePath insert. Pre-filling the
+        // filter inputs from the current query params (rather than
+        // leaving them blank on every load) is what makes a sidebar tag
+        // link — /search?tag=foo — actually show the active filter
+        // instead of just silently having already applied it server-side.
         data.insert("basePath", util::escapeHtml(basePath));
+        data.insert("qValue", util::escapeHtml(std::string(req->getParameter("q"))));
+        data.insert("tagValue", util::escapeHtml(std::string(req->getParameter("tag"))));
+        data.insert("typeValue", util::escapeHtml(std::string(req->getParameter("type"))));
         callback(HttpResponse::newHttpViewResponse("SearchPage", data));
       },
       {Get, "wikicore::auth::AuthFilter"});

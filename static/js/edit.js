@@ -1,22 +1,15 @@
 // Edit page glue: hydrates from #doc-data (a JSON <script> tag, not
 // executable — see EditPage.csp), mounts Toast UI Editor, and saves via
 // the JSON API. No build step: this is loaded as a plain <script>, same
-// as the vendored editor bundle.
+// as the vendored editor bundle. See common.js for the shared basePath/
+// getCookie/encodeVaultPath/errorFromResponse helpers.
 (function () {
   "use strict";
 
-  function getCookie(name) {
-    const match = document.cookie.match(
-      new RegExp("(?:^|; )" + name.replace(/([.$?*|{}()[\]\\/+^])/g, "\\$1") + "=([^;]*)")
-    );
-    return match ? decodeURIComponent(match[1]) : "";
-  }
-
-  // Encodes each path segment individually so legitimate '/' separators
-  // survive while everything else in a segment gets properly escaped.
-  function encodeVaultPath(path) {
-    return path.split("/").map(encodeURIComponent).join("/");
-  }
+  var basePath = WikiCommon.basePath();
+  var getCookie = WikiCommon.getCookie;
+  var encodeVaultPath = WikiCommon.encodeVaultPath;
+  var errorFromResponse = WikiCommon.errorFromResponse;
 
   function setStatus(message, kind) {
     const el = document.getElementById("f-status");
@@ -26,12 +19,6 @@
 
   document.addEventListener("DOMContentLoaded", function () {
     const data = JSON.parse(document.getElementById("doc-data").textContent);
-    // Mirrors [server].base_path (see AppConfig::basePath / BasePath.h) —
-    // every path this file builds itself (save target, post-save redirect)
-    // needs the same prefix the server-rendered chrome already carries, or
-    // they'd point at the wrong place when this app is reverse-proxied
-    // under a subpath.
-    const basePath = data.basePath || "";
 
     const pathInput = document.getElementById("f-path");
     const titleInput = document.getElementById("f-title");
@@ -76,11 +63,7 @@
         credentials: "same-origin",
         body: form,
       }).then(function (resp) {
-        if (!resp.ok) {
-          return resp.text().then(function (text) {
-            throw new Error(text || ("HTTP " + resp.status));
-          });
-        }
+        if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
         return resp.json().then(function (info) {
           return { url: basePath + "/assets/" + encodeVaultPath(info.path), filename: file.name };
         });
@@ -149,11 +132,7 @@
         body: JSON.stringify(payload),
       })
         .then(function (resp) {
-          if (!resp.ok) {
-            return resp.text().then(function (text) {
-              throw new Error(text || ("HTTP " + resp.status));
-            });
-          }
+          if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
           setStatus("Saved.", "ok");
           window.location.href = basePath + "/d/" + encodeVaultPath(path);
         })
@@ -187,6 +166,16 @@
             setStatus("Attachment failed: " + err.message, "error");
           });
       });
+    }
+
+    // "Delete this document" — see document.js for the shared
+    // implementation used on the view page too. Only shown for an
+    // EXISTING document; deleting something never saved makes no sense.
+    const deleteBtn = document.getElementById("doc-delete-btn");
+    if (deleteBtn && !data.isNew && window.WikiDocument) {
+      deleteBtn.setAttribute("data-path", data.path);
+      deleteBtn.hidden = false;
+      window.WikiDocument.wireDeleteButton(deleteBtn);
     }
   });
 })();

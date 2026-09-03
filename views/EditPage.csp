@@ -46,6 +46,10 @@
     <button type="submit" id="f-save">Save</button>
     <button type="button" id="f-attach-btn">Attach file</button>
     <input type="file" id="f-attach" hidden>
+    <!-- Shown/wired by edit.js only for an EXISTING document — deleting
+         something never saved makes no sense (see WikiDocument in
+         document.js for the shared handler). -->
+    <button type="button" id="doc-delete-btn" hidden>Delete</button>
     <span id="f-status" role="status"></span>
   </div>
 </form>
@@ -53,6 +57,10 @@
 </div>
 
 <script type="application/json" id="doc-data">[[docDataJson]]</script>
+<!-- common.js MUST load before edit.js — edit.js reads window.WikiCommon
+     at its own top level, not lazily inside an event handler. -->
+<script src="[[basePath]]/js/common.js"></script>
+<script src="[[basePath]]/js/document.js"></script>
 <script src="[[basePath]]/js/toastui-editor/toastui-editor.min.js"></script>
 <script src="[[basePath]]/js/edit.js"></script>
 <script src="[[basePath]]/js/matrix.js"></script>

@@ -9,46 +9,11 @@
 (function () {
   "use strict";
 
-  function basePath() {
-    var meta = document.querySelector('meta[name="wiki-base-path"]');
-    return meta ? meta.content : "";
-  }
-
-  function getCookie(name) {
-    var match = document.cookie.match(
-      new RegExp("(?:^|; )" + name.replace(/([.$?*|{}()[\]\\/+^])/g, "\\$1") + "=([^;]*)")
-    );
-    return match ? decodeURIComponent(match[1]) : "";
-  }
-
-  function encodeVaultPath(path) {
-    return path.split("/").map(encodeURIComponent).join("/");
-  }
-
-  function el(tag, attrs) {
-    var e = document.createElement(tag);
-    if (attrs) {
-      Object.keys(attrs).forEach(function (k) {
-        if (k === "text") e.textContent = attrs[k];
-        else e.setAttribute(k, attrs[k]);
-      });
-    }
-    return e;
-  }
-
-  // API errors are JSON ({"error": "..."}) — surface the actual message
-  // in an alert() instead of the raw JSON blob.
-  function errorFromResponse(resp) {
-    return resp.text().then(function (text) {
-      try {
-        var parsed = JSON.parse(text);
-        if (parsed && parsed.error) return new Error(parsed.error);
-      } catch (e) {
-        // not JSON — fall through
-      }
-      return new Error(text || "HTTP " + resp.status);
-    });
-  }
+  var basePath = WikiCommon.basePath;
+  var getCookie = WikiCommon.getCookie;
+  var encodeVaultPath = WikiCommon.encodeVaultPath;
+  var el = WikiCommon.el;
+  var errorFromResponse = WikiCommon.errorFromResponse;
 
   document.addEventListener("DOMContentLoaded", function () {
     var container = document.getElementById("folder-contents");
