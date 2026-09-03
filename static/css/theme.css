@@ -103,6 +103,11 @@ h3 {
   margin: 0.15rem 0;
 }
 .nav-folder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.nav-arrow-btn {
   background: none;
   border: none;
   padding: 0;
@@ -111,17 +116,20 @@ h3 {
   font: inherit;
   text-shadow: none;
   cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
 }
-.nav-folder-btn:hover {
+.nav-arrow-btn:hover {
   background: none;
   color: var(--fg);
 }
 .nav-arrow {
   display: inline-block;
   width: 0.9em;
+}
+.nav-folder-label {
+  color: var(--fg-dim);
+}
+.nav-folder-label:hover {
+  color: var(--fg);
 }
 .nav-children.collapsed {
   display: none;
@@ -209,6 +217,24 @@ mark {
 .results .snippet {
   color: var(--fg-bright);
   font-size: 0.9rem;
+}
+
+.folder-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1.25rem;
+  flex-wrap: wrap;
+}
+.folder-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.25rem;
+}
+.folder-list li {
+  padding: 0.3rem 0;
+}
+.empty {
+  color: var(--fg-dim);
 }
 
 @media (max-width: 720px) {

@@ -43,10 +43,12 @@
 
     // Folders are purely a client-side grouping of the flat path list —
     // there's no folder entity anywhere in the data model (see
-    // NavQueries), so a folder button here has nowhere to navigate TO
-    // (no "browse this folder" route exists); it only expands/collapses
-    // its own children in place. Expanded by default.
-    function render(node, targetEl) {
+    // NavQueries) — but /folder/{path} (see FolderRoutes.cpp) DOES exist
+    // now as a real page listing everything under a prefix, so the label
+    // itself is a link there; the separate arrow button only expands/
+    // collapses the children in place, without navigating. Expanded by
+    // default.
+    function render(node, targetEl, pathPrefix) {
       var ul = el("ul");
       Object.keys(node.children)
         .sort()
@@ -54,16 +56,23 @@
           var li = el("li");
           var childUl = el("ul", { class: "nav-children" });
           var arrow = el("span", { class: "nav-arrow", text: "▾" });
-          var label = el("span", { class: "nav-folder-label", text: name + "/" });
-          var btn = el("button", { type: "button", class: "nav-folder-btn" });
-          btn.appendChild(arrow);
-          btn.appendChild(label);
-          btn.addEventListener("click", function () {
+          var arrowBtn = el("button", { type: "button", class: "nav-arrow-btn" });
+          arrowBtn.appendChild(arrow);
+          arrowBtn.addEventListener("click", function () {
             var collapsed = childUl.classList.toggle("collapsed");
             arrow.textContent = collapsed ? "▸" : "▾";
           });
-          li.appendChild(btn);
-          render(node.children[name], childUl);
+          var childPrefix = pathPrefix + name;
+          var label = el("a", {
+            class: "nav-folder-label",
+            href: bp + "/folder/" + encodeVaultPath(childPrefix),
+            text: name + "/",
+          });
+          var wrap = el("span", { class: "nav-folder-btn" });
+          wrap.appendChild(arrowBtn);
+          wrap.appendChild(label);
+          li.appendChild(wrap);
+          render(node.children[name], childUl, childPrefix + "/");
           li.appendChild(childUl);
           ul.appendChild(li);
         });
@@ -84,7 +93,7 @@
         });
       targetEl.appendChild(ul);
     }
-    render(root, container);
+    render(root, container, "");
   }
 
   function buildTags(container, tags, bp) {

@@ -23,6 +23,7 @@
   <a class="sidebar-brand" href="[[basePath]]/">wiki</a>
   <div class="sidebar-links">
     <a href="[[basePath]]/search">Search</a>
+    <a href="[[basePath]]/folder">Browse</a>
     <a href="[[basePath]]/edit/untitled.md">+ New</a>
   </div>
   <div class="sidebar-section"><h3>Tags</h3><div id="nav-tags"></div></div>

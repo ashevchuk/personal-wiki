@@ -271,7 +271,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch, cfg.basePath);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);
-  wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
+  wikicore::controllers::registerFolderRoutes(drogon::app(), folderService, cfg.basePath);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)

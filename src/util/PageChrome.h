@@ -25,4 +25,12 @@ namespace wikicore::util {
 std::string renderPage(const std::string& basePath, const std::string& escapedTitle,
                         const std::string& bodyContent);
 
+// "Home / notes / sub / foo.md" from a vault-relative path (a document's
+// own path, or a folder's). Folder segments are plain text, not links:
+// there's no per-folder "browse this exact ancestor" shortcut needed
+// beyond what the full /folder/{path} page itself already is — only
+// "Home" links anywhere, the trailing segment is styled as the current
+// page/folder. `path` may be empty (renders just "Home").
+std::string renderBreadcrumbs(const std::string& basePath, const std::string& path);
+
 }  // namespace wikicore::util
