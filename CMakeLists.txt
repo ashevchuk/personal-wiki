@@ -17,17 +17,25 @@ find_package(SQLite3 REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(md4c CONFIG REQUIRED)
+find_package(tomlplusplus CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ARGON2 REQUIRED IMPORTED_TARGET libargon2)
 
 # ---------------------------------------------------------------------------
-# libwikicore — vault, index/search, MCP tool logic. NO Drogon/OpenSSL
-# dependency: this is what wiki-mcp links against so the MCP stdio binary
-# stays a thin, fast-starting process independent of the HTTP stack.
+# libwikicore — config, vault, index/search, MCP tool logic. NO Drogon/
+# OpenSSL/auth dependency: this is what wiki-mcp links against so the MCP
+# stdio binary stays a thin, fast-starting process independent of the HTTP
+# stack (and MCP tools are read-only in the MVP — no session/auth needed).
 # ---------------------------------------------------------------------------
 add_library(wikicore STATIC
   src/core/placeholder.cpp
+  src/config/AppConfig.cpp
   src/vault/PathGuard.cpp
+  src/vault/FrontMatter.cpp
+  src/vault/VaultRepository.cpp
+  src/index/Database.cpp
+  src/util/Time.cpp
+  src/util/MarkdownRenderer.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC
@@ -35,18 +43,31 @@ target_link_libraries(wikicore PUBLIC
   nlohmann_json::nlohmann_json
   yaml-cpp::yaml-cpp
   md4c::md4c
+  md4c::md4c-html
+  tomlplusplus::tomlplusplus
   PkgConfig::ARGON2
 )
 
 # ---------------------------------------------------------------------------
-# wiki-server — HTTP entrypoint (Drogon).
+# wiki-server — HTTP entrypoint (Drogon). auth/ and controllers/ live here,
+# not in libwikicore: they're a web-only concern (sessions, CSRF, argon2
+# login) that wiki-mcp has no reason to link against.
 # ---------------------------------------------------------------------------
 find_package(Drogon CONFIG REQUIRED)
 
 add_executable(wiki-server
   src/main.cpp
+  src/auth/PasswordHasher.cpp
+  src/auth/AdminAccount.cpp
+  src/auth/SessionStore.cpp
+  src/auth/RateLimiter.cpp
+  src/auth/AuthServices.cpp
+  src/auth/AuthFilter.cpp
+  src/auth/CsrfFilter.cpp
+  src/controllers/AuthRoutes.cpp
+  src/controllers/DocumentRoutes.cpp
 )
-target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon)
+target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
 
 # ---------------------------------------------------------------------------
 # wiki-mcp — MCP stdio entrypoint. Deliberately NOT linked against Drogon.

@@ -34,6 +34,39 @@
   commit vcpkg (див. `vcpkg.json`) для відтворюваності збірки на іншій машині/RPi.
   vcpkg **не вендориться в git** (`vcpkg/` у `.gitignore`) — клонується bootstrap-кроком.
 
+## M1 — auth, PathGuard-backed read, результати
+
+- **auth/ і controllers/ — НЕ частина libwikicore.** vault/index/config/util
+  лишаються в wikicore (потрібні і wiki-server, і майбутньому wiki-mcp);
+  auth/ (sessions, argon2, CSRF, Drogon-фільтри) і controllers/ — суто
+  веб-турбота, лінкуються тільки в wiki-server. MCP-інструменти read-only
+  й не потребують сесій.
+- **Drogon HttpFilter — пастка з іменем.** `registerHandler(..., {Get,
+  "AuthFilter"})` шукає фільтр у `DrClassMap` за **повним кваліфікованим,
+  демангленим** іменем типу (`__cxa_demangle(typeid(T).name())`), тобто
+  `"wikicore::auth::AuthFilter"`, а не голим `"AuthFilter"` — інакше падає
+  мовчки в рантаймі з `middleware X not found` (лог, не крах процесу, тож
+  легко пропустити). Другий нюанс: `DrObject<T>::alloc_` — static-член
+  шаблону, компілятор інстанціює (а отже й реєструє клас) лише якщо його
+  реально ODR-юзнути; жоден фільтр ніде більше не конструюється й не
+  згадується напряму, тож без явного форс-виклику `AuthFilter::
+  classTypeName()`/`CsrfFilter::classTypeName()` у `main()` реєстратор
+  ніколи не збирається лінкером. Обидва нюанси задокументовано прямо в
+  коді (`main.cpp`, коментар перед реєстрацією роутів) — не приберати
+  той виклик, він не "мертвий код".
+- **CSRF-токен: двокукі доставка.** Синхронізатор-токен зберігається
+  server-side в `sessions.csrf_token`; клієнту він доставляється окремим
+  НЕ-HttpOnly cookie (`wiki_csrf_token`), виставленим паралельно з
+  сесійним при логіні. `CsrfFilter` звіряє заголовок/форм-поле з
+  server-side значенням, cookie — лише канал доставки, не джерело правди.
+- **Fail-safe-private підтверджено тестами й E2E**: відсутній/зламаний
+  YAML front-matter, відсутнє поле `visibility`, будь-яке значення крім
+  рівно `"public"` — усе колапсує в `private`. Приватний документ
+  анонімному запиту повертає `404`, не `403` (не розкривати існування).
+- **`--create-admin` CLI**: пише/перезаписує єдиний admin-рядок
+  (`users`, `id=1` enforced CHECK), пароль вводиться з вимкненим echo
+  термінала (termios), не логується.
+
 ## Двобінарна структура
 
 `libwikicore` (vault + index + MCP tool logic) — без залежності від Drogon/OpenSSL.

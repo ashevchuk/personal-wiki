@@ -16,6 +16,7 @@
     "nlohmann-json",
     "md4c",
     "yaml-cpp",
-    "catch2"
+    "catch2",
+    "tomlplusplus"
   ]
 }
