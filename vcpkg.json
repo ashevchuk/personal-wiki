@@ -1,0 +1,20 @@
+{
+  "name": "personal-wiki",
+  "version": "0.1.0",
+  "description": "Personal knowledge base: markdown vault, FTS5 search, WYSIWYG web UI, MCP server.",
+  "builtin-baseline": "7ff71c68261ecf3b60cdb8772f2e6759ee0a71b1",
+  "dependencies": [
+    {
+      "name": "drogon",
+      "features": ["ctl"]
+    },
+    {
+      "name": "sqlite3",
+      "features": ["fts5"]
+    },
+    "argon2",
+    "nlohmann-json",
+    "md4c",
+    "yaml-cpp"
+  ]
+}

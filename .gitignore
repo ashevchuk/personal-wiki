@@ -1,0 +1,32 @@
+# build artifacts
+build/
+out/
+
+# vcpkg (bootstrapped locally, not vendored in git — see docs/architecture.md)
+vcpkg/
+vcpkg_installed/
+
+# local runtime data — never commit real vault content or the index db
+vault_data/*
+!vault_data/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+
+# secrets / local config
+.env
+*.env
+config.local.toml
+
+# editor bundle build output (vendored separately, see tools/build-editor-bundle)
+static/js/toastui-editor/*
+!static/js/toastui-editor/.gitkeep
+
+# IDE / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# CMake user presets (machine-local)
+CMakeUserPresets.json

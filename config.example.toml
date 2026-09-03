@@ -1,0 +1,30 @@
+# Copy to config.toml (or point WIKI_CONFIG at another path) and adjust.
+# config.toml is gitignored — never commit a real one.
+#
+# Secrets (admin password hash, session cookie signing key) are NOT set
+# here — they come from environment variables / systemd EnvironmentFile.
+# See systemd/wiki.env.example.
+
+[server]
+listen_addr = "127.0.0.1"   # put behind a reverse proxy for TLS/public exposure
+port = 8080
+threads = 2
+
+[vault]
+# Root directory of the markdown vault (source of truth for all content).
+path = "./vault_data"
+
+[index]
+# SQLite index/cache db — fully rebuildable from the vault via
+# `wiki-server --reindex`, never treated as a second source of truth.
+db_path = "./vault_data/.index.db"
+
+[mcp]
+# admin  — wiki-mcp sees public + private documents (default; the stdio
+#          process is spawned locally by the wiki's own owner).
+# public — wiki-mcp sees only public documents. Use for any future
+#          remote/shared MCP transport.
+scope = "admin"
+
+[log]
+level = "info"   # trace | debug | info | warn | error

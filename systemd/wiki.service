@@ -1,0 +1,24 @@
+[Unit]
+Description=Personal Wiki server
+After=network.target
+
+[Service]
+Type=simple
+User=wiki
+Group=wiki
+ExecStart=/opt/wiki/bin/wiki-server
+WorkingDirectory=/opt/wiki
+EnvironmentFile=/etc/wiki/wiki.env
+Restart=on-failure
+RestartSec=2
+
+# Hardening — the service only ever needs to read/write the vault and the
+# index db; everything else on the filesystem stays off-limits.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/wiki/vault_data
+
+[Install]
+WantedBy=multi-user.target
