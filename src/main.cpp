@@ -25,6 +25,7 @@
 #include "index/IndexUpdater.h"
 #include "index/NavQueries.h"
 #include "index/VaultWatcher.h"
+#include "util/BasePath.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/VaultRepository.h"
@@ -244,6 +245,20 @@ int main(int argc, char** argv) {
         resp->setBody("ok\n");
         resp->setContentTypeCode(drogon::CT_TEXT_PLAIN);
         callback(resp);
+      },
+      {drogon::Get});
+
+  // No dedicated homepage exists (no nav sidebar/document-tree view yet —
+  // see docs/architecture.md's Phase 2 backlog) — bare "/" would otherwise
+  // 404, caught live when a human's first visit to a base_path-mounted
+  // deployment landed exactly there. /search is a reasonable landing page
+  // for both an anonymous visitor (public-only results) and the admin.
+  drogon::app().registerHandler(
+      "/",
+      [basePath = cfg.basePath](const drogon::HttpRequestPtr&,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        callback(drogon::HttpResponse::newRedirectionResponse(
+            wikicore::util::withBasePath(basePath, "/search")));
       },
       {drogon::Get});
 
