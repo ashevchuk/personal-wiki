@@ -42,6 +42,8 @@
   <div id="editor"></div>
   <div class="field-row">
     <button type="submit" id="f-save">Save</button>
+    <button type="button" id="f-attach-btn">Attach file</button>
+    <input type="file" id="f-attach" hidden>
     <span id="f-status" role="status"></span>
   </div>
 </form>
