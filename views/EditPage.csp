@@ -1,0 +1,39 @@
+<%c++
+// House rules for CSP templates in this project: see the comment above
+// drogon_create_views() in CMakeLists.txt, and docs/architecture.md.
+// (Deliberately terse here — the CSP-tag parser has no escape mechanism,
+// so a comment that literally spells out the tag syntax will get parsed
+// as that syntax and break. Learned that one the hard way; don't put the
+// literal tag sequences in prose inside a .csp file again.)
+%>
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>[[pageTitle]]</title>
+<link rel="stylesheet" href="/js/toastui-editor/toastui-editor.css">
+<link rel="stylesheet" href="/css/edit.css">
+</head>
+<body>
+<form id="doc-form" autocomplete="off">
+  <div class="field-row">
+    <label>Path <input type="text" id="f-path" required></label>
+    <label>Type <input type="text" id="f-type" placeholder="note"></label>
+  </div>
+  <div class="field-row">
+    <label>Title <input type="text" id="f-title" required></label>
+    <label>Tags <input type="text" id="f-tags" placeholder="comma, separated"></label>
+    <label class="visibility-toggle"><input type="checkbox" id="f-visibility"> Public</label>
+  </div>
+  <div id="editor"></div>
+  <div class="field-row">
+    <button type="submit" id="f-save">Save</button>
+    <span id="f-status" role="status"></span>
+  </div>
+</form>
+
+<script type="application/json" id="doc-data">[[docDataJson]]</script>
+<script src="/js/toastui-editor/toastui-editor.min.js"></script>
+<script src="/js/edit.js"></script>
+</body>
+</html>

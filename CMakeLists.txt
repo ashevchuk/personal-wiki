@@ -33,8 +33,13 @@ add_library(wikicore STATIC
   src/vault/PathGuard.cpp
   src/vault/FrontMatter.cpp
   src/vault/VaultRepository.cpp
+  src/vault/DocumentService.cpp
+  src/vault/AttachmentService.cpp
   src/index/Database.cpp
+  src/index/IndexUpdater.cpp
   src/util/Time.cpp
+  src/util/Uuid.cpp
+  src/util/HtmlEscape.cpp
   src/util/MarkdownRenderer.cpp
 )
 target_include_directories(wikicore PUBLIC src)
@@ -53,7 +58,7 @@ target_link_libraries(wikicore PUBLIC
 # not in libwikicore: they're a web-only concern (sessions, CSRF, argon2
 # login) that wiki-mcp has no reason to link against.
 # ---------------------------------------------------------------------------
-find_package(Drogon CONFIG REQUIRED)
+find_package(Drogon CONFIG REQUIRED)  # also brings in drogon_create_views()
 
 add_executable(wiki-server
   src/main.cpp
@@ -68,6 +73,16 @@ add_executable(wiki-server
   src/controllers/DocumentRoutes.cpp
 )
 target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
+
+# CSP views (views/*.csp) compiled to C++ by drogon_ctl. Generated classes
+# are deliberately left in the global namespace (no -n/path-to-namespace)
+# so the plain filename ("EditPage") is both the .csp basename AND the
+# exact string newHttpViewResponse()/DrClassMap look it up by — we already
+# got the fully-qualified-name gotcha wrong once for HttpFilter, see
+# docs/architecture.md; same underlying DrObject<T> mechanism applies here.
+set(GENERATED_VIEWS_DIR ${CMAKE_BINARY_DIR}/generated_views)
+drogon_create_views(wiki-server ${CMAKE_CURRENT_SOURCE_DIR}/views ${GENERATED_VIEWS_DIR})
+target_include_directories(wiki-server PRIVATE ${GENERATED_VIEWS_DIR})
 
 # ---------------------------------------------------------------------------
 # wiki-mcp — MCP stdio entrypoint. Deliberately NOT linked against Drogon.

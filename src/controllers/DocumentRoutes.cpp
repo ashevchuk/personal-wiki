@@ -1,11 +1,16 @@
 #include "controllers/DocumentRoutes.h"
 
 #include "auth/AuthContext.h"
+#include "util/HtmlEscape.h"
 #include "util/MarkdownRenderer.h"
 #include "vault/FrontMatter.h"
 #include "vault/PathGuard.h"
 
 #include <drogon/HttpResponse.h>
+#include <drogon/HttpViewData.h>
+#include <drogon/MultiPart.h>
+
+#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <optional>
@@ -18,6 +23,26 @@ namespace wikicore::controllers {
 
 namespace {
 
+bool isAuthenticated(const HttpRequestPtr& req) {
+  return req->attributes()->get<std::optional<int64_t>>(kAttrUserId).has_value();
+}
+
+// CsrfFilter deliberately passes an unauthenticated request straight
+// through (see CsrfFilter.h) — it treats "no session" as an authentication
+// problem, not a CSRF one, and leaves it for the handler to reject. Every
+// mutating handler below MUST call this first: AuthFilter only annotates
+// the request, it never blocks anything itself either. Skipping this call
+// on any handler is a full unauthenticated write — see the M2 postmortem
+// in docs/architecture.md for exactly how easy that is to do by accident.
+std::optional<HttpResponsePtr> requireAdminApi(const HttpRequestPtr& req) {
+  if (isAuthenticated(req)) return std::nullopt;
+  Json::Value body;
+  body["error"] = "authentication required";
+  auto resp = HttpResponse::newHttpJsonResponse(body);
+  resp->setStatusCode(k401Unauthorized);
+  return resp;
+}
+
 HttpResponsePtr notFound() {
   auto resp = HttpResponse::newHttpResponse();
   resp->setStatusCode(k404NotFound);
@@ -26,27 +51,87 @@ HttpResponsePtr notFound() {
   return resp;
 }
 
-HttpResponsePtr renderDocument(const FrontMatter& fm, const std::string& body) {
+HttpResponsePtr jsonError(HttpStatusCode status, const std::string& message) {
+  Json::Value body;
+  body["error"] = message;
+  auto resp = HttpResponse::newHttpJsonResponse(body);
+  resp->setStatusCode(status);
+  return resp;
+}
+
+HttpResponsePtr jsonOk(const std::string& path) {
+  Json::Value body;
+  body["path"] = path;
+  return HttpResponse::newHttpJsonResponse(body);
+}
+
+// Renders a document view. When `authenticated`, adds an Edit link and a
+// logout form (its hidden csrf field comes straight from what AuthFilter
+// already put in req->attributes() — see kAttrCsrfToken).
+HttpResponsePtr renderDocument(const std::string& docPath, const FrontMatter& fm,
+                                const std::string& body, bool authenticated,
+                                const std::string& csrfToken) {
   const std::string title = fm.title.empty() ? "(untitled)" : fm.title;
-  std::string escapedTitle;
-  for (char c : title) {
-    if (c == '<') escapedTitle += "&lt;";
-    else if (c == '>') escapedTitle += "&gt;";
-    else if (c == '&') escapedTitle += "&amp;";
-    else escapedTitle += c;
+  const std::string escapedTitle = util::escapeHtml(title);
+
+  std::string chrome;
+  if (authenticated) {
+    chrome =
+        "<p><a href=\"/edit/" + util::escapeHtml(docPath) + "\">Edit</a> | "
+        "<form style=\"display:inline\" method=\"post\" action=\"/logout\">"
+        "<input type=\"hidden\" name=\"csrf_token\" value=\"" +
+        util::escapeHtml(csrfToken) +
+        "\"><button type=\"submit\">Log out</button></form></p>";
   }
 
   auto resp = HttpResponse::newHttpResponse();
   resp->setContentTypeCode(CT_TEXT_HTML);
   resp->setBody("<!doctype html><html><head><meta charset=\"utf-8\"><title>" +
-                escapedTitle + "</title></head><body><h1>" + escapedTitle +
-                "</h1>" + util::renderMarkdownToHtml(body) + "</body></html>");
+                escapedTitle + "</title></head><body>" + chrome + "<h1>" +
+                escapedTitle + "</h1>" + util::renderMarkdownToHtml(body) +
+                "</body></html>");
   return resp;
+}
+
+// "notes/foo.assets/diagram.png" -> "notes/foo.md" (the owning document),
+// or nullopt if `assetPath` isn't shaped like a co-located attachment path
+// at all.
+std::optional<std::string> owningDocumentFor(const std::string& assetPath) {
+  const std::filesystem::path p(assetPath);
+  const std::filesystem::path dir = p.parent_path();
+  const std::string dirName = dir.filename().string();
+  constexpr std::string_view kSuffix = ".assets";
+  if (dirName.size() <= kSuffix.size() ||
+      dirName.compare(dirName.size() - kSuffix.size(), kSuffix.size(), kSuffix) != 0) {
+    return std::nullopt;
+  }
+  const std::string stem = dirName.substr(0, dirName.size() - kSuffix.size());
+  return (dir.parent_path() / (stem + ".md")).generic_string();
+}
+
+// Builds a DocumentInput from a parsed JSON request body. Throws
+// std::invalid_argument (caught by the caller) on missing/malformed
+// required fields.
+DocumentInput parseDocumentInput(const Json::Value& json) {
+  DocumentInput input;
+  input.title = json.get("title", "").asString();
+  input.type = json.get("type", "").asString();
+  input.visibility = json.get("visibility", "private").asString();
+  input.body = json.get("body", "").asString();
+  if (json.isMember("tags") && json["tags"].isArray()) {
+    for (const auto& tag : json["tags"]) {
+      if (tag.isString()) input.tags.push_back(tag.asString());
+    }
+  }
+  return input;
 }
 
 }  // namespace
 
-void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault) {
+void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
+                             DocumentService& documentService,
+                             AttachmentService& attachmentService) {
+  // --- GET /d/{path...} — view (M1, now with Edit/Logout chrome) --------
   app.registerHandlerViaRegex(
       "^/d/(.*)$",
       [&vault](const HttpRequestPtr& req,
@@ -64,22 +149,244 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault) {
         }
 
         const ParsedDocument parsed = parseFrontMatter(raw);
-
-        const bool authenticated =
-            req->attributes()->get<std::optional<int64_t>>(kAttrUserId)
-                .has_value();
+        const bool authenticated = isAuthenticated(req);
         if (parsed.frontMatter.visibility != "public" && !authenticated) {
           // Fail-safe-private: malformed/missing visibility already
-          // defaults to "private" inside parseFrontMatter, so this one
-          // comparison covers both "explicitly private" and "unparseable".
+          // defaults to "private" inside parseFrontMatter.
           callback(notFound());
           return;
         }
 
-        callback(renderDocument(parsed.frontMatter, parsed.body));
+        const std::string csrfToken =
+            req->attributes()->get<std::string>(kAttrCsrfToken);
+        callback(renderDocument(docPath, parsed.frontMatter, parsed.body,
+                                 authenticated, csrfToken));
       },
-      // DrClassMap registers filters under their fully-qualified,
-      // demangled type name (__cxa_demangle), not the bare class name.
+      {Get, "wikicore::auth::AuthFilter"});
+
+  // --- GET /edit/{path...} — WYSIWYG edit page, admin-only ---------------
+  app.registerHandlerViaRegex(
+      "^/edit/(.*)$",
+      [&vault](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback,
+               const std::string& docPath) {
+        if (!isAuthenticated(req)) {
+          callback(HttpResponse::newRedirectionResponse("/login"));
+          return;
+        }
+
+        const bool isNew = !vault.exists(docPath);
+        FrontMatter fm;
+        std::string body;
+        if (!isNew) {
+          try {
+            const ParsedDocument parsed = parseFrontMatter(vault.readRaw(docPath));
+            fm = parsed.frontMatter;
+            body = parsed.body;
+          } catch (const std::exception&) {
+            callback(notFound());
+            return;
+          }
+        }
+
+        nlohmann::json docData;
+        docData["path"] = docPath;
+        docData["isNew"] = isNew;
+        docData["title"] = fm.title;
+        docData["tags"] = fm.tags;
+        docData["type"] = fm.type;
+        docData["visibility"] = fm.visibility;
+        docData["body"] = body;
+        std::string docDataJson = docData.dump();
+        // Escaped so a body containing "</script>" can't break out of the
+        // <script type="application/json"> block it's embedded in — valid
+        // JSON permits \u-escaping any character, so this never changes
+        // what JSON.parse() on the client sees.
+        std::string escaped;
+        escaped.reserve(docDataJson.size());
+        for (char c : docDataJson) {
+          if (c == '<') escaped += "\\u003c";
+          else escaped += c;
+        }
+
+        const std::string pageTitle = isNew ? "New document" : ("Edit \xe2\x80\x94 " + fm.title);
+
+        HttpViewData data;
+        data.insert("pageTitle", util::escapeHtml(pageTitle));
+        data.insert("docDataJson", escaped);
+        callback(HttpResponse::newHttpViewResponse("EditPage", data));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
+  // --- POST /api/documents — create --------------------------------------
+  app.registerHandler(
+      "/api/documents",
+      [&documentService](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("path") || !(*json)["path"].isString() ||
+            (*json)["path"].asString().empty()) {
+          callback(jsonError(k400BadRequest, "missing or invalid 'path'"));
+          return;
+        }
+        const std::string path = (*json)["path"].asString();
+        try {
+          const DocumentInput input = parseDocumentInput(*json);
+          const DocumentRecord rec = documentService.create(path, input);
+          auto resp = jsonOk(rec.path);
+          resp->setStatusCode(k201Created);
+          callback(resp);
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const DocumentAlreadyExistsError&) {
+          callback(jsonError(k409Conflict, "a document already exists at that path"));
+        } catch (const std::exception& e) {
+          callback(jsonError(k500InternalServerError, e.what()));
+        }
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  // --- PUT /api/documents/{path...} — update -----------------------------
+  app.registerHandlerViaRegex(
+      "^/api/documents/(.*)$",
+      [&documentService](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback,
+                          const std::string& docPath) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json) {
+          callback(jsonError(k400BadRequest, "expected a JSON body"));
+          return;
+        }
+        try {
+          const DocumentInput input = parseDocumentInput(*json);
+          const DocumentRecord rec = documentService.update(docPath, input);
+          callback(jsonOk(rec.path));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const DocumentNotFoundError&) {
+          callback(jsonError(k404NotFound, "document not found"));
+        } catch (const std::exception& e) {
+          callback(jsonError(k500InternalServerError, e.what()));
+        }
+      },
+      {Put, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  // --- DELETE /api/documents/{path...} — soft-delete ---------------------
+  app.registerHandlerViaRegex(
+      "^/api/documents/(.*)$",
+      [&documentService](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback,
+                          const std::string& docPath) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        try {
+          documentService.softDelete(docPath);
+          callback(jsonOk(docPath));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const DocumentNotFoundError&) {
+          callback(jsonError(k404NotFound, "document not found"));
+        } catch (const std::exception& e) {
+          callback(jsonError(k500InternalServerError, e.what()));
+        }
+      },
+      {Delete, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  // --- POST /api/attachments/{path...} — upload --------------------------
+  app.registerHandlerViaRegex(
+      "^/api/attachments/(.*)$",
+      [&vault, &attachmentService](
+          const HttpRequestPtr& req,
+          std::function<void(const HttpResponsePtr&)>&& callback,
+          const std::string& docPath) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        if (!vault.exists(docPath)) {
+          callback(jsonError(k404NotFound, "owning document not found"));
+          return;
+        }
+
+        MultiPartParser parser;
+        if (parser.parse(req) != 0 || parser.getFiles().size() != 1) {
+          callback(jsonError(k400BadRequest, "expected exactly one uploaded file"));
+          return;
+        }
+        const auto& file = parser.getFiles()[0];
+
+        try {
+          const AttachmentInfo info = attachmentService.store(
+              docPath, file.getFileName(), std::string(file.fileContent()));
+          Json::Value body;
+          body["path"] = info.relativePath;
+          body["mimeType"] = info.mimeType;
+          body["size"] = static_cast<Json::UInt64>(info.size);
+          auto resp = HttpResponse::newHttpJsonResponse(body);
+          resp->setStatusCode(k201Created);
+          callback(resp);
+        } catch (const AttachmentRejectedError& e) {
+          callback(jsonError(k400BadRequest, e.what()));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::exception& e) {
+          callback(jsonError(k500InternalServerError, e.what()));
+        }
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  // --- GET /assets/{path...} — serve an attachment, gated through its ---
+  // --- owning document's visibility --------------------------------------
+  app.registerHandlerViaRegex(
+      "^/assets/(.*)$",
+      [&vault](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback,
+               const std::string& assetPath) {
+        const auto ownerPath = owningDocumentFor(assetPath);
+        if (!ownerPath) {
+          callback(notFound());
+          return;
+        }
+
+        std::string ownerRaw;
+        try {
+          ownerRaw = vault.readRaw(*ownerPath);
+        } catch (const PathTraversalError&) {
+          callback(notFound());
+          return;
+        } catch (const std::filesystem::filesystem_error&) {
+          callback(notFound());
+          return;
+        }
+        const ParsedDocument ownerParsed = parseFrontMatter(ownerRaw);
+        if (ownerParsed.frontMatter.visibility != "public" && !isAuthenticated(req)) {
+          callback(notFound());
+          return;
+        }
+
+        std::filesystem::path fullPath;
+        try {
+          fullPath = vault.pathGuard().resolve(assetPath);
+        } catch (const PathTraversalError&) {
+          callback(notFound());
+          return;
+        }
+        if (!std::filesystem::exists(fullPath)) {
+          callback(notFound());
+          return;
+        }
+        callback(HttpResponse::newFileResponse(fullPath.string()));
+      },
       {Get, "wikicore::auth::AuthFilter"});
 }
 

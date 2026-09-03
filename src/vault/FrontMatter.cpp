@@ -107,4 +107,25 @@ ParsedDocument parseFrontMatter(std::string_view rawContent) {
   return result;
 }
 
+std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body) {
+  YAML::Emitter out;
+  out << YAML::BeginMap;
+  out << YAML::Key << "id" << YAML::Value << fm.id;
+  out << YAML::Key << "title" << YAML::Value << fm.title;
+  out << YAML::Key << "tags" << YAML::Value << YAML::Flow << YAML::BeginSeq;
+  for (const auto& tag : fm.tags) out << tag;
+  out << YAML::EndSeq;
+  // visibility is re-validated here too (not just on parse) so a caller
+  // can never write a FrontMatter with visibility left at some other
+  // in-memory value than exactly "public"/"private" to disk.
+  out << YAML::Key << "visibility" << YAML::Value
+      << (fm.visibility == "public" ? "public" : "private");
+  out << YAML::Key << "type" << YAML::Value << fm.type;
+  out << YAML::Key << "created" << YAML::Value << fm.created;
+  out << YAML::Key << "updated" << YAML::Value << fm.updated;
+  out << YAML::EndMap;
+
+  return "---\n" + std::string(out.c_str()) + "\n---\n" + body;
+}
+
 }  // namespace wikicore::vault

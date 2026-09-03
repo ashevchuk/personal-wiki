@@ -32,4 +32,11 @@ struct ParsedDocument {
 // stays "private"). This function never throws.
 ParsedDocument parseFrontMatter(std::string_view rawContent);
 
+// The inverse of parseFrontMatter: renders `fm` as a `---`-delimited YAML
+// block (via YAML::Emitter, so titles/tags containing colons, quotes, etc.
+// come out correctly quoted) followed by `body`. Round-trips with
+// parseFrontMatter for any FrontMatter produced by this codebase — this is
+// what DocumentService writes to disk.
+std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body);
+
 }  // namespace wikicore::vault

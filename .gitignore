@@ -18,9 +18,10 @@ vault_data/*
 *.env
 config.local.toml
 
-# editor bundle build output (vendored separately, see tools/build-editor-bundle)
-static/js/toastui-editor/*
-!static/js/toastui-editor/.gitkeep
+# Toast UI Editor bundle is vendored and DELIBERATELY committed (see
+# tools/build-editor-bundle/fetch.sh + static/js/toastui-editor/VENDORED.md)
+# so a checkout builds/deploys with no network access beyond vcpkg — do
+# not add an ignore rule for it back.
 
 # IDE / OS noise
 .vscode/

@@ -6,6 +6,7 @@
 #include "auth/PasswordHasher.h"
 #include "auth/RateLimiter.h"
 #include "auth/SessionStore.h"
+#include "util/HtmlEscape.h"
 
 #include <drogon/HttpResponse.h>
 
@@ -18,25 +19,11 @@ namespace wikicore::controllers {
 
 namespace {
 
-std::string escapeHtml(std::string_view in) {
-  std::string out;
-  out.reserve(in.size());
-  for (char c : in) {
-    switch (c) {
-      case '&': out += "&amp;"; break;
-      case '<': out += "&lt;"; break;
-      case '>': out += "&gt;"; break;
-      case '"': out += "&quot;"; break;
-      default: out += c;
-    }
-  }
-  return out;
-}
-
 std::string renderLoginPage(std::optional<std::string> errorMessage) {
   std::string errorHtml;
   if (errorMessage) {
-    errorHtml = "<p style=\"color:#b00020\">" + escapeHtml(*errorMessage) + "</p>";
+    errorHtml = "<p style=\"color:#b00020\">" +
+                util::escapeHtml(*errorMessage) + "</p>";
   }
   return
       "<!doctype html><html><head><meta charset=\"utf-8\">"

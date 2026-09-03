@@ -17,11 +17,18 @@
 #include "controllers/DocumentRoutes.h"
 #include "core/wikicore.h"
 #include "index/Database.h"
+#include "index/IndexUpdater.h"
+#include "vault/AttachmentService.h"
+#include "vault/DocumentService.h"
 #include "vault/VaultRepository.h"
 
 #include <drogon/drogon.h>
 #include <termios.h>
 #include <unistd.h>
+
+// Generated from views/EditPage.csp by drogon_ctl (see CMakeLists.txt's
+// drogon_create_views call).
+#include "EditPage.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -116,19 +123,29 @@ int main(int argc, char** argv) {
   }
 
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
+  wikicore::index::IndexUpdater indexUpdater(db);
+  wikicore::vault::DocumentService documentService(vault, indexUpdater);
+  wikicore::vault::AttachmentService attachmentService(vault);
 
-  // Force these two classes' DrObject<T> static registrar to actually
+  // Force these classes' DrObject<T> static registrar to actually
   // instantiate. It's a namespace-scope static (DrObject<T>::alloc_) whose
   // constructor registers the class by name in DrClassMap — but being a
   // static data member of a class *template*, the compiler only emits it
   // if something ODR-uses it. Nothing else in this program ever
-  // constructs or names an AuthFilter/CsrfFilter directly (they're only
-  // ever referenced by string in registerHandler's constraints below), so
-  // without this line the linker drops them silently and every route that
-  // lists "AuthFilter"/"CsrfFilter" fails at startup with "middleware ...
-  // not found". See drogonframework/drogon#1268.
+  // constructs or names AuthFilter/CsrfFilter/EditPage directly (they're
+  // only ever referenced by string in registerHandler's constraints /
+  // newHttpViewResponse below), so without these lines the linker drops
+  // them silently and every route that lists them fails at startup with
+  // "middleware ... not found" (filters) or renders a blank/error page
+  // (views). See drogonframework/drogon#1268 and docs/architecture.md.
   (void)wikicore::auth::AuthFilter::classTypeName();
   (void)wikicore::auth::CsrfFilter::classTypeName();
+  (void)EditPage::classTypeName();
+
+  // static/ is the ONLY thing served as static files — never the project
+  // root, which would also expose config.toml/source/etc. over HTTP.
+  drogon::app().setDocumentRoot("static");
+  drogon::app().setClientMaxBodySize(30 * 1024 * 1024);  // headroom over the 25 MiB attachment cap
 
   drogon::app().registerHandler(
       "/healthz",
@@ -142,7 +159,8 @@ int main(int argc, char** argv) {
       {drogon::Get});
 
   wikicore::controllers::registerAuthRoutes(drogon::app());
-  wikicore::controllers::registerDocumentRoutes(drogon::app(), vault);
+  wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
+                                                 attachmentService);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)
