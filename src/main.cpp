@@ -211,6 +211,31 @@ int main(int argc, char** argv) {
   drogon::app().setDocumentRoot("static");
   drogon::app().setClientMaxBodySize(30 * 1024 * 1024);  // headroom over the 25 MiB attachment cap
 
+  // Drogon buffers large multipart request bodies to disk under its own
+  // upload path (default: "./uploads" relative to CWD) BEFORE any handler
+  // sees them — independent of AttachmentService's own storage. Left at
+  // its default, this collides with the deployed systemd unit's hardening
+  // (`ProtectSystem=strict` + `ReadWritePaths=/opt/wiki/vault_data` only):
+  // caught live on first real-hardware deployment (armv7, see
+  // docs/deployment.md) as a spray of "Read-only file system" errors at
+  // startup, harmless for small JSON requests but fatal for actual file
+  // uploads. Point it at a dot-prefixed directory INSIDE the vault (like
+  // `.trash`), so it's covered by the SAME ReadWritePaths=/opt/wiki/vault_data
+  // entry the systemd unit already grants, and IndexBuilder's existing
+  // "skip .git/.trash/anything-dot entirely" rule (see IndexBuilder.cpp)
+  // keeps these transient buffer files from ever being seen as documents
+  // by fullRescan or VaultWatcher. MUST be absolute: Drogon resolves a
+  // relative setUploadPath() against its document root ("static/"), not
+  // the process CWD — a relative path here silently landed under
+  // static/./vault_data/... instead, caught live on real-hardware
+  // redeploy when the "fixed" path still hit ProtectSystem=strict.
+  {
+    const auto uploadPath =
+        std::filesystem::absolute(std::filesystem::path(cfg.vaultPath) / ".uploads-tmp");
+    std::filesystem::create_directories(uploadPath);
+    drogon::app().setUploadPath(uploadPath.string());
+  }
+
   drogon::app().registerHandler(
       "/healthz",
       [](const drogon::HttpRequestPtr&,

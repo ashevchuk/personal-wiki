@@ -2,16 +2,24 @@
 
 ## Статус перевірки на реальному залізі
 
-**Чесно, без прикрас**: усе нижче перевірено на x86_64 Linux (Arch) — повна збірка, `cmake
---install`, запуск встановленого дерева, повний security/E2E-прохід (`ctest`), у т.ч.
-живий VaultWatcher. **Нативної збірки й запуску на реальному Raspberry Pi НЕ виконано** —
-у середовищі розробки немає фізичного ARM-заліза. Код не містить нічого свідомо
-x86-специфічного (жодних інтринсиків, жодних архітектурних припущень — Drogon/SQLite/
-libargon2/усі vcpkg-залежності мають офіційну підтримку ARM64/Linux), і install-шлях
-однаковий для будь-якої архітектури, оскільки це той самий native-build-on-target підхід.
-Але "має працювати за конструкцією" — не те саме, що "перевірено". Перший реальний запуск
-на Pi — обов'язковий крок перед тим, як довіряти цьому в проді, і саме на цьому кроці
-конкретна модель Pi/дистрибутив/версія системного sqlite3 можуть викопати щось несподіване.
+**Чесно, без прикрас**: повна нативна збірка (`cmake --build` з нуля, не крос-компіляція)
+перевірена лише на x86_64 Linux (Arch) — `cmake --install`, запуск встановленого дерева,
+повний security/E2E-прохід (`ctest`), живий VaultWatcher. **Нативної збірки на самому
+Raspberry Pi (компіляція просто на пристрої, як описано нижче в "Збірка") ще не
+виконано** — у середовищі розробки немає часу ганяти багатогодинний білд Drogon+OpenSSL
+на слабкому SBC щоразу.
+
+Натомість **крос-компільовані бінарники реально розгорнуто й перевірено на живому
+цільовому залізі** — armv7l, Debian 9 (stretch, EOL, glibc 2.24) — через
+`arm-linux-musleabihf`+musl+static (див. "Крос-компіляція" нижче): `wiki-server` і
+`wiki-mcp` запущені НАТИВНО (не під емуляцією) на реальному пристрої, `unit_tests`
+пройшов під `qemu-arm-static` (112 assertions, 52 test cases), повний цикл
+login → CSRF → створення документа → атомарний запис на диск → FTS5-пошук з
+підсвіткою snippet — перевірено живим HTTP-трафіком проти реального systemd-юніту
+(`ProtectSystem=strict` та інше хардненинг з розділу нижче включно), поруч із живими
+nginx/Samba/NFS/ProFTPD/mosquitto/munin, без жодного впливу на них. Код не містить
+нічого свідомо x86-специфічного, і зараз це емпірично підтверджено, а не лише
+"має працювати за конструкцією".
 
 ## Передумови (на цільовому пристрої — Raspberry Pi чи інший Linux/ARM64/x86_64 SBC)
 
@@ -111,7 +119,58 @@ sudo cmake --install build --prefix /opt/wiki
 sudo systemctl restart wiki.service
 ```
 
-## Кросс-компіляція ARM64
+## Крос-компіляція (armv7, musl, static) — для старого/слабкого таргета
 
-Не реалізовано — свідомо відкладено на Фазу 2 (див. план). MVP-шлях — нативна збірка
-прямо на цільовому пристрої, як описано вище.
+Коли нативна збірка на самому пристрої непрактична (старий дистрибутив без сучасного
+компілятора, або просто шкода часу на багатогодинний білд Drogon+OpenSSL на слабкому
+SBC) — крос-компіляція з x86_64 dev-машини через [zig](https://ziglang.org/)
+(`zig cc`/`zig c++`) як самодостатній C/C++ крос-компілятор з вбудованим musl libc +
+libc++, повністю статичне лінкування (`-static`). Чому musl+static, а не glibc
+крос-тулчейн: старий таргет (наприклад, Debian 9 stretch, glibc 2.24 з 2016 року)
+зламався б на рантаймі (`GLIBC_2.XX not found`) проти будь-якого сучасного glibc
+крос-тулчейну; статичний musl-бінарник узагалі не чіпає glibc таргета.
+
+```sh
+# 1. крос-збірка залежностей через vcpkg (classic mode — drogon[ctl] не
+#    підтримує cross-таргет, тому ctl-фіча пропускається; вже зібраний
+#    x64-linux drogon_ctl передається окремо нижче)
+cd vcpkg
+./vcpkg install --classic --triplet arm-musl \
+  --overlay-triplets=../cross/arm-musl --overlay-ports=../cross/overlay-ports \
+  --x-install-root=../vcpkg_installed_arm \
+  drogon sqlite3[core,fts5,json1] libargon2 nlohmann-json md4c yaml-cpp \
+  tomlplusplus catch2
+cd ..
+
+# 2. конфіг+білд проєкту проти крос-встановленого префікса
+export PKG_CONFIG_LIBDIR="$PWD/vcpkg_installed_arm/arm-musl/lib/pkgconfig:$PWD/vcpkg_installed_arm/arm-musl/share/pkgconfig"
+export PKG_CONFIG_SYSROOT_DIR=""
+cmake -S . -B build-arm -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE=cross/arm-musl/toolchain.cmake \
+  -DCMAKE_PREFIX_PATH=$PWD/vcpkg_installed_arm/arm-musl \
+  -DCMAKE_FIND_ROOT_PATH=$PWD/vcpkg_installed_arm/arm-musl \
+  -DDROGON_CTL_COMMAND=$PWD/build/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl \
+  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+cmake --build build-arm -j"$(nproc)"
+
+# 3. верифікація ПЕРЕД перенесенням на реальне залізо — під qemu-user-mode
+qemu-arm-static ./build-arm/tests/unit_tests   # має пройти всі кейси, не лише не впасти
+qemu-arm-static ./build-arm/wiki-server --create-admin   # smoke: реальний бінарник, не тільки "скомпілювалось"
+```
+
+**Відомий баг zig 0.16.0**: лінк багатьох статичних `.a`-архівів для
+`arm-linux-musleabihf` SIGSEGV-ить (`code=139`) у вбудованому lld — але не через
+кількість архівів чи паралелізм (обидві гіпотези перевірено й відкинуто), а через
+конкретний прапорець: CMake (Ninja-генератор, ≥3.20) автоматично додає
+`-Xlinker --dependency-file=...` для трекінгу залежностей на рівні лінкера, і саме
+цей прапорець валить lld для цього таргета детерміновано, 100% випадків. Фікс —
+`set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)` у `cross/arm-musl/toolchain.cmake`
+(CMake сам падає назад на не-лінкерне трекання залежностей). Два menші оверлей-порти
+(`cross/overlay-ports/{brotli,libuuid}`) вимикають побудову їхніх CLI/test-бінарників
+з тієї самої причини (лінк маленького виконуваного файлу проти одного `.a` теж падав).
+
+**Reverse-proxy nginx впритул до вже живого nginx на таргеті**: `wiki-server`
+навмисно слухає лише `127.0.0.1:8080` (див. `config.toml`), TLS сам не термінує —
+додавання окремого `server{}`-блоку в існуючий nginx (новий піддомен або `location`)
+лишається за адміністратором вручну, воно НЕ чіпає жодну наявну конфігурацію nginx
+автоматично.

@@ -1,10 +1,12 @@
 # build artifacts
 build/
+build-arm/
 out/
 
 # vcpkg (bootstrapped locally, not vendored in git — see docs/architecture.md)
 vcpkg/
 vcpkg_installed/
+vcpkg_installed_arm/
 
 # local runtime data — never commit real vault content or the index db
 vault_data/*

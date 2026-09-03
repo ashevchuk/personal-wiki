@@ -1,0 +1,2 @@
+#!/bin/sh
+exec zig cc -target arm-linux-musleabihf -mcpu=generic+v7a "$@"
