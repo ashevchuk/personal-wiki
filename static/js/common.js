@@ -59,8 +59,41 @@ window.WikiCommon = (function () {
   // through unescaped — the order here is the entire security property,
   // not a stylistic choice. Returns an HTML string, safe to assign to
   // .innerHTML as-is.
+  //
+  // The snippet is a plain-text excerpt of the RAW markdown body (FTS5's
+  // snippet() isn't markdown-aware) — stripped of the most visually noisy
+  // markdown syntax (image/link brackets, heading #s) before escaping,
+  // purely for readability in a one-line search result; this is NOT a
+  // markdown renderer and doesn't need to be one (renderedHtml from
+  // GET /api/documents/{path} already exists for that — see view.js).
+  // Deliberately NOT stripping *bold*/_italic_ markers too: unlike
+  // image/link brackets and a leading heading #, a bare "_" or "*" is
+  // genuinely ambiguous with ordinary text (confirmed the hard way —
+  // an early version of this function mangled "photo_2026-09-03.jpg"
+  // into "photo2026-09-03.jpg", reading the underscores around the date
+  // as an italic span). Both regexes below only remove syntax CHARACTERS
+  // and always keep whatever text was inside brackets/after # verbatim
+  // (via a capture group), so a control byte that landed inside e.g.
+  // `![al<mark-here>t](url)` survives intact in the kept text — only one
+  // landing inside the discarded `(url)` portion itself would silently
+  // lose its highlight, which degrades to "one fewer <mark>", never a
+  // broken/mismatched tag.
+  function stripMarkdownSyntax(text) {
+    return text
+      .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      // FTS5's snippet() truncates with "..." — if that cut lands INSIDE
+      // an image/link's URL portion, the pattern above never sees a
+      // closing ')' and doesn't match at all, leaving raw "![alt](https:/..."
+      // syntax visible right where the excerpt just happens to end. This
+      // catches exactly that: an opened-but-never-closed pattern running
+      // to the end of the string, keeping the alt/link text and dropping
+      // the truncated URL fragment.
+      .replace(/!?\[([^\]]*)\]\([^)]*$/, "$1");
+  }
+
   function markSnippet(rawSnippet, isHighlighted) {
-    var escaped = escapeHtml(rawSnippet);
+    var escaped = escapeHtml(stripMarkdownSyntax(rawSnippet));
     if (!isHighlighted) return escaped;
     // String.fromCharCode(1)/(2), not literal bytes in the source —
     // a control byte sitting invisibly between two quotes in a source
