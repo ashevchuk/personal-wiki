@@ -1,19 +1,12 @@
 #include "controllers/DocumentRoutes.h"
 
-#include "auth/AuthContext.h"
 #include "auth/RequireAdmin.h"
-#include "util/BasePath.h"
-#include "util/HtmlEscape.h"
 #include "util/MarkdownRenderer.h"
-#include "util/PageChrome.h"
 #include "vault/FrontMatter.h"
 #include "vault/PathGuard.h"
 
 #include <drogon/HttpResponse.h>
-#include <drogon/HttpViewData.h>
 #include <drogon/MultiPart.h>
-
-#include <nlohmann/json.hpp>
 
 #include <filesystem>
 #include <optional>
@@ -48,44 +41,10 @@ HttpResponsePtr jsonOk(const std::string& path) {
   return HttpResponse::newHttpJsonResponse(body);
 }
 
-// Renders a document view. When `authenticated`, adds an Edit link and a
-// logout form (its hidden csrf field comes straight from what AuthFilter
-// already put in req->attributes() — see kAttrCsrfToken).
-HttpResponsePtr renderDocument(const std::string& basePath, const std::string& docPath,
-                                const FrontMatter& fm, const std::string& body,
-                                bool authenticated, const std::string& csrfToken) {
-  const std::string title = fm.title.empty() ? "(untitled)" : fm.title;
-  const std::string escapedTitle = util::escapeHtml(title);
-
-  std::string chrome;
-  if (authenticated) {
-    const std::string escapedDocPath = util::escapeHtml(docPath);
-    chrome =
-        "<p><a href=\"" + util::withBasePath(basePath, "/edit/") + escapedDocPath +
-        "\">Edit</a> | "
-        "<form style=\"display:inline\" method=\"post\" action=\"" +
-        util::withBasePath(basePath, "/logout") + "\">"
-        "<input type=\"hidden\" name=\"csrf_token\" value=\"" +
-        util::escapeHtml(csrfToken) +
-        "\"><button type=\"submit\">Log out</button></form> | "
-        // DELETE isn't a valid HTML form method, so this is a plain
-        // button wired by document.js (loaded at the end of body — see
-        // PageChrome.cpp) rather than a real <form>, unlike Logout above.
-        "<button type=\"button\" id=\"doc-delete-btn\" data-path=\"" + escapedDocPath +
-        "\">Delete</button>"
-        "<script>document.addEventListener(\"DOMContentLoaded\",function(){"
-        "var b=document.getElementById(\"doc-delete-btn\");"
-        "if(b&&window.WikiDocument)window.WikiDocument.wireDeleteButton(b);"
-        "});</script></p>";
-  }
-
-  const std::string pageBody = util::renderBreadcrumbs(basePath, docPath) + chrome + "<h1>" +
-                                escapedTitle + "</h1>" + util::renderMarkdownToHtml(body);
-
-  auto resp = HttpResponse::newHttpResponse();
-  resp->setContentTypeCode(CT_TEXT_HTML);
-  resp->setBody(util::renderPage(basePath, escapedTitle, pageBody));
-  return resp;
+Json::Value tagsToJson(const std::vector<std::string>& tags) {
+  Json::Value arr(Json::arrayValue);
+  for (const auto& t : tags) arr.append(t);
+  return arr;
 }
 
 // "notes/foo.assets/diagram.png" -> "notes/foo.md" (the owning document),
@@ -125,12 +84,16 @@ DocumentInput parseDocumentInput(const Json::Value& json) {
 
 void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
                              DocumentService& documentService,
-                             AttachmentService& attachmentService,
-                             const std::string& basePath) {
-  // --- GET /d/{path...} — view (M1, now with Edit/Logout chrome) --------
+                             AttachmentService& attachmentService) {
+  // --- GET /api/documents/{path...} — read --------------------------------
+  // Backs BOTH the document view page and the edit page (client-side —
+  // see static/js/pages/view.js and edit.js): the edit page treats a 404
+  // here as "this is a new, not-yet-saved document" rather than an error.
+  // Same fail-safe-private visibility gating /d/{path...} always had:
+  // 404, not 403, for a private document to an anonymous caller.
   app.registerHandlerViaRegex(
-      "^/d/(.*)$",
-      [&vault, basePath](const HttpRequestPtr& req,
+      "^/api/documents/(.*)$",
+      [&vault](const HttpRequestPtr& req,
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& docPath) {
         std::string raw;
@@ -147,26 +110,31 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         const ParsedDocument parsed = parseFrontMatter(raw);
         const bool authenticated = isAuthenticated(req);
         if (parsed.frontMatter.visibility != "public" && !authenticated) {
-          // Fail-safe-private: malformed/missing visibility already
-          // defaults to "private" inside parseFrontMatter.
           callback(notFound());
           return;
         }
 
-        const std::string csrfToken =
-            req->attributes()->get<std::string>(kAttrCsrfToken);
-        callback(renderDocument(basePath, docPath, parsed.frontMatter, parsed.body,
-                                 authenticated, csrfToken));
+        const FrontMatter& fm = parsed.frontMatter;
+        Json::Value body;
+        body["path"] = docPath;
+        body["title"] = fm.title;
+        body["tags"] = tagsToJson(fm.tags);
+        body["type"] = fm.type;
+        body["visibility"] = fm.visibility;
+        body["body"] = parsed.body;
+        body["renderedHtml"] = util::renderMarkdownToHtml(parsed.body);
+        body["created"] = fm.created;
+        body["updated"] = fm.updated;
+        callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Get, "wikicore::auth::AuthFilter"});
 
   // --- GET /api/documents/{path...}/raw — literal file bytes -------------
-  // Same read/visibility-gating as /d/{path...} above, minus the HTML
-  // render — the exact front-matter + body as stored on disk, for
-  // anything that wants the source rather than a rendered page (was in
-  // the original plan's route sketch as GET /api/documents/{id}/raw;
-  // built here keyed by path like every other /api/documents/* route,
-  // not a separate id-based lookup).
+  // Same read/visibility-gating as above, minus the JSON/HTML render —
+  // the exact front-matter + body as stored on disk, for anything that
+  // wants the source (was in the original plan's route sketch as
+  // GET /api/documents/{id}/raw; built here keyed by path like every
+  // other /api/documents/* route, not a separate id-based lookup).
   app.registerHandlerViaRegex(
       "^/api/documents/(.*)/raw$",
       [&vault](const HttpRequestPtr& req,
@@ -193,72 +161,6 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         resp->setContentTypeCode(CT_TEXT_PLAIN);
         resp->setBody(raw);
         callback(resp);
-      },
-      {Get, "wikicore::auth::AuthFilter"});
-
-  // --- GET /edit/{path...} — WYSIWYG edit page, admin-only ---------------
-  app.registerHandlerViaRegex(
-      "^/edit/(.*)$",
-      [&vault, basePath](const HttpRequestPtr& req,
-               std::function<void(const HttpResponsePtr&)>&& callback,
-               const std::string& docPath) {
-        if (!isAuthenticated(req)) {
-          callback(HttpResponse::newRedirectionResponse(
-              util::withBasePath(basePath, "/login")));
-          return;
-        }
-
-        const bool isNew = !vault.exists(docPath);
-        FrontMatter fm;
-        std::string body;
-        if (!isNew) {
-          try {
-            const ParsedDocument parsed = parseFrontMatter(vault.readRaw(docPath));
-            fm = parsed.frontMatter;
-            body = parsed.body;
-          } catch (const std::exception&) {
-            callback(notFound());
-            return;
-          }
-        }
-
-        nlohmann::json docData;
-        docData["path"] = docPath;
-        docData["isNew"] = isNew;
-        docData["title"] = fm.title;
-        docData["tags"] = fm.tags;
-        docData["type"] = fm.type;
-        docData["visibility"] = fm.visibility;
-        docData["body"] = body;
-        // edit.js needs this too — it builds the save-target URL and the
-        // post-save redirect itself, client-side, so it needs the same
-        // prefix the server-rendered chrome/redirects already carry.
-        docData["basePath"] = basePath;
-        std::string docDataJson = docData.dump();
-        // Escaped so a body containing "</script>" can't break out of the
-        // <script type="application/json"> block it's embedded in — valid
-        // JSON permits \u-escaping any character, so this never changes
-        // what JSON.parse() on the client sees.
-        std::string escaped;
-        escaped.reserve(docDataJson.size());
-        for (char c : docDataJson) {
-          if (c == '<') escaped += "\\u003c";
-          else escaped += c;
-        }
-
-        const std::string pageTitle = isNew ? "New document" : ("Edit \xe2\x80\x94 " + fm.title);
-
-        HttpViewData data;
-        data.insert("pageTitle", util::escapeHtml(pageTitle));
-        data.insert("docDataJson", escaped);
-        // [[key]] interpolation in .csp views does NOT escape (see
-        // docs/architecture.md) — basePath comes from config.toml, not a
-        // request, but pre-escape anyway for the same reason every other
-        // HttpViewData::insert here does: never make an exception "because
-        // this one's trusted".
-        data.insert("basePath", util::escapeHtml(basePath));
-        data.insert("breadcrumbHtml", util::renderBreadcrumbs(basePath, docPath));
-        callback(HttpResponse::newHttpViewResponse("EditPage", data));
       },
       {Get, "wikicore::auth::AuthFilter"});
 
@@ -393,7 +295,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
   // --- owning document's visibility --------------------------------------
   app.registerHandlerViaRegex(
       "^/assets/(.*)$",
-      [&vault](const HttpRequestPtr& req,
+      [&vault, &attachmentService](const HttpRequestPtr& req,
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& assetPath) {
         const auto ownerPath = owningDocumentFor(assetPath);
@@ -429,7 +331,23 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
           callback(notFound());
           return;
         }
-        callback(HttpResponse::newFileResponse(fullPath.string()));
+
+        // Any file type can be uploaded (see AttachmentService — no
+        // extension allowlist/blocklist there anymore); this is the
+        // actual safety boundary instead: force a download prompt
+        // (Content-Disposition: attachment) for anything NOT on a small
+        // curated "safe to render inline" list, so a browser navigating
+        // straight to this URL can't execute an uploaded .html/.svg/etc
+        // as same-origin content. Doesn't restrict what can be
+        // uploaded OR downloaded — only whether it's allowed to render
+        // inline vs. save-as.
+        std::string ext = fullPath.extension().string();
+        if (!ext.empty() && ext.front() == '.') ext.erase(0, 1);
+        const std::string mimeType = attachmentService.mimeTypeForExtension(ext);
+        const std::string attachmentName =
+            attachmentService.isSafeToRenderInline(ext) ? "" : fullPath.filename().string();
+        callback(HttpResponse::newFileResponse(fullPath.string(), attachmentName, CT_CUSTOM,
+                                                mimeType));
       },
       {Get, "wikicore::auth::AuthFilter"});
 }

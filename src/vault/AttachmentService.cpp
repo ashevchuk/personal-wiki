@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
-#include <unordered_map>
 
 namespace fs = std::filesystem;
 
@@ -14,22 +13,6 @@ namespace wikicore::vault {
 namespace {
 
 constexpr int64_t kMaxAttachmentBytes = 25LL * 1024 * 1024;  // 25 MiB
-
-// Extension (lowercase, without dot) -> MIME type. Deliberately an
-// allowlist, not a blocklist: anything not listed here is rejected.
-const std::unordered_map<std::string, std::string>& allowedExtensions() {
-  static const std::unordered_map<std::string, std::string> kMap = {
-      {"png", "image/png"},        {"jpg", "image/jpeg"},
-      {"jpeg", "image/jpeg"},      {"gif", "image/gif"},
-      {"webp", "image/webp"},      {"svg", "image/svg+xml"},
-      {"pdf", "application/pdf"},  {"txt", "text/plain"},
-      {"md", "text/markdown"},     {"zip", "application/zip"},
-      {"mp3", "audio/mpeg"},       {"mp4", "video/mp4"},
-      {"webm", "video/webm"},      {"csv", "text/csv"},
-      {"json", "application/json"},
-  };
-  return kMap;
-}
 
 std::string lowerAscii(std::string s) {
   std::transform(s.begin(), s.end(), s.begin(),
@@ -62,6 +45,58 @@ std::string assetsDirFor(const std::string& documentRelativePath) {
 
 }  // namespace
 
+const std::unordered_map<std::string, std::string>& AttachmentService::defaultMimeTypes() {
+  static const std::unordered_map<std::string, std::string> kMap = {
+      {"png", "image/png"},         {"jpg", "image/jpeg"},
+      {"jpeg", "image/jpeg"},       {"gif", "image/gif"},
+      {"webp", "image/webp"},       {"svg", "image/svg+xml"},
+      {"pdf", "application/pdf"},   {"txt", "text/plain"},
+      {"md", "text/markdown"},      {"zip", "application/zip"},
+      {"mp3", "audio/mpeg"},        {"mp4", "video/mp4"},
+      {"webm", "video/webm"},       {"csv", "text/csv"},
+      {"json", "application/json"}, {"yaml", "text/yaml"},
+      {"yml", "text/yaml"},         {"toml", "text/plain"},
+      {"ini", "text/plain"},        {"conf", "text/plain"},
+      {"cfg", "text/plain"},        {"log", "text/plain"},
+      {"xml", "application/xml"},   {"html", "text/html"},
+      {"htm", "text/html"},         {"css", "text/css"},
+      {"js", "text/javascript"},    {"sh", "text/x-shellscript"},
+      {"py", "text/x-python"},      {"gz", "application/gzip"},
+      {"tar", "application/x-tar"}, {"7z", "application/x-7z-compressed"},
+      {"doc", "application/msword"},
+      {"docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+      {"xls", "application/vnd.ms-excel"},
+      {"xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"},
+      {"ogg", "audio/ogg"},         {"wav", "audio/wav"},
+      {"mov", "video/quicktime"},   {"avi", "video/x-msvideo"},
+  };
+  return kMap;
+}
+
+// Deliberately small and conservative: only formats with no plausible way
+// to execute script same-origin when a browser navigates straight to
+// GET /assets/{path...}. Notably NOT here even though defaultMimeTypes()
+// above knows their type: html/htm (obviously), svg (can embed <script>),
+// xml (XSLT can execute), js/css (not dangerous to RENDER, but browsers
+// doing MIME-sniffing on an inline text/plain-ish response is not a
+// fight worth having — force download for these too).
+const std::unordered_set<std::string>& AttachmentService::defaultInlineSafeExtensions() {
+  static const std::unordered_set<std::string> kSet = {
+      "png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md",
+      "mp3", "mp4", "webm", "csv", "json", "ogg", "wav",
+  };
+  return kSet;
+}
+
+std::string AttachmentService::mimeTypeForExtension(const std::string& extensionNoDot) const {
+  const auto it = mimeTypes_.find(lowerAscii(extensionNoDot));
+  return it != mimeTypes_.end() ? it->second : "application/octet-stream";
+}
+
+bool AttachmentService::isSafeToRenderInline(const std::string& extensionNoDot) const {
+  return inlineSafeExtensions_.count(lowerAscii(extensionNoDot)) > 0;
+}
+
 AttachmentInfo AttachmentService::store(const std::string& documentRelativePath,
                                          const std::string& originalFilename,
                                          const std::string& content) {
@@ -72,11 +107,6 @@ AttachmentInfo AttachmentService::store(const std::string& documentRelativePath,
   const std::string extension =
       lowerAscii(fs::path(originalFilename).extension().string());
   const std::string extNoDot = extension.empty() ? "" : extension.substr(1);
-  const auto& allowed = allowedExtensions();
-  const auto it = allowed.find(extNoDot);
-  if (it == allowed.end()) {
-    throw AttachmentRejectedError("file type not allowed: ." + extNoDot);
-  }
 
   std::string sanitized = sanitizeBasename(fs::path(originalFilename).filename().string());
   // A name that sanitizes down to nothing usable (empty, or exactly "."
@@ -84,7 +114,7 @@ AttachmentInfo AttachmentService::store(const std::string& documentRelativePath,
   // pathological input like "..." could still collapse toward) gets a
   // fresh generated name instead of being trusted further.
   if (sanitized.empty() || sanitized == "." || sanitized == "..") {
-    sanitized = util::newUuidV4() + "." + extNoDot;
+    sanitized = util::newUuidV4() + (extNoDot.empty() ? "" : "." + extNoDot);
   }
 
   const std::string assetsDir = assetsDirFor(documentRelativePath);
@@ -104,7 +134,7 @@ AttachmentInfo AttachmentService::store(const std::string& documentRelativePath,
 
   AttachmentInfo info;
   info.relativePath = relativePath;
-  info.mimeType = it->second;
+  info.mimeType = mimeTypeForExtension(extNoDot);
   info.size = static_cast<int64_t>(content.size());
   return info;
 }

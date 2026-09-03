@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Re-vendors the static/js frontend bundles (Toast UI Editor, htmx). This
+# Re-vendors the static/js frontend bundles (Toast UI Editor — the only
+# one left; htmx was vendored here too until the frontend moved to a
+# JSON API + client-side rendering, see docs/architecture.md, which left
+# it with nothing to do). This
 # is a build-time-only step (per docs/architecture.md — "Frontend"):
 # nothing here runs on the deployed server, and Node/npm are NOT a runtime
 # dependency. Re-run this only when deliberately bumping a version.
@@ -53,7 +56,17 @@ curl -sSf --max-time 30 -o "${STATIC_JS}/toastui-editor/toastui-editor.min.js" \
   "https://uicdn.toast.com/editor/${TOASTUI_VERSION}/toastui-editor-all.min.js"
 curl -sSf --max-time 30 -o "${STATIC_JS}/toastui-editor/toastui-editor.css" \
   "https://uicdn.toast.com/editor/${TOASTUI_VERSION}/toastui-editor.css"
-sha256sum "${STATIC_JS}"/toastui-editor/toastui-editor.min.js "${STATIC_JS}"/toastui-editor/toastui-editor.css \
+# The dark theme is a separate stylesheet (scoped under a
+# .toastui-editor-dark class, applied via the `theme: 'dark'` constructor
+# option — see pages/edit.js) — only ever published as part of the npm
+# package's dist/theme/, not on uicdn.toast.com, but it's plain CSS with
+# no UMD/externals concerns, so the jsdelivr npm mirror is fine for this
+# one file specifically (the root[undefined] bug above is JS-only).
+curl -sSf --max-time 30 -o "${STATIC_JS}/toastui-editor/toastui-editor-dark.css" \
+  "https://cdn.jsdelivr.net/npm/@toast-ui/editor@${TOASTUI_VERSION}/dist/theme/toastui-editor-dark.css"
+sha256sum "${STATIC_JS}"/toastui-editor/toastui-editor.min.js \
+  "${STATIC_JS}"/toastui-editor/toastui-editor.css \
+  "${STATIC_JS}"/toastui-editor/toastui-editor-dark.css \
   | sed "s|${STATIC_JS}/toastui-editor/||" > "${STATIC_JS}/toastui-editor/SHA256SUMS"
 
 # Actually evaluate the fetched bundle the way a plain <script> tag would
@@ -88,10 +101,5 @@ before committing, and sanity-check the fetched JS actually initializes
 (e.g. the tools/build-editor-bundle Node vm-based check used to catch this
 bug in the first place) before trusting a version bump.
 EOF
-
-HTMX_VERSION="2.0.10"
-vendor "htmx.org" "${HTMX_VERSION}" \
-  "https://cdn.jsdelivr.net/npm/htmx.org@${HTMX_VERSION}/dist/htmx.min.js" \
-  "${STATIC_JS}/htmx" "BSD 2-Clause"
 
 echo "Done. Verify with: sha256sum -c <dest>/SHA256SUMS in each vendored dir."

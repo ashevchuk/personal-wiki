@@ -12,6 +12,15 @@ caught it. This script is that missing net, wired into `ctest` (see
 tests/CMakeLists.txt) so it actually runs on every build rather than
 living as a one-off shell session.
 
+The backend is a pure JSON API now (see docs/architecture.md's frontend
+section — the old server-rendered HTML pages are gone, replaced by a
+static SPA shell + client-side JS). This means /login, /d/{path...},
+/edit/{path...}, /search, /folder[/...] all return the SAME static shell
+regardless of the request — real access-control assertions here target
+the JSON endpoints (/api/session, /api/login, /api/documents/{path...},
+/api/search, ...) instead, which is where the actual authorization now
+lives.
+
 Usage: security_e2e.py <path-to-wiki-server-binary>
 """
 import http.client
@@ -80,6 +89,10 @@ class Client:
     def get(self, path, headers=None):
         return self.request("GET", path, headers=headers)
 
+    def get_json(self, path, headers=None):
+        status, hdrs, body = self.get(path, headers=headers)
+        return status, hdrs, (json.loads(body) if body else None)
+
     def post_form(self, path, fields, headers=None):
         body = urllib.parse.urlencode(fields).encode()
         h = dict(headers or {})
@@ -147,6 +160,15 @@ scope = "admin"
 level = "warn"
 """)
 
+    # The shell routes (/, /login, /search, /d/{...}, /edit/{...},
+    # /folder[/...]) serve static/shell.html off disk relative to CWD
+    # (see PageRoutes.cpp) — same as setDocumentRoot("static") always
+    # needed static/ present relative to CWD for CSS/JS, this sandbox
+    # needs its own copy of it too, mirroring what a real deployment's
+    # WorkingDirectory=/opt/wiki (containing both bin/ and static/) does.
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    shutil.copytree(os.path.join(project_root, "static"), os.path.join(sandbox, "static"))
+
     admin_proc = subprocess.run(
         [server_bin, "--create-admin"], cwd=sandbox,
         input="admin\nSuperSecret123\nSuperSecret123\n",
@@ -196,6 +218,17 @@ level = "warn"
 def run_checks(sandbox, vault):
     anon = Client(HOST, PORT)
 
+    # --- 0. Shell routes always serve the same static page, no matter
+    #        the path/query — the actual gating lives entirely in the
+    #        JSON API now (see module docstring). Just confirm they don't
+    #        error and don't reflect back any request data verbatim into
+    #        the response (nothing here is per-request-rendered so there's
+    #        no obvious injection surface, but worth a sanity check).
+    for shell_path in ("/", "/login", "/search", "/folder", "/d/whatever.md",
+                        "/edit/whatever.md"):
+        status, _, _ = anon.get(shell_path)
+        check(f"shell route {shell_path} -> 200", status == 200, f"got {status}")
+
     # --- 1. Unauthenticated writes must ALL be rejected ---------------
     status, _, _ = anon.post_json("/api/documents", {"path": "x.md", "title": "x", "body": "y"})
     check("anon create -> 401", status == 401, f"got {status}")
@@ -216,7 +249,7 @@ def run_checks(sandbox, vault):
     pre_login_token = fixation.cookies.get("wiki_session")
     check("pre-set attacker token was not treated as authenticated",
           pre_login_token == "attacker-chosen-token-0000000000000000000000000000000000000000")
-    status, _, _ = fixation.post_form("/login", {"username": "admin", "password": "SuperSecret123"})
+    status, _, _ = fixation.post_json("/api/login", {"username": "admin", "password": "SuperSecret123"})
     post_login_token = fixation.cookies.get("wiki_session")
     check("login issues a NEW session token, not the attacker-supplied one",
           post_login_token is not None and post_login_token != pre_login_token
@@ -224,20 +257,25 @@ def run_checks(sandbox, vault):
 
     # --- 3. Real admin session for the rest of the checks ---------------
     admin = Client(HOST, PORT)
-    admin.get("/login")
-    status, _, _ = admin.post_form("/login", {"username": "admin", "password": "SuperSecret123"})
-    check("admin login -> 302", status == 302, f"got {status}")
+    status, _, body = admin.get_json("/api/session")
+    check("anon session check -> authenticated:false", body == {"authenticated": False}, f"got {body}")
+    status, _, _ = admin.post_json("/api/login", {"username": "admin", "password": "SuperSecret123"})
+    check("admin login -> 200", status == 200, f"got {status}")
     csrf = admin.cookies.get("wiki_csrf_token")
     check("csrf cookie set on login", csrf is not None)
+    status, _, body = admin.get_json("/api/session")
+    check("admin session check -> authenticated:true", body == {"authenticated": True}, f"got {body}")
 
     # --- 4. CSRF enforcement ---------------------------------------------
     status, _, _ = admin.put_json("/api/documents/nope.md", {"title": "x", "body": "y"})
     check("mutating request without csrf header -> 403", status == 403, f"got {status}")
 
     # --- 5. Path traversal ------------------------------------------------
-    status, _, body = anon.get("/d/../../../etc/passwd")
-    check("path traversal on /d/ -> 404, not leaked",
-          status == 404 and b"root:" not in body, f"got {status}")
+    # The shell route itself touches no filesystem (see check 0) — the
+    # real read goes through the JSON API, which still has to reject this.
+    status, _, body = anon.get("/api/documents/../../../etc/passwd")
+    check("path traversal on /api/documents/{path} -> 400/404, not leaked",
+          status in (400, 404) and b"root:" not in body, f"got {status}")
     status, _, _ = admin.post_json("/api/documents", {"path": "../../etc/evil.md", "title": "x", "body": "y"},
                                     headers={"X-CSRF-Token": csrf})
     check("path traversal in create payload -> 400", status == 400, f"got {status}")
@@ -257,18 +295,20 @@ def run_checks(sandbox, vault):
         headers={"X-CSRF-Token": csrf})
     check("create private doc -> 201", status == 201, f"got {status}")
 
-    status, _, _ = anon.get("/d/notes/public.md")
-    check("anon sees public doc", status == 200, f"got {status}")
-    status, _, _ = anon.get("/d/notes/private.md")
+    status, _, _ = anon.get("/api/documents/notes/public.md")
+    check("anon sees public doc via JSON API", status == 200, f"got {status}")
+    status, _, _ = anon.get("/api/documents/notes/private.md")
     check("anon private doc -> 404 (not 403)", status == 404, f"got {status}")
-    status, _, _ = admin.get("/d/notes/private.md")
+    status, _, _ = admin.get("/api/documents/notes/private.md")
     check("admin sees private doc", status == 200, f"got {status}")
 
-    status, _, body = anon.get("/api/search?q=systemd")
+    status, _, body = anon.get_json("/api/search?q=systemd")
+    paths = [r["path"] for r in body["results"]]
     check("anon search: public found, private not leaked",
-          b"notes/public.md" in body and b"notes/private.md" not in body)
-    status, _, body = admin.get("/api/search?q=systemd")
-    check("admin search: sees both", b"notes/private.md" in body)
+          "notes/public.md" in paths and "notes/private.md" not in paths, f"paths={paths}")
+    status, _, body = admin.get_json("/api/search?q=systemd")
+    paths = [r["path"] for r in body["results"]]
+    check("admin search: sees both", "notes/private.md" in paths, f"paths={paths}")
 
     status, _, body = anon.get("/api/nav/tree")
     tree = json.loads(body)
@@ -286,6 +326,11 @@ def run_checks(sandbox, vault):
           f"anon={anon_tags} admin={admin_tags}")
 
     # --- 7. Attachments: visibility follows the OWNING document --------
+    # No extension policy on upload anymore (see AttachmentService) — an
+    # extension that would have been rejected before (.exe) now succeeds;
+    # the safety boundary moved to the SERVING side instead (forced
+    # download for anything not on a small inline-safe allowlist), which
+    # doesn't change any status code this script checks.
     status, _, body = admin.upload("/api/attachments/notes/private.md", "secret.png", b"fake png bytes",
                                     headers={"X-CSRF-Token": csrf})
     check("upload attachment to private doc -> 201", status == 201, f"got {status}")
@@ -306,8 +351,8 @@ def run_checks(sandbox, vault):
     check("soft delete -> 200", status == 200, f"got {status}")
     check("file actually moved to .trash/",
           os.path.exists(os.path.join(vault, ".trash", "notes", "public.md")))
-    status, _, _ = admin.get("/d/notes/public.md")
-    check("deleted doc gone from /d/", status == 404, f"got {status}")
+    status, _, _ = admin.get("/api/documents/notes/public.md")
+    check("deleted doc gone from the JSON API", status == 404, f"got {status}")
 
     # --- 9. VaultWatcher: external filesystem change picked up live ----
     live_dir = os.path.join(vault, "external")
@@ -315,20 +360,22 @@ def run_checks(sandbox, vault):
     with open(os.path.join(live_dir, "dropped.md"), "w") as f:
         f.write("---\ntitle: Dropped\nvisibility: public\n---\nwatcherprobe content\n")
     time.sleep(1.0)  # debounce (~300ms) + processing headroom
-    status, _, body = anon.get("/api/search?q=watcherprobe")
+    status, _, body = anon.get_json("/api/search?q=watcherprobe")
+    paths = [r["path"] for r in body["results"]]
     check("VaultWatcher indexed an externally-created file without --reindex",
-          b"external/dropped.md" in body)
+          "external/dropped.md" in paths, f"paths={paths}")
     os.remove(os.path.join(live_dir, "dropped.md"))
     time.sleep(1.0)
-    status, _, body = anon.get("/api/search?q=watcherprobe")
+    status, _, body = anon.get_json("/api/search?q=watcherprobe")
+    paths = [r["path"] for r in body["results"]]
     check("VaultWatcher swept the externally-deleted file from the index",
-          b"external/dropped.md" not in body)
+          "external/dropped.md" not in paths, f"paths={paths}")
 
     # --- 10. Rate limiting on repeated failed logins ---------------------
     rl = Client(HOST, PORT)
     statuses = []
     for _ in range(6):
-        s, _, _ = rl.post_form("/login", {"username": "admin", "password": "WRONG"})
+        s, _, _ = rl.post_json("/api/login", {"username": "admin", "password": "WRONG"})
         statuses.append(s)
     check("rate limiter engages after repeated failed logins (429 seen)",
           429 in statuses, f"statuses={statuses}")

@@ -47,8 +47,6 @@ add_library(wikicore STATIC
   src/util/HtmlEscape.cpp
   src/util/Excerpt.cpp
   src/util/MarkdownRenderer.cpp
-  src/util/BasePath.cpp
-  src/util/PageChrome.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC
@@ -84,18 +82,15 @@ add_executable(wiki-server
   src/controllers/NavRoutes.cpp
   src/controllers/AdminRoutes.cpp
   src/controllers/FolderRoutes.cpp
+  src/controllers/PageRoutes.cpp
 )
 target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
 
-# CSP views (views/*.csp) compiled to C++ by drogon_ctl. Generated classes
-# are deliberately left in the global namespace (no -n/path-to-namespace)
-# so the plain filename ("EditPage") is both the .csp basename AND the
-# exact string newHttpViewResponse()/DrClassMap look it up by — we already
-# got the fully-qualified-name gotcha wrong once for HttpFilter, see
-# docs/architecture.md; same underlying DrObject<T> mechanism applies here.
-set(GENERATED_VIEWS_DIR ${CMAKE_BINARY_DIR}/generated_views)
-drogon_create_views(wiki-server ${CMAKE_CURRENT_SOURCE_DIR}/views ${GENERATED_VIEWS_DIR})
-target_include_directories(wiki-server PRIVATE ${GENERATED_VIEWS_DIR})
+# No CSP views (views/*.csp) anymore — the backend is a JSON API only now;
+# static/shell.html + client-side JS own all rendering (see
+# docs/architecture.md's frontend section and PageRoutes.cpp). This used
+# to drogon_create_views() two .csp templates into generated C++; removed
+# along with the templates themselves.
 
 # ---------------------------------------------------------------------------
 # wiki-mcp — MCP stdio entrypoint. Deliberately NOT linked against Drogon

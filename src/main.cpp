@@ -18,6 +18,7 @@
 #include "controllers/DocumentRoutes.h"
 #include "controllers/FolderRoutes.h"
 #include "controllers/NavRoutes.h"
+#include "controllers/PageRoutes.h"
 #include "controllers/SearchRoutes.h"
 #include "core/wikicore.h"
 #include "index/Database.h"
@@ -26,7 +27,6 @@
 #include "index/IndexUpdater.h"
 #include "index/NavQueries.h"
 #include "index/VaultWatcher.h"
-#include "util/BasePath.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
@@ -35,11 +35,6 @@
 #include <drogon/drogon.h>
 #include <termios.h>
 #include <unistd.h>
-
-// Generated from views/*.csp by drogon_ctl (see CMakeLists.txt's
-// drogon_create_views call).
-#include "EditPage.h"
-#include "SearchPage.h"
 
 #include <cstdio>
 #include <filesystem>
@@ -152,7 +147,18 @@ int main(int argc, char** argv) {
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
   wikicore::index::IndexUpdater indexUpdater(db);
   wikicore::vault::DocumentService documentService(vault, indexUpdater);
-  wikicore::vault::AttachmentService attachmentService(vault);
+  // config.toml's [attachments] table REPLACES the built-in defaults
+  // entirely when present (see AppConfig::attachmentMimeTypes' comment);
+  // empty (the common case — nothing in config.toml) falls back to
+  // AttachmentService's own defaults rather than main.cpp duplicating
+  // that list a second time.
+  wikicore::vault::AttachmentService attachmentService(
+      vault,
+      cfg.attachmentMimeTypes.empty() ? wikicore::vault::AttachmentService::defaultMimeTypes()
+                                       : cfg.attachmentMimeTypes,
+      cfg.attachmentInlineSafeExtensions.empty()
+          ? wikicore::vault::AttachmentService::defaultInlineSafeExtensions()
+          : cfg.attachmentInlineSafeExtensions);
   wikicore::index::IndexBuilder indexBuilder(vault, indexUpdater);
   wikicore::vault::FolderService folderService(vault, indexUpdater, indexBuilder);
   wikicore::index::FtsSearch ftsSearch(db);
@@ -199,16 +205,17 @@ int main(int argc, char** argv) {
   // constructor registers the class by name in DrClassMap — but being a
   // static data member of a class *template*, the compiler only emits it
   // if something ODR-uses it. Nothing else in this program ever
-  // constructs or names AuthFilter/CsrfFilter/EditPage directly (they're
-  // only ever referenced by string in registerHandler's constraints /
-  // newHttpViewResponse below), so without these lines the linker drops
-  // them silently and every route that lists them fails at startup with
-  // "middleware ... not found" (filters) or renders a blank/error page
-  // (views). See drogonframework/drogon#1268 and docs/architecture.md.
+  // constructs or names AuthFilter/CsrfFilter directly (they're only ever
+  // referenced by string in registerHandler's constraints below), so
+  // without these lines the linker drops them silently and every route
+  // that lists them fails at startup with "middleware ... not found" (a
+  // log line, not a build error). See drogonframework/drogon#1268 and
+  // docs/architecture.md. (There used to be a matching pair of these for
+  // EditPage/SearchPage CSP views — removed along with the views
+  // themselves when the frontend moved to a JSON API + static SPA shell;
+  // see PageRoutes.cpp.)
   (void)wikicore::auth::AuthFilter::classTypeName();
   (void)wikicore::auth::CsrfFilter::classTypeName();
-  (void)EditPage::classTypeName();
-  (void)SearchPage::classTypeName();
 
   // static/ is the ONLY thing served as static files — never the project
   // root, which would also expose config.toml/source/etc. over HTTP.
@@ -251,27 +258,14 @@ int main(int argc, char** argv) {
       },
       {drogon::Get});
 
-  // No dedicated homepage exists (no nav sidebar/document-tree view yet —
-  // see docs/architecture.md's Phase 2 backlog) — bare "/" would otherwise
-  // 404, caught live when a human's first visit to a base_path-mounted
-  // deployment landed exactly there. /search is a reasonable landing page
-  // for both an anonymous visitor (public-only results) and the admin.
-  drogon::app().registerHandler(
-      "/",
-      [basePath = cfg.basePath](const drogon::HttpRequestPtr&,
-                                 std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-        callback(drogon::HttpResponse::newRedirectionResponse(
-            wikicore::util::withBasePath(basePath, "/search")));
-      },
-      {drogon::Get});
-
-  wikicore::controllers::registerAuthRoutes(drogon::app(), cfg.basePath);
+  wikicore::controllers::registerPageRoutes(drogon::app());
+  wikicore::controllers::registerAuthRoutes(drogon::app());
   wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
-                                                 attachmentService, cfg.basePath);
-  wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch, cfg.basePath);
+                                                 attachmentService);
+  wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);
-  wikicore::controllers::registerFolderRoutes(drogon::app(), folderService, cfg.basePath);
+  wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)

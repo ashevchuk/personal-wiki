@@ -42,13 +42,59 @@ TEST_CASE("AttachmentService stores an allowed file under <stem>.assets/",
   REQUIRE(fs::exists(dir.root() / "notes/foo.assets/diagram.png"));
 }
 
-TEST_CASE("AttachmentService rejects a disallowed extension", "[AttachmentService]") {
+TEST_CASE("AttachmentService accepts any extension, with a generic MIME "
+          "type fallback for anything it doesn't recognize",
+          "[AttachmentService]") {
   TempVaultDir dir;
   vault::VaultRepository repo(dir.root());
   vault::AttachmentService svc(repo);
 
-  REQUIRE_THROWS_AS(svc.store("notes/foo.md", "payload.exe", "x"),
-                     vault::AttachmentRejectedError);
+  // No extension allowlist/blocklist anymore — see the class comment.
+  // Even a genuinely unusual extension is accepted; only the MIME type
+  // guess falls back to a generic value.
+  const auto info = svc.store("notes/foo.md", "payload.exe", "x");
+  REQUIRE(info.relativePath == "notes/foo.assets/payload.exe");
+  REQUIRE(info.mimeType == "application/octet-stream");
+
+  const auto ini = svc.store("notes/foo.md", "config.ini", "[section]\nkey=value\n");
+  REQUIRE(ini.relativePath == "notes/foo.assets/config.ini");
+  REQUIRE(ini.mimeType == "text/plain");
+}
+
+TEST_CASE("AttachmentService::isSafeToRenderInline is a small curated "
+          "allowlist, not the reverse of a blocklist",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);  // default mime/inline-safe tables
+
+  REQUIRE(svc.isSafeToRenderInline("png"));
+  REQUIRE(svc.isSafeToRenderInline("pdf"));
+  REQUIRE(svc.isSafeToRenderInline("txt"));
+  // These execute same-origin JS if a browser navigates straight to
+  // GET /assets/{path...} — must stay forced-download regardless of any
+  // future extension being added elsewhere.
+  REQUIRE_FALSE(svc.isSafeToRenderInline("html"));
+  REQUIRE_FALSE(svc.isSafeToRenderInline("htm"));
+  REQUIRE_FALSE(svc.isSafeToRenderInline("svg"));
+  REQUIRE_FALSE(svc.isSafeToRenderInline("xml"));
+  REQUIRE_FALSE(svc.isSafeToRenderInline("exe"));
+  REQUIRE_FALSE(svc.isSafeToRenderInline("ini"));
+}
+
+TEST_CASE("AttachmentService honors config-provided mime/inline-safe "
+          "tables instead of the built-in defaults when given one",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo, {{"ini", "application/x-my-ini"}}, {"ini"});
+
+  const auto info = svc.store("notes/foo.md", "config.ini", "[x]\n");
+  REQUIRE(info.mimeType == "application/x-my-ini");
+  REQUIRE(svc.isSafeToRenderInline("ini"));
+  // Not in the custom table at all -> falls back to the generic type,
+  // same as an unrecognized extension always does.
+  REQUIRE(svc.mimeTypeForExtension("png") == "application/octet-stream");
 }
 
 TEST_CASE("AttachmentService rejects an oversized upload", "[AttachmentService]") {

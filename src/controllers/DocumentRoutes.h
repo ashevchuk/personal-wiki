@@ -6,36 +6,35 @@
 
 #include <drogon/HttpAppFramework.h>
 
-#include <string>
-
 namespace wikicore::controllers {
 
-// Registers:
-//   GET    /d/{path...}              - render (M1)
-//   GET    /edit/{path...}           - WYSIWYG edit page, admin-only,
-//                                       works for an existing OR not-yet-
-//                                       existing path (the latter = "new
-//                                       document at this path")
-//   POST   /api/documents            - create (path in the JSON body)
-//   PUT    /api/documents/{path...}  - update
-//   DELETE /api/documents/{path...}  - soft-delete (-> .trash/)
-//   POST   /api/attachments/{path...} - upload, path = owning document
-//   GET    /assets/{path...}         - serve an attachment, visibility-
-//                                       gated through its owning document
+// Registers the documents JSON API — no HTML anywhere here, see
+// docs/architecture.md's frontend section. The /d/{path...} and
+// /edit/{path...} URLs a human navigates to are handled by
+// PageRoutes.cpp instead (they just serve the static SPA shell); this
+// file is purely the data layer those pages' JS fetches from.
+//
+//   GET    /api/documents/{path...}      - read (visibility-gated same
+//                                           as everything else: 404, not
+//                                           403, for a private document
+//                                           to an anonymous caller)
+//   GET    /api/documents/{path...}/raw  - literal file bytes (unchanged)
+//   POST   /api/documents                - create (path in the JSON body)
+//   PUT    /api/documents/{path...}      - update
+//   DELETE /api/documents/{path...}      - soft-delete (-> .trash/)
+//   POST   /api/attachments/{path...}    - upload, path = owning document
+//   GET    /assets/{path...}             - serve an attachment, visibility-
+//                                           gated through its owning
+//                                           document
 //
 // All mutating routes require AuthFilter + CsrfFilter (admin session +
 // matching CSRF token) — see main.cpp for why the filters need a forced
 // classTypeName() call, and docs/architecture.md for the fully-qualified-
 // name gotcha in the {Get, "wikicore::auth::AuthFilter"}-style strings
 // below.
-// `basePath` (already normalized, see AppConfig::basePath) — see
-// AuthRoutes.h's doc comment for what it does and why: it's prepended to
-// every href/action/redirect this registers emits; the routes themselves
-// stay unprefixed.
 void registerDocumentRoutes(drogon::HttpAppFramework& app,
                              wikicore::vault::VaultRepository& vault,
                              wikicore::vault::DocumentService& documentService,
-                             wikicore::vault::AttachmentService& attachmentService,
-                             const std::string& basePath);
+                             wikicore::vault::AttachmentService& attachmentService);
 
 }  // namespace wikicore::controllers

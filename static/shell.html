@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<script>
+// This file is served BYTE-IDENTICAL for every route (see PageRoutes.cpp)
+// and carries no per-request server templating at all — so unlike the
+// old server-rendered pages, it can't have a reverse-proxy subpath (e.g.
+// "/wiki") baked into its own resource links by the backend. Fixed here
+// instead, as the very first thing in <head>, before the parser reaches
+// any <link>/<script src> below: infer the mount prefix from the
+// CURRENT URL by matching it against the same route shapes
+// PageRoutes.cpp registers, and set a <base> so every RELATIVE href/src
+// in this document (deliberately none of them start with "/") resolves
+// correctly regardless of how deep the current route is or what prefix
+// (if any) this app is mounted under. window.__WIKI_BASE_PATH__ is also
+// exposed for common.js's basePath() to reuse for its own absolute
+// (basePath-prefixed) API/page URLs.
+(function () {
+  "use strict";
+  var path = location.pathname;
+  var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/];
+  var prefix = "";
+  for (var i = 0; i < patterns.length; i++) {
+    var m = path.match(patterns[i]);
+    if (m) {
+      prefix = path.slice(0, m.index);
+      break;
+    }
+  }
+  // Bare "/" or exactly this deployment's own mount root (e.g. visiting
+  // "/wiki" or "/wiki/" with nothing after) — no known route suffix to
+  // anchor on, so there's nothing to strip; unprefixed deployments hit
+  // this branch too (prefix stays "").
+  if (!prefix && path !== "/") prefix = path.replace(/\/+$/, "");
+  window.__WIKI_BASE_PATH__ = prefix;
+  var base = document.createElement("base");
+  base.href = prefix + "/";
+  document.head.appendChild(base);
+})();
+</script>
+<title id="page-title">wiki</title>
+<link rel="stylesheet" href="css/theme.css">
+<link rel="stylesheet" href="js/toastui-editor/toastui-editor.css">
+<!-- Official dark theme (theme: 'dark' in pages/edit.js's Editor
+     constructor call applies the .toastui-editor-dark class it's scoped
+     under) — the editor's own UI used to be stock light-theme white
+     inside an otherwise all-black page. Not a pixel-perfect match for
+     the green terminal look, but a real, maintained theme beats hand-
+     rolled CSS overrides fighting a third-party component's internals. -->
+<link rel="stylesheet" href="js/toastui-editor/toastui-editor-dark.css">
+</head>
+<body>
+<canvas id="matrix-bg"></canvas>
+<div class="layout">
+<nav class="sidebar">
+  <a class="sidebar-brand" data-href="/" href="#">wiki</a>
+  <div class="sidebar-links">
+    <a data-href="/search" href="#">Search</a>
+    <a data-href="/folder" href="#">Browse</a>
+    <button type="button" id="sidebar-new-doc" hidden>+ New</button>
+    <button type="button" id="sidebar-logout" hidden>Log out</button>
+  </div>
+  <div class="sidebar-section"><h3>Tags</h3><div id="nav-tags"></div></div>
+  <div class="sidebar-section"><h3>Documents</h3><div id="nav-tree"></div></div>
+</nav>
+<main id="app-content" class="content">Loading&hellip;</main>
+</div>
+
+<!-- router.js reads location.pathname and renders the actual page into
+     #app-content from JSON fetched off /api/* — the server never builds
+     HTML from a request. See docs/architecture.md's frontend section. -->
+
+<!-- common.js MUST load first — everything else reads window.WikiCommon
+     at its own top level, not lazily inside an event handler. -->
+<script src="js/common.js"></script>
+<script src="js/matrix.js"></script>
+<script src="js/nav.js"></script>
+<script src="js/document.js"></script>
+<script src="js/toastui-editor/toastui-editor.min.js"></script>
+<script src="js/pages/login.js"></script>
+<script src="js/pages/search.js"></script>
+<script src="js/pages/view.js"></script>
+<script src="js/pages/edit.js"></script>
+<script src="js/pages/folder.js"></script>
+<script src="js/router.js"></script>
+</body>
+</html>

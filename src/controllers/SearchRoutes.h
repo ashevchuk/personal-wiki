@@ -4,18 +4,17 @@
 
 #include <drogon/HttpAppFramework.h>
 
-#include <string>
-
 namespace wikicore::controllers {
 
-// GET /search           - full page (search box + htmx-wired results)
-// GET /api/search       - htmx partial: HTML fragment of matching
-//                          documents for ?q=&tag=&type=, visibility-gated
-//                          by the caller's auth state
+// GET /api/search?q=&tag=&type= — JSON array of matching documents,
+// visibility-gated by the caller's auth state. No HTML here — see
+// docs/architecture.md's frontend section; static/js/pages/search.js
+// renders the results (including the snippet's <mark> highlighting,
+// mirroring the same escape-then-substitute order this used to do
+// server-side — see the `snippet`/`snippetIsHighlighted` fields below).
 //
-// `basePath` (already normalized, see AppConfig::basePath) — see
-// AuthRoutes.h's doc comment for what it does and why.
-void registerSearchRoutes(drogon::HttpAppFramework& app, wikicore::index::FtsSearch& search,
-                           const std::string& basePath);
+// GET /search itself (the page a human navigates to) is handled by
+// PageRoutes.cpp, not here — it just serves the static SPA shell.
+void registerSearchRoutes(drogon::HttpAppFramework& app, wikicore::index::FtsSearch& search);
 
 }  // namespace wikicore::controllers

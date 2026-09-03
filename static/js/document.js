@@ -1,11 +1,10 @@
 // Shared "delete this document" behavior — a small library, not a
 // self-wiring page controller (unlike nav.js/folder.js), because it's
-// used from two different contexts that need to sequence the wiring
-// differently: the document view page's own Delete button (wired by a
-// tiny inline bootstrap script right in DocumentRoutes.cpp's chrome —
-// that page has no dedicated JS file of its own) and the edit page's
-// Delete button (wired explicitly from edit.js, after its own setup).
-// Soft-deletes via DELETE /api/documents/{path} (moves to .trash/, see
+// used from two different page modules that each wire it at their own
+// point (after they've finished building their own DOM): view.js (the
+// document view page's Delete button) and pages/edit.js (its own Delete
+// button, shown only for an existing document). Soft-deletes via
+// DELETE /api/documents/{path} (moves to .trash/, see
 // DocumentService::softDelete) — never a hard, irreversible delete.
 window.WikiDocument = (function () {
   "use strict";

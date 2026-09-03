@@ -2,19 +2,23 @@
 
 #include <drogon/HttpAppFramework.h>
 
-#include <string>
-
 namespace wikicore::controllers {
 
-// Registers GET/POST /login and POST /logout. Must be called after
+// Registers the auth JSON API. Must be called after
 // wikicore::auth::AuthServices::init() — the handlers reach through it
 // for SessionStore/RateLimiter/AdminAccount.
 //
-// `basePath` (already normalized, see AppConfig::basePath) is prepended to
-// every href/action/redirect this registers emits — the routes themselves
-// stay unprefixed ("/login", not "${basePath}/login"), since a reverse
-// proxy mounting this app under basePath is expected to strip the prefix
-// before forwarding. Empty by default: on-root behavior, unchanged.
-void registerAuthRoutes(drogon::HttpAppFramework& app, const std::string& basePath);
+//   POST /api/login    {username, password} -> {ok:true} + session/csrf
+//                       cookies, or {ok:false, error} with 401/429
+//   POST /api/logout    -> {ok:true}, clears cookies (CSRF-protected)
+//   GET  /api/session   -> {authenticated: bool}
+//
+// No HTML here at all — see docs/architecture.md's frontend section: the
+// client (static/js/pages/login.js) owns the login form and redirect
+// entirely; this only ever returns JSON. No basePath parameter either —
+// unlike the old HTML-returning version, nothing here builds a URL/link
+// that would need it (the client already knows its own base path, see
+// common.js's basePath()).
+void registerAuthRoutes(drogon::HttpAppFramework& app);
 
 }  // namespace wikicore::controllers

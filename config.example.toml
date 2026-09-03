@@ -9,14 +9,12 @@
 listen_addr = "127.0.0.1"   # put behind a reverse proxy for TLS/public exposure
 port = 8080
 threads = 2
-# Mount-point prefix for reverse-proxying this app under a subpath (e.g.
-# "/wiki") instead of a whole (sub)domain. Leave unset/empty for on-root
-# deployment (default) — nothing below needs to change in that case.
-# When set, every href/action/hx-*/redirect this app emits carries the
-# prefix, so the proxy only needs a PLAIN prefix-stripping proxy_pass —
-# no sub_filter/proxy_redirect response-rewriting required. See
-# docs/deployment.md's reverse-proxy section for the nginx recipe.
-# base_path = "/wiki"
+# No setting needed here for reverse-proxying under a subpath (e.g.
+# "/wiki") — the frontend is a static SPA shell + client-side JS (see
+# docs/architecture.md); shell.html's own inline bootstrap script infers
+# the mount prefix from the browser's current URL at load time. A plain
+# prefix-stripping `location /wiki/ { proxy_pass ...; }` just works, no
+# config here.
 
 [vault]
 # Root directory of the markdown vault (source of truth for all content).
@@ -33,6 +31,30 @@ db_path = "./vault_data/.index.db"
 # public — wiki-mcp sees only public documents. Use for any future
 #          remote/shared MCP transport.
 scope = "admin"
+
+# Any file can be uploaded as an attachment regardless of extension (see
+# vault/AttachmentService.h) — nothing to configure to allow/deny a type.
+# What IS configurable here is presentation only: the guessed Content-Type
+# and whether a browser is allowed to render a given extension inline
+# when it navigates straight to an attachment's URL (GET /assets/...) —
+# everything else is served with Content-Disposition: attachment (forced
+# download) instead, which is what actually prevents an uploaded
+# .html/.svg/etc from executing same-origin script; it is NOT a security
+# setting to loosen carelessly. Leave this whole section out entirely
+# (as below, commented) to use the built-in defaults — see
+# AttachmentService::defaultMimeTypes() / defaultInlineSafeExtensions()
+# in src/vault/AttachmentService.cpp for exactly what those are. If you
+# DO uncomment [attachments.mime_types] or inline_safe_extensions, that
+# table/array REPLACES the built-in list entirely (not merged) — copy the
+# full default list from AttachmentService.cpp first if you just want to
+# add one extension.
+#
+# [attachments.mime_types]
+# ini = "text/plain"
+# conf = "text/plain"
+#
+# [attachments]
+# inline_safe_extensions = ["png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "mp3", "mp4", "webm", "csv", "json", "ogg", "wav"]
 
 [log]
 level = "info"   # trace | debug | info | warn | error

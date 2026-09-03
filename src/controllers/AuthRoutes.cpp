@@ -5,14 +5,10 @@
 #include "auth/AuthServices.h"
 #include "auth/PasswordHasher.h"
 #include "auth/RateLimiter.h"
+#include "auth/RequireAdmin.h"
 #include "auth/SessionStore.h"
-#include "util/BasePath.h"
-#include "util/HtmlEscape.h"
-#include "util/PageChrome.h"
 
 #include <drogon/HttpResponse.h>
-
-#include <optional>
 
 using namespace drogon;
 using namespace wikicore::auth;
@@ -21,31 +17,11 @@ namespace wikicore::controllers {
 
 namespace {
 
-std::string renderLoginPage(const std::string& basePath,
-                             std::optional<std::string> errorMessage) {
-  std::string errorHtml;
-  if (errorMessage) {
-    errorHtml = "<p style=\"color:#ff5555\">" +
-                util::escapeHtml(*errorMessage) + "</p>";
-  }
-  const std::string body =
-      "<h1>Sign in</h1>" +
-      errorHtml +
-      "<form method=\"post\" action=\"" + util::withBasePath(basePath, "/login") + "\">"
-      "<p><label>Username <input type=\"text\" name=\"username\" "
-      "autocomplete=\"username\" required></label></p>"
-      "<p><label>Password <input type=\"password\" name=\"password\" "
-      "autocomplete=\"current-password\" required></label></p>"
-      "<p><button type=\"submit\">Sign in</button></p>"
-      "</form>";
-  return util::renderPage(basePath, "Sign in — wiki", body);
-}
-
-HttpResponsePtr htmlResponse(std::string body, HttpStatusCode status = k200OK) {
-  auto resp = HttpResponse::newHttpResponse();
+HttpResponsePtr jsonError(HttpStatusCode status, const std::string& message) {
+  Json::Value body;
+  body["error"] = message;
+  auto resp = HttpResponse::newHttpJsonResponse(body);
   resp->setStatusCode(status);
-  resp->setContentTypeCode(CT_TEXT_HTML);
-  resp->setBody(std::move(body));
   return resp;
 }
 
@@ -73,37 +49,43 @@ Cookie makeCsrfCookie(const std::string& csrfToken, bool secure, int maxAgeSecon
 
 }  // namespace
 
-void registerAuthRoutes(HttpAppFramework& app, const std::string& basePath) {
+void registerAuthRoutes(HttpAppFramework& app) {
   app.registerHandler(
-      "/login",
-      [basePath](const HttpRequestPtr& req,
-                 std::function<void(const HttpResponsePtr&)>&& callback) {
-        const std::string& existing = req->getCookie(kSessionCookieName);
-        if (!existing.empty() &&
-            AuthServices::sessions().validate(existing)) {
-          callback(HttpResponse::newRedirectionResponse(
-              util::withBasePath(basePath, "/")));
-          return;
-        }
-        callback(htmlResponse(renderLoginPage(basePath, std::nullopt)));
+      "/api/session",
+      [](const HttpRequestPtr& req,
+         std::function<void(const HttpResponsePtr&)>&& callback) {
+        Json::Value body;
+        body["authenticated"] = isAuthenticated(req);
+        callback(HttpResponse::newHttpJsonResponse(body));
       },
-      {Get});
+      // isAuthenticated() reads req->attributes() — AuthFilter is what
+      // POPULATES that from the session cookie in the first place.
+      // Without it listed here, this always answers false regardless of
+      // whether the caller is actually logged in — caught immediately by
+      // security_e2e.py's "admin session check" assertion, the exact
+      // class of bug it exists to catch (see the M2 postmortem in
+      // docs/architecture.md: a filter not being listed on a route is a
+      // silent bug, not a build error).
+      {Get, "wikicore::auth::AuthFilter"});
 
   app.registerHandler(
-      "/login",
-      [basePath](const HttpRequestPtr& req,
-                 std::function<void(const HttpResponsePtr&)>&& callback) {
+      "/api/login",
+      [](const HttpRequestPtr& req,
+         std::function<void(const HttpResponsePtr&)>&& callback) {
         const std::string ip = req->getPeerAddr().toIp();
 
         if (!AuthServices::rateLimiter().allow(ip)) {
-          callback(htmlResponse(
-              renderLoginPage(basePath, "Too many attempts. Try again shortly."),
-              k429TooManyRequests));
+          callback(jsonError(k429TooManyRequests, "Too many attempts. Try again shortly."));
           return;
         }
 
-        const std::string username = std::string(req->getParameter("username"));
-        const std::string password = std::string(req->getParameter("password"));
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("username") || !json->isMember("password")) {
+          callback(jsonError(k400BadRequest, "expected {username, password}"));
+          return;
+        }
+        const std::string username = (*json)["username"].asString();
+        const std::string password = (*json)["password"].asString();
 
         const auto admin = AuthServices::admin().find();
         const bool ok = admin.has_value() && admin->username == username &&
@@ -111,9 +93,7 @@ void registerAuthRoutes(HttpAppFramework& app, const std::string& basePath) {
 
         if (!ok) {
           AuthServices::rateLimiter().recordFailure(ip);
-          callback(htmlResponse(
-              renderLoginPage(basePath, "Invalid username or password."),
-              k401Unauthorized));
+          callback(jsonError(k401Unauthorized, "Invalid username or password."));
           return;
         }
 
@@ -122,8 +102,9 @@ void registerAuthRoutes(HttpAppFramework& app, const std::string& basePath) {
             admin->id, std::string(req->getHeader("User-Agent")), ip);
 
         constexpr int kMaxAgeSeconds = 60 * 60 * 24 * 14;
-        auto resp = HttpResponse::newRedirectionResponse(
-            util::withBasePath(basePath, "/"));
+        Json::Value body;
+        body["ok"] = true;
+        auto resp = HttpResponse::newHttpJsonResponse(body);
         resp->addCookie(makeSessionCookie(session.rawToken,
                                            req->isOnSecureConnection(),
                                            kMaxAgeSeconds));
@@ -135,15 +116,16 @@ void registerAuthRoutes(HttpAppFramework& app, const std::string& basePath) {
       {Post});
 
   app.registerHandler(
-      "/logout",
-      [basePath](const HttpRequestPtr& req,
-                 std::function<void(const HttpResponsePtr&)>&& callback) {
+      "/api/logout",
+      [](const HttpRequestPtr& req,
+         std::function<void(const HttpResponsePtr&)>&& callback) {
         const std::string& token = req->getCookie(kSessionCookieName);
         if (!token.empty()) {
           AuthServices::sessions().destroy(token);
         }
-        auto resp = HttpResponse::newRedirectionResponse(
-            util::withBasePath(basePath, "/"));
+        Json::Value body;
+        body["ok"] = true;
+        auto resp = HttpResponse::newHttpJsonResponse(body);
         resp->removeCookie(kSessionCookieName);
         resp->removeCookie(kCsrfCookieName);
         callback(resp);

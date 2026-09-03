@@ -1,7 +1,5 @@
 #include "config/AppConfig.h"
 
-#include "util/BasePath.h"
-
 #include <toml++/toml.h>
 
 #include <filesystem>
@@ -30,7 +28,6 @@ AppConfig AppConfig::load(const std::string& path) {
         (*server)["port"].value_or(static_cast<int64_t>(cfg.port)));
     cfg.threads = static_cast<size_t>(
         (*server)["threads"].value_or(static_cast<int64_t>(cfg.threads)));
-    cfg.basePath = util::normalizeBasePath((*server)["base_path"].value_or(std::string()));
   }
   if (auto* vault = root["vault"].as_table()) {
     cfg.vaultPath = (*vault)["path"].value_or(cfg.vaultPath);
@@ -40,6 +37,22 @@ AppConfig AppConfig::load(const std::string& path) {
   }
   if (auto* mcp = root["mcp"].as_table()) {
     cfg.mcpScope = (*mcp)["scope"].value_or(cfg.mcpScope);
+  }
+  if (auto* attachments = root["attachments"].as_table()) {
+    if (auto* mimeTypes = (*attachments)["mime_types"].as_table()) {
+      for (const auto& [extKey, node] : *mimeTypes) {
+        if (const auto mime = node.value<std::string>()) {
+          cfg.attachmentMimeTypes[std::string(extKey.str())] = *mime;
+        }
+      }
+    }
+    if (auto* inlineSafe = (*attachments)["inline_safe_extensions"].as_array()) {
+      for (const auto& node : *inlineSafe) {
+        if (const auto ext = node.value<std::string>()) {
+          cfg.attachmentInlineSafeExtensions.insert(*ext);
+        }
+      }
+    }
   }
   if (auto* log = root["log"].as_table()) {
     cfg.logLevel = (*log)["level"].value_or(cfg.logLevel);
