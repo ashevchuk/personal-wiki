@@ -1,11 +1,5 @@
-/* Milestone 2: functional, not pretty — visual design is out of scope
-   until the plan gets back to frontend polish. */
-body {
-  font-family: system-ui, sans-serif;
-  max-width: 960px;
-  margin: 1.5rem auto;
-  padding: 0 1rem;
-}
+/* Edit-page-specific layout only — colors/fonts/sidebar come from the
+   shared theme.css, loaded before this file. */
 .field-row {
   display: flex;
   gap: 1rem;
@@ -38,8 +32,8 @@ body {
   font-size: 0.9rem;
 }
 #f-status.error {
-  color: #b00020;
+  color: var(--error, #ff5555);
 }
 #f-status.ok {
-  color: #1a7f37;
+  color: var(--ok, #55ff99);
 }

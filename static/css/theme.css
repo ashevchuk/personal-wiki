@@ -1,0 +1,198 @@
+/* Site-wide green-on-black "terminal" theme, shared across every page
+   (login, document view, edit, search). Layered UNDER page-specific
+   stylesheets (edit.css) — this owns colors/layout/typography, the
+   page-specific sheets only own their own form/widget details. */
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #000;
+  --fg: #00ff00;
+  --fg-dim: #009900;
+  --fg-bright: #ccffcc;
+  --panel-bg: rgba(0, 20, 0, 0.55);
+  --border: rgba(0, 255, 0, 0.35);
+  --glow: 0 0 6px rgba(0, 255, 0, 0.65);
+  --error: #ff5555;
+  --ok: #55ff99;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: 'Orbitron', 'Courier New', monospace;
+  text-shadow: var(--glow);
+}
+
+#matrix-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  display: block;
+}
+
+a {
+  color: var(--fg);
+  text-decoration: none;
+}
+a:hover,
+a:focus {
+  color: #fff;
+  text-shadow: 0 0 10px rgba(0, 255, 0, 0.9);
+}
+
+h1,
+h2,
+h3 {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.layout {
+  display: flex;
+  align-items: flex-start;
+  min-height: 100vh;
+}
+
+.sidebar {
+  width: 260px;
+  flex: 0 0 260px;
+  min-height: 100vh;
+  padding: 1rem;
+  border-right: 1px solid var(--border);
+  background: var(--panel-bg);
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  display: block;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-links {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+}
+
+.sidebar-section h3 {
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  margin: 1rem 0 0.4rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2rem;
+}
+
+.sidebar-section ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 0.6rem;
+  font-size: 0.85rem;
+}
+.sidebar-section li {
+  margin: 0.15rem 0;
+}
+.nav-folder {
+  color: var(--fg-dim);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 1.5rem 2rem 3rem;
+  max-width: 960px;
+}
+
+form p {
+  margin: 0.6rem 0;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+  background: #001a00;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.5rem;
+  text-shadow: none;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--fg);
+  box-shadow: var(--glow);
+}
+
+button {
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+button:hover {
+  background: var(--fg);
+  color: #000;
+}
+
+mark {
+  background: transparent;
+  color: #fff;
+  text-shadow: 0 0 8px var(--fg);
+}
+
+.results {
+  list-style: none;
+  padding: 0;
+}
+.results li {
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 0;
+}
+.results .tags {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+.results .snippet {
+  color: var(--fg-bright);
+  font-size: 0.9rem;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    flex-basis: auto;
+    min-height: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .content {
+    padding: 1rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #matrix-bg {
+    display: none;
+  }
+}

@@ -8,6 +8,7 @@
 #include "auth/SessionStore.h"
 #include "util/BasePath.h"
 #include "util/HtmlEscape.h"
+#include "util/PageChrome.h"
 
 #include <drogon/HttpResponse.h>
 
@@ -24,12 +25,10 @@ std::string renderLoginPage(const std::string& basePath,
                              std::optional<std::string> errorMessage) {
   std::string errorHtml;
   if (errorMessage) {
-    errorHtml = "<p style=\"color:#b00020\">" +
+    errorHtml = "<p style=\"color:#ff5555\">" +
                 util::escapeHtml(*errorMessage) + "</p>";
   }
-  return
-      "<!doctype html><html><head><meta charset=\"utf-8\">"
-      "<title>Sign in — wiki</title></head><body>"
+  const std::string body =
       "<h1>Sign in</h1>" +
       errorHtml +
       "<form method=\"post\" action=\"" + util::withBasePath(basePath, "/login") + "\">"
@@ -38,7 +37,8 @@ std::string renderLoginPage(const std::string& basePath,
       "<p><label>Password <input type=\"password\" name=\"password\" "
       "autocomplete=\"current-password\" required></label></p>"
       "<p><button type=\"submit\">Sign in</button></p>"
-      "</form></body></html>";
+      "</form>";
+  return util::renderPage(basePath, "Sign in — wiki", body);
 }
 
 HttpResponsePtr htmlResponse(std::string body, HttpStatusCode status = k200OK) {

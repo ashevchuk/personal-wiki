@@ -5,6 +5,7 @@
 #include "util/BasePath.h"
 #include "util/HtmlEscape.h"
 #include "util/MarkdownRenderer.h"
+#include "util/PageChrome.h"
 #include "vault/FrontMatter.h"
 #include "vault/PathGuard.h"
 
@@ -68,12 +69,12 @@ HttpResponsePtr renderDocument(const std::string& basePath, const std::string& d
         "\"><button type=\"submit\">Log out</button></form></p>";
   }
 
+  const std::string pageBody =
+      chrome + "<h1>" + escapedTitle + "</h1>" + util::renderMarkdownToHtml(body);
+
   auto resp = HttpResponse::newHttpResponse();
   resp->setContentTypeCode(CT_TEXT_HTML);
-  resp->setBody("<!doctype html><html><head><meta charset=\"utf-8\"><title>" +
-                escapedTitle + "</title></head><body>" + chrome + "<h1>" +
-                escapedTitle + "</h1>" + util::renderMarkdownToHtml(body) +
-                "</body></html>");
+  resp->setBody(util::renderPage(basePath, escapedTitle, pageBody));
   return resp;
 }
 

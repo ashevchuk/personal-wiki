@@ -47,6 +47,7 @@ add_library(wikicore STATIC
   src/util/Excerpt.cpp
   src/util/MarkdownRenderer.cpp
   src/util/BasePath.cpp
+  src/util/PageChrome.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC
