@@ -4,6 +4,7 @@
 #include "vault/VaultRepository.h"
 
 #include <cstdint>
+#include <string>
 
 namespace wikicore::index {
 
@@ -31,6 +32,16 @@ class IndexBuilder {
       : vault_(vault), indexUpdater_(indexUpdater) {}
 
   RescanStats fullRescan();
+
+  // Re-derives the index row for exactly one document from whatever's on
+  // disk right now, the same parse/fallback-title/stat/upsert logic
+  // fullRescan() uses per-file. Returns true if the file existed and was
+  // (re-)indexed, false if it doesn't exist — in which case the caller
+  // (VaultWatcher's change callback) should call
+  // IndexUpdater::removeOne itself; this method deliberately doesn't do
+  // that removal on the caller's behalf, since "file missing" and "file
+  // unreadable" would otherwise be indistinguishable to the caller.
+  bool reindexOneFile(const std::string& relativePath);
 
  private:
   vault::VaultRepository& vault_;

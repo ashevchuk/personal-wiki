@@ -8,7 +8,15 @@ User=wiki
 Group=wiki
 ExecStart=/opt/wiki/bin/wiki-server
 WorkingDirectory=/opt/wiki
-EnvironmentFile=/etc/wiki/wiki.env
+# Leading '-': optional. Nothing in wiki-server currently reads any
+# environment variable — admin credentials live in the SQLite users table
+# (set via `wiki-server --create-admin`), and sessions are random opaque
+# tokens validated by DB lookup, not signed by a secret. This file is a
+# reserved hook for something that might genuinely need one later (e.g. a
+# Phase 2 remote MCP bearer token) — see systemd/wiki.env.example. Without
+# the '-', systemd would refuse to start this unit at all if the file
+# doesn't exist, for a file nothing currently needs.
+EnvironmentFile=-/etc/wiki/wiki.env
 Restart=on-failure
 RestartSec=2
 

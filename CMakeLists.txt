@@ -40,6 +40,7 @@ add_library(wikicore STATIC
   src/index/IndexBuilder.cpp
   src/index/FtsSearch.cpp
   src/index/NavQueries.cpp
+  src/index/VaultWatcher.cpp
   src/util/Time.cpp
   src/util/Uuid.cpp
   src/util/HtmlEscape.cpp
@@ -126,6 +127,25 @@ target_link_libraries(wiki-mcp PRIVATE wikicore mcp)
 # explicitly.
 target_include_directories(wiki-mcp PRIVATE ${cpp_mcp_SOURCE_DIR}/include
                                               ${cpp_mcp_SOURCE_DIR}/common)
+
+# ---------------------------------------------------------------------------
+# Install layout — matches what systemd/wiki.service expects
+# (WorkingDirectory=/opt/wiki, static/ resolved relative to cwd by
+# app().setDocumentRoot("static") in main.cpp). Point
+# -DCMAKE_INSTALL_PREFIX at wherever this actually gets deployed (e.g.
+# /opt/wiki); it's deliberately not hardcoded here. config.toml itself is
+# NOT installed — only the .example is, so a real one is never silently
+# materialized from defaults; see docs/deployment.md.
+#
+# This is plain `cmake --install`, not a CPack .deb/tarball: the M5-
+# approved deployment model is a native build directly on the target
+# device (cross-compilation is Phase 2), so there's no distributable
+# artifact to package yet — just an install tree ready for systemd.
+# ---------------------------------------------------------------------------
+install(TARGETS wiki-server wiki-mcp RUNTIME DESTINATION bin)
+install(DIRECTORY static/ DESTINATION static)
+install(FILES config.example.toml DESTINATION .)
+install(FILES systemd/wiki.service systemd/wiki.env.example DESTINATION share/wiki/systemd)
 
 enable_testing()
 add_subdirectory(tests)

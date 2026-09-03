@@ -24,6 +24,7 @@
 #include "index/IndexBuilder.h"
 #include "index/IndexUpdater.h"
 #include "index/NavQueries.h"
+#include "index/VaultWatcher.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/VaultRepository.h"
@@ -162,6 +163,32 @@ int main(int argc, char** argv) {
   LOG_INFO << "startup reindex: " << startupRescan.documentsIndexed
            << " document(s), " << startupRescan.staleRowsRemoved
            << " stale row(s) removed";
+
+  // VaultWatcher runs on its own background thread and gets its OWN
+  // sqlite3 connection to the same db file, rather than sharing `db` with
+  // Drogon's request-handling threads: IndexUpdater's upsertOne/removeOne
+  // each wrap a BEGIN IMMEDIATE...COMMIT, and two threads racing a
+  // BEGIN on the SAME connection handle is a "cannot start a transaction
+  // within a transaction" error, not a safely-serialized one — a single
+  // sqlite3* handle being thread-safe (WAL mode, busy_timeout already set
+  // in Database::Database) means concurrent *connections* to the same
+  // file coordinate correctly; it does not mean one connection tolerates
+  // concurrent callers each assuming they own its transaction state.
+  wikicore::index::Database watcherDb(cfg.dbPath);
+  wikicore::index::IndexUpdater watcherIndexUpdater(watcherDb);
+  wikicore::index::IndexBuilder watcherIndexBuilder(vault, watcherIndexUpdater);
+  wikicore::index::VaultWatcher vaultWatcher(
+      cfg.vaultPath,
+      [&watcherIndexBuilder, &watcherIndexUpdater](const std::string& relativePath) {
+        if (!watcherIndexBuilder.reindexOneFile(relativePath)) {
+          watcherIndexUpdater.removeOne(relativePath);
+        }
+      },
+      [&watcherIndexBuilder]() {
+        LOG_WARN << "inotify event queue overflowed — falling back to a full rescan";
+        watcherIndexBuilder.fullRescan();
+      });
+  vaultWatcher.start();
 
   // Force these classes' DrObject<T> static registrar to actually
   // instantiate. It's a namespace-scope static (DrObject<T>::alloc_) whose
