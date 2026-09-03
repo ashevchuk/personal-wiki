@@ -35,6 +35,7 @@ add_library(wikicore STATIC
   src/vault/VaultRepository.cpp
   src/vault/DocumentService.cpp
   src/vault/AttachmentService.cpp
+  src/vault/FolderService.cpp
   src/index/Database.cpp
   src/index/IndexUpdater.cpp
   src/index/IndexBuilder.cpp
@@ -82,6 +83,7 @@ add_executable(wiki-server
   src/controllers/SearchRoutes.cpp
   src/controllers/NavRoutes.cpp
   src/controllers/AdminRoutes.cpp
+  src/controllers/FolderRoutes.cpp
 )
 target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
 

@@ -16,6 +16,7 @@
 #include "controllers/AdminRoutes.h"
 #include "controllers/AuthRoutes.h"
 #include "controllers/DocumentRoutes.h"
+#include "controllers/FolderRoutes.h"
 #include "controllers/NavRoutes.h"
 #include "controllers/SearchRoutes.h"
 #include "core/wikicore.h"
@@ -28,6 +29,7 @@
 #include "util/BasePath.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
+#include "vault/FolderService.h"
 #include "vault/VaultRepository.h"
 
 #include <drogon/drogon.h>
@@ -152,6 +154,7 @@ int main(int argc, char** argv) {
   wikicore::vault::DocumentService documentService(vault, indexUpdater);
   wikicore::vault::AttachmentService attachmentService(vault);
   wikicore::index::IndexBuilder indexBuilder(vault, indexUpdater);
+  wikicore::vault::FolderService folderService(vault, indexUpdater, indexBuilder);
   wikicore::index::FtsSearch ftsSearch(db);
   wikicore::index::NavQueries navQueries(db);
 
@@ -268,6 +271,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch, cfg.basePath);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);
+  wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)
