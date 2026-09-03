@@ -27,6 +27,7 @@ pkg_check_modules(ARGON2 REQUIRED IMPORTED_TARGET libargon2)
 # ---------------------------------------------------------------------------
 add_library(wikicore STATIC
   src/core/placeholder.cpp
+  src/vault/PathGuard.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC

@@ -15,6 +15,7 @@
     "argon2",
     "nlohmann-json",
     "md4c",
-    "yaml-cpp"
+    "yaml-cpp",
+    "catch2"
   ]
 }
