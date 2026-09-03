@@ -31,5 +31,9 @@ config.local.toml
 *.swp
 .DS_Store
 
+# Claude Code session-local state (scheduled-task locks, etc.) — not
+# project content
+.claude/
+
 # CMake user presets (machine-local)
 CMakeUserPresets.json
