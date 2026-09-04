@@ -32,6 +32,10 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
   filters.
 - **`[[wiki-links]]` and automatic backlinks**, Obsidian-style — link two notes,
   see the connection from both ends without touching either file's `tags`.
+- **Namespaced tags, filterable.** A tag containing `/` (`lang/cpp`, `project/wiki`)
+  groups into a collapsible tree in the sidebar instead of one long flat list; a filter
+  box above it narrows by substring. Purely a client-side convention — the server
+  treats `/` as just another character.
 - **A real editor, not a textarea.** Toast UI Editor (WYSIWYG + raw markdown), undo/
   redo, drag-and-drop image upload routed through the same attachment pipeline as
   everything else.
@@ -178,11 +182,12 @@ of real bugs caught by an actual E2E test, not just theory) live in
 
 All originally-planned milestones are done — bootstrap, auth, CRUD/WYSIWYG,
 search/nav, MCP (stdio + remote), hardening, deployment — plus a second pass adding
-document versioning, `[[wiki-links]]` backlinks, Cmd-K quick-open, vault backup, and
-YouTube embeds. Deployed and verified running on real ARM hardware via
-cross-compilation; see [`docs/deployment.md`](docs/deployment.md) for the exact,
-current verification status. Semantic search (`sqlite-vec` + embeddings) is the one
-deliberately-deferred item — no embedding-source decision made yet.
+document versioning, `[[wiki-links]]` backlinks, Cmd-K quick-open, vault backup,
+YouTube embeds, a Docker build, and a filterable/namespaced tag tree in the sidebar.
+Deployed and verified running on real ARM hardware via cross-compilation; see
+[`docs/deployment.md`](docs/deployment.md) for the exact, current verification status.
+Semantic search (`sqlite-vec` + embeddings) is the one deliberately-deferred item — no
+embedding-source decision made yet.
 
 ## License
 
