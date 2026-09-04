@@ -34,6 +34,8 @@ config.local.toml
 # Claude Code session-local state (scheduled-task locks, etc.) — not
 # project content
 .claude/
+CLAUDE.md
+claude.sh
 
 # CMake user presets (machine-local)
 CMakeUserPresets.json
