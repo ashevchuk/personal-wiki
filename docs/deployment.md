@@ -21,6 +21,69 @@ nginx/Samba/NFS/ProFTPD/mosquitto/munin, with zero impact on any of them. The co
 contains nothing deliberately x86-specific, and this is now empirically confirmed, not
 just "should work by construction".
 
+## Live production target
+
+**The actual, currently-running instance — record this here, not just in a chat
+session, or it gets lost the next time context gets compacted (confirmed the hard
+way: happened once already).**
+
+- Host: `root@192.0.2.10` (`httpd.wiki.example.com`, armv7l/sunxi, Debian 9
+  stretch — the same real hardware "Real-hardware verification status" above
+  describes).
+- Install root: `/opt/wiki` (`bin/`, `static/`, `config.toml`, `vault_data/`).
+- Public URL: `http://192.0.2.10/wiki/` (nginx `default` vhost, prefix-stripping
+  `proxy_pass` to `127.0.0.1:8080` — see "Reverse-proxying under a subpath" below;
+  `[server].base_path = "/wiki"` in `/opt/wiki/config.toml` is what makes the app
+  itself aware of that prefix).
+- systemd unit: `wiki.service`, `User=wiki`.
+
+This target's own C toolchain/distro age is exactly why binaries reach it
+cross-compiled from the dev machine (see "Cross-compilation" below), never
+via a native `cmake --install` run on the device itself — the "Update" recipe
+right below this section describes that native-build path for a *hypothetical*
+device capable of it, not this one.
+
+**Actual redeploy recipe used against this target** (backend OR frontend changes
+— cross-compilation always produces both binaries, cheap enough not to special-case
+static-only changes):
+
+```sh
+# 1. incremental cross-build (see "Cross-compilation" below for a from-scratch
+#    setup — vcpkg_installed_arm/ and build-arm/ are both reused, not
+#    recreated, on every subsequent deploy)
+export PKG_CONFIG_LIBDIR="$PWD/vcpkg_installed_arm/arm-musl/lib/pkgconfig:$PWD/vcpkg_installed_arm/arm-musl/share/pkgconfig"
+export PKG_CONFIG_SYSROOT_DIR=""
+cmake --build build-arm -j"$(nproc)"
+qemu-arm-static ./build-arm/tests/unit_tests   # must pass every case before shipping
+
+# 2. ship the new binaries + static assets alongside the live ones (never
+#    directly overwrite in place — a scp that dies mid-transfer must not
+#    leave a half-written binary where systemd will find it on next restart)
+scp build-arm/wiki-server build-arm/wiki-mcp root@192.0.2.10:/tmp/
+scp -r static root@192.0.2.10:/tmp/static-new
+
+# 3. on the target: back up what's live, swap the new files in, restart, verify
+ssh root@192.0.2.10 '
+  set -e
+  STAMP=$(date +%Y%m%d-%H%M%S)
+  cp /opt/wiki/bin/wiki-server /opt/wiki/bin/wiki-server.bak-$STAMP
+  cp /opt/wiki/bin/wiki-mcp /opt/wiki/bin/wiki-mcp.bak-$STAMP
+  mv /opt/wiki/static /opt/wiki/static.bak-$STAMP
+  chmod +x /tmp/wiki-server /tmp/wiki-mcp
+  mv /tmp/wiki-server /opt/wiki/bin/wiki-server
+  mv /tmp/wiki-mcp /opt/wiki/bin/wiki-mcp
+  mv /tmp/static-new /opt/wiki/static
+  chown -R wiki:wiki /opt/wiki/bin /opt/wiki/static
+  systemctl restart wiki.service
+  sleep 1
+  systemctl is-active wiki.service
+  curl -s -o /dev/null -w "healthz: %{http_code}\n" http://127.0.0.1:8080/healthz
+'
+```
+
+The `.bak-$STAMP` copies are never cleaned up automatically — `/opt/wiki` on a
+long-lived deployment accumulates them; sweep old ones by hand occasionally.
+
 ## Prerequisites (on the target device — Raspberry Pi or another Linux/ARM64/x86_64 SBC)
 
 - A C++20-capable GCC (verified on GCC 16.2.1; GCC has had C++20 since version 10, but
