@@ -29,15 +29,23 @@ namespace wikicore::util {
 std::vector<std::string> extractWikiLinkTargets(std::string_view markdown);
 
 // Rewrites every `[[target]]` / `[[target|label]]` into a plain
-// `[label](target)` CommonMark link (label defaults to the target text,
+// `[label](d/target)` CommonMark link (label defaults to the target text,
 // exactly as written before normalization, when no `|label` is given) —
-// anything md4c already knows how to render. The href is the *normalized*
-// target, always relative (no leading '/'), so it resolves correctly
-// against this app's own <base> tag (see shell.html) the same way every
-// other relative link/asset URL in this app does, independent of
-// [server].base_path/reverse-proxy subpath. Called once per render, right
-// before renderMarkdownToHtml — MarkdownRenderer itself stays unaware
-// this syntax exists at all.
+// anything md4c already knows how to render. The href is `d/` + the
+// *normalized* target, always relative (no leading '/'), so it resolves
+// correctly against this app's own <base href="{basePath}/"> tag (see
+// shell.html) the same way every other relative link/asset URL in this
+// app does, independent of [server].base_path/reverse-proxy subpath. The
+// `d/` prefix is NOT optional — normalizeTarget()'s output is a path in
+// FILE space (matching the vault's own directory structure), but viewing
+// a document is a ROUTE at `/d/{path}`, not the bare path itself; an
+// earlier version of this function emitted the bare target and shipped
+// broken links to production before a real user caught it by clicking
+// one (every test at the time asserted the bare, broken shape as
+// "correct" — they'd been written by copying what the code produced, not
+// by independently deriving what the URL actually needed to be). Called
+// once per render, right before renderMarkdownToHtml — MarkdownRenderer
+// itself stays unaware this syntax exists at all.
 std::string rewriteWikiLinksToMarkdownLinks(std::string_view markdown);
 
 }  // namespace wikicore::util

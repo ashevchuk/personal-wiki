@@ -40,13 +40,33 @@ TEST_CASE("extractWikiLinkTargets does not hang or throw on an unterminated [[",
 TEST_CASE("rewriteWikiLinksToMarkdownLinks produces plain CommonMark links",
           "[WikiLinks]") {
   const std::string out = rewriteWikiLinksToMarkdownLinks("See [[notes/foo]].");
-  REQUIRE(out == "See [notes/foo](notes/foo.md).");
+  REQUIRE(out == "See [notes/foo](d/notes/foo.md).");
+}
+
+// A real bug, shipped and caught live: the href used to be the bare
+// normalized target ("notes/foo.md") with no "d/" prefix at all — every
+// test at the time asserted THAT as correct, because it matched what the
+// code produced rather than what the URL actually needed to resolve to
+// against shell.html's <base href="{basePath}/">. Document VIEWS are a
+// route at /d/{path}, not the vault-relative path itself; the two are
+// easy to conflate since both look like "notes/foo.md". This test
+// exists specifically so that conflation can't silently come back —
+// asserting "starts with d/", not just equality against one fixed
+// string, so it stays meaningful even if normalizeTarget's own output
+// shape changes later.
+TEST_CASE("rewriteWikiLinksToMarkdownLinks hrefs are d/-prefixed, not the bare "
+          "vault-relative path",
+          "[WikiLinks]") {
+  const std::string out = rewriteWikiLinksToMarkdownLinks("[[notes/foo]]");
+  const size_t hrefStart = out.find('(');
+  REQUIRE(hrefStart != std::string::npos);
+  REQUIRE(out.compare(hrefStart + 1, 2, "d/") == 0);
 }
 
 TEST_CASE("rewriteWikiLinksToMarkdownLinks honors a custom |label", "[WikiLinks]") {
   const std::string out =
       rewriteWikiLinksToMarkdownLinks("[[notes/foo|Friendly Name]]");
-  REQUIRE(out == "[Friendly Name](notes/foo.md)");
+  REQUIRE(out == "[Friendly Name](d/notes/foo.md)");
 }
 
 TEST_CASE("rewriteWikiLinksToMarkdownLinks passes non-wiki-link text through untouched",
@@ -65,5 +85,5 @@ TEST_CASE("rewriteWikiLinksToMarkdownLinks handles multiple links in one documen
           "[WikiLinks]") {
   const std::string out = rewriteWikiLinksToMarkdownLinks(
       "Start [[a/one]] middle [[b/two|Two]] end.");
-  REQUIRE(out == "Start [a/one](a/one.md) middle [Two](b/two.md) end.");
+  REQUIRE(out == "Start [a/one](d/a/one.md) middle [Two](d/b/two.md) end.");
 }

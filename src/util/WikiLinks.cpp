@@ -117,7 +117,22 @@ std::string rewriteWikiLinksToMarkdownLinks(std::string_view markdown) {
       // malformed result degrades to "renders oddly", not a security
       // issue (MD_FLAG_NOHTMLSPANS/BLOCKS already strips any HTML either
       // way -- see MarkdownRenderer.cpp).
-      out.append("[").append(label).append("](").append(target).append(")");
+      //
+      // "d/" + target, NEVER the bare target -- a REAL bug, shipped and
+      // caught live by the user clicking a real link on the real
+      // production site, not found by any test (every existing test
+      // asserted the bare, broken shape as "correct" because it matched
+      // what the code already produced, not what the URL actually needed
+      // to be). shell.html's own <base href="{basePath}/"> means every
+      // relative href on the page resolves against the MOUNT ROOT, not
+      // the current document's own path -- normalizeTarget() returns a
+      // path in FILE space (matching the vault's own directory
+      // structure), but viewing a document is a ROUTE at `/d/{path}`,
+      // not the bare path itself. The two look similar enough (both are
+      // "notes/foo.md"-shaped) that this was easy to get wrong and easy
+      // to miss without actually clicking the rendered link in a real
+      // browser.
+      out.append("[").append(label).append("](d/").append(target).append(")");
     }
     pos = close + 2;
   }
