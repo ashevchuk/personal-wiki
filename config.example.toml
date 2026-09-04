@@ -1,9 +1,15 @@
-# Copy to config.toml (or point WIKI_CONFIG at another path) and adjust.
+# Copy to config.toml, in the SAME directory wiki-server/wiki-mcp are run
+# from (both look for "config.toml" relative to the process's current
+# working directory, falling back to this file — config.example.toml —
+# if it's missing; there's no env var to point at a different path).
 # config.toml is gitignored — never commit a real one.
 #
-# Secrets (admin password hash, session cookie signing key) are NOT set
-# here — they come from environment variables / systemd EnvironmentFile.
-# See systemd/wiki.env.example.
+# No secret of any kind lives in this file OR in an environment variable
+# — nothing in wiki-server reads one. The admin password is entered once,
+# interactively, via `wiki-server --create-admin` (argon2id hash goes
+# straight into SQLite); session and remote-MCP tokens are random opaque
+# values, not signed by any secret. systemd/wiki.env.example stays a
+# documented hook for a future feature that might genuinely need one.
 
 [server]
 listen_addr = "127.0.0.1"   # put behind a reverse proxy for TLS/public exposure
