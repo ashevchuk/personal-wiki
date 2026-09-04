@@ -265,6 +265,43 @@ handler, don't rely on "the filter's already attached".
   still-current distinction between the two (don't conflate them back together just
   because this line got fixed).
 
+## Later addition: sidebar tag namespace grouping + filter
+
+Well past M5, once the vault had accumulated enough tags for the sidebar's flat `<ul>`
+of every tag in use to become genuinely unwieldy on screen — the same problem the
+document tree already had, and already had a fix for.
+
+- **Reused the document tree's own grouping convention rather than inventing a second
+  one.** `nav.js::buildTree` already splits a document's `path` on `/` into a
+  collapsible folder tree; `buildTags` now does the identical thing to a tag STRING —
+  `lang/cpp`, `lang/python`, `project/wiki` group into a `lang/`/`project/` tree,
+  collapsed by default, same `.nav-arrow`/`.nav-children`/`collapsed` CSS classes, same
+  shape entirely. A tag with no `/` stays a flat leaf, exactly as before. This is purely
+  a client-side presentation convention — `/api/nav/tags` (`NavQueries::tagCounts`)
+  still returns the same flat `{tag, count}` list it always has; the server has no idea
+  any grouping happens (see `docs/mcp.md`'s own note on this, since an MCP client
+  choosing tag values for `create_document`/`update_document` benefits from knowing the
+  convention exists even though nothing server-side enforces or requires it).
+- **Expand state gets its OWN localStorage key** (`wiki.expandedTagGroups`), deliberately
+  separate from the document tree's `wiki.expandedFolders` — expanding `notes/` as a
+  folder and `notes/` as a tag-namespace prefix are unrelated pieces of state; sharing
+  one key would have been an accidental coupling, not a feature.
+- **A real `<button>` for the group toggle, not a reuse of `.nav-folder-btn`** — that
+  class is a `<span>` flex-wrapper around a SEPARATE arrow-`<button>` + label-`<a>` pair
+  in the document tree (the label navigates to `/folder/{path}`; the arrow only
+  toggles). A tag namespace group has no `/folder/{path}`-equivalent page to send a
+  label click to, so there's no second action competing for the click — the whole row
+  toggles, which is also just a bigger, easier target than the narrow arrow glyph
+  alone. Caught by rendering it and looking, not by assuming a class named
+  `.nav-folder-btn` would just work on a real `<button>` the way it does on a `<span>`.
+- **Filter-as-you-type rebuilds the whole tree from scratch on every keystroke** — the
+  same choice `quick-open.js` already made for its own filtered list, at a comparable
+  scale, no debounce either place. A match forces every ancestor group open regardless
+  of its persisted collapse state, and clearing the filter reverts to exactly that
+  persisted state — the transient, search-driven expansion is never itself written to
+  `localStorage`, confirmed live (expand `lang/`, filter for something else, clear the
+  filter, `lang/` is still the only one open).
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
