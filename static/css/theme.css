@@ -430,6 +430,18 @@ a.btn:focus {
   color: var(--fg-dim);
 }
 
+/* `![youtube](url)` embed (util/YouTubeEmbed.h + MarkdownRenderer.cpp) —
+   renders as a real <iframe>, sized to a 16:9 box that fills its column
+   without overflowing it (matches `img { max-width: 100% }` in the print
+   block below, same idea for a non-print viewport). */
+.youtube-embed {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+  border: 0;
+}
+
 /* [[wiki-link]] backlinks section on the document view page (view.js) —
    deliberately visually distinct from the document body: a horizontal
    rule + dim heading so it reads as "documents that mention this one",

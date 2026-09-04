@@ -13,6 +13,8 @@ add_executable(unit_tests
   unit/IndexBuilderTest.cpp
   unit/VaultWatcherTest.cpp
   unit/WikiLinksTest.cpp
+  unit/YouTubeEmbedTest.cpp
+  unit/MarkdownRendererTest.cpp
   unit/SnapshotStoreTest.cpp
   unit/McpAuditLogTest.cpp
   unit/BackupServiceTest.cpp
