@@ -233,9 +233,14 @@ handler, don't rely on "the filter's already attached".
 - **`cmake --install` verified live**: a real install tree (`--prefix /tmp/...`), a
   real run of the installed binary with `config.toml` copied from the example,
   `/healthz` and a static asset (htmx from `static/js/htmx/`) both returned `200`.
-- **Raspberry Pi — NOT verified**: the dev environment has no physical ARM hardware.
-  See `docs/deployment.md`, the "Real-hardware verification status" section — honestly
-  flagged as a remaining step, not hidden behind "should work".
+- **Raspberry Pi — cross-compiled binary now verified live**, in a later session past
+  M5 (this note was stale — said "NOT verified" while the actual armv7/musl binary had
+  already been cross-built, `qemu-arm-static`-checked, and was running natively on real
+  hardware as the actual production instance every later milestone's live testing
+  happened against). **Native compilation directly ON the device is still NOT done** —
+  see `docs/deployment.md`'s "Real-hardware verification status" for the precise,
+  still-current distinction between the two (don't conflate them back together just
+  because this line got fixed).
 
 ## Two-binary layout
 
