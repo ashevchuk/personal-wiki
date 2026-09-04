@@ -1,19 +1,32 @@
 # Architecture
 
-Full development plan: `/home/slayer/.claude/plans/zazzy-twirling-sundae.md`. This file is
-a short reference for the decisions actually made and the M0-spike results, so the plan
-doesn't need re-reading every time.
+This file is a chronological log of the decisions actually made and each milestone's
+spike/postmortem results — read the milestone sections below in order and they tell the
+real build history, warts included, not a cleaned-up retrospective.
+
+**Read this part first — it's the part that's still literally true.** The frontend
+described in "Decisions made" and M2 below (Drogon CSP views + htmx) was the ORIGINAL
+shape and is GONE. It was replaced by the mandate now in force project-wide: **no
+server-side HTML/JS generation, ever — the C++ side is a pure JSON API, every page is a
+static shell (`static/shell.html`) + client-side JS rendering from `fetch()` responses**
+(see `CMakeLists.txt`'s own comment: "No CSP views (`views/*.csp`) anymore — the backend
+is a JSON API only now"). `htmx` was vendored for the CSP-view era's server-rendered
+fragments and removed once there was nothing left for it to swap — `static/js/htmx/`
+does not exist in this repo. The CSP-view-specific gotchas below (M2) are kept as
+engineering history — real lessons from real bugs — not as a description of the current
+codebase; don't relearn them by touching a `.csp` file that also no longer exists.
 
 ## Decisions made (do not revisit without an explicit user request)
 
 - **Storage**: markdown files on disk = source of truth. SQLite is only a secondary
   index (FTS5 + metadata), fully rebuildable via a full vault rescan.
 - **MCP**: the service itself is an MCP server (stdio), not a client. Read/search only
-  in the MVP.
+  in the MVP (write access came later, see `docs/mcp.md`).
 - **Auth**: a single admin, argon2id, SQLite-backed sessions. `visibility: public|private`
   in front-matter, defaults to `private` (fail-safe).
-- **Frontend**: Drogon CSP views + htmx, Toast UI Editor scoped to the edit page only.
-  No SPA build pipeline at runtime.
+- **Frontend** *(original M0 decision — superseded, see the callout above)*: Drogon CSP
+  views + htmx, Toast UI Editor scoped to the edit page only. No SPA build pipeline at
+  runtime.
 - **Deployment**: a bare binary + systemd. arm64 cross-compile — Phase 1.5/2; the MVP
   builds natively on the target Raspberry Pi.
 
@@ -68,6 +81,12 @@ doesn't need re-reading every time.
   (termios), never logged.
 
 ## M2 — CRUD, WYSIWYG, CSP views: results
+
+> **CSP views (`.csp` files, `views/`) don't exist in this codebase anymore** — see the
+> callout at the top of this file. Everything below in this section is a historical
+> record of real bugs caught at the time, kept for the lessons (a fixed-key-lookup
+> templating footgun is a footgun in any templating engine), not as current-state
+> documentation. Nothing here should be "fixed" against today's code.
 
 - **Drogon CSP `[[key]]` does NOT escape HTML.** Verified directly in the generated
   code (`drogon_ctl create view`): `[[key]]` compiles literally to
@@ -148,8 +167,10 @@ handler, don't rely on "the filter's already attached".
   private document contributes NEITHER a path to the tree NOR even +1 to a tag's
   count for an anonymous request — verified E2E (a tag used only by private documents
   gives a different count for admin vs. anon).
-- **htmx is also vendored and committed** (`static/js/htmx/`, the same
-  `tools/build-editor-bundle/fetch.sh` now vendors both bundles).
+- **htmx was also vendored and committed at this point** (`static/js/htmx/`, the same
+  `tools/build-editor-bundle/fetch.sh` vendored both bundles) — since removed, see the
+  callout at the top of this file; it had nothing left to swap once the frontend moved
+  off server-rendered fragments.
 
 ## M4 — MCP server: results
 
@@ -232,7 +253,9 @@ handler, don't rely on "the filter's already attached".
   with no `--reindex`, disappears on delete). 32/32 in a green run.
 - **`cmake --install` verified live**: a real install tree (`--prefix /tmp/...`), a
   real run of the installed binary with `config.toml` copied from the example,
-  `/healthz` and a static asset (htmx from `static/js/htmx/`) both returned `200`.
+  `/healthz` and a static asset (htmx from `static/js/htmx/` at the time — since
+  removed, the same check today would use e.g. `static/js/toastui-editor/`) both
+  returned `200`.
 - **Raspberry Pi — cross-compiled binary now verified live**, in a later session past
   M5 (this note was stale — said "NOT verified" while the actual armv7/musl binary had
   already been cross-built, `qemu-arm-static`-checked, and was running natively on real
