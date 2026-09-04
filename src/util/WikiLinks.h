@@ -35,7 +35,7 @@ std::vector<std::string> extractWikiLinkTargets(std::string_view markdown);
 // *normalized* target, always relative (no leading '/'), so it resolves
 // correctly against this app's own <base href="{basePath}/"> tag (see
 // shell.html) the same way every other relative link/asset URL in this
-// app does, independent of [server].base_path/reverse-proxy subpath. The
+// app does, independent of any reverse-proxy subpath the app is mounted under. The
 // `d/` prefix is NOT optional — normalizeTarget()'s output is a path in
 // FILE space (matching the vault's own directory structure), but viewing
 // a document is a ROUTE at `/d/{path}`, not the bare path itself; an

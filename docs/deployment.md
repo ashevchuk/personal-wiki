@@ -38,8 +38,8 @@ ops notes, not a public git history. Example shape, filled with placeholder valu
 - Install root: `/opt/wiki` (`bin/`, `static/`, `config.toml`, `vault_data/`).
 - Public URL: `http://192.0.2.10/wiki/` (nginx `default` vhost, prefix-stripping
   `proxy_pass` to `127.0.0.1:8080` — see "Reverse-proxying under a subpath" below;
-  `[server].base_path = "/wiki"` in `/opt/wiki/config.toml` is what makes the app
-  itself aware of that prefix).
+  the client-side shell infers the `/wiki` prefix itself, no `config.toml` setting
+  involved).
 - systemd unit: `wiki.service`, `User=wiki`.
 
 This target's own C toolchain/distro age is exactly why binaries reach it
@@ -143,7 +143,8 @@ sudo chown -R wiki:wiki /opt/wiki
 
 cd /opt/wiki
 sudo -u wiki cp config.example.toml config.toml
-# edit as needed: [server].port, [server].base_path, [vault].path, [mcp].scope
+# edit as needed: [server].port, [vault].path, [mcp].scope
+# (no [server].base_path — subpath deployments need no server-side setting, see below)
 
 # create the admin account (password entered interactively, echo disabled)
 sudo -u wiki ./bin/wiki-server --create-admin
@@ -298,26 +299,38 @@ NOT touch any existing nginx configuration automatically.
 ## Reverse-proxying under a subpath (e.g. `/wiki`)
 
 When the app needs to be exposed not on its own (sub)domain but under a path on an
-already-existing site (`https://example.com/wiki/`) — the app itself generates EVERY
-`href`/`action`/`hx-get`/redirect Location/saved path in its own JS as an absolute path
-rooted at "/" (`/login`, `/d/...`, `/css/...`). Without some agreement with the proxy
-about the prefix, this would look clean on the `/wiki/` page itself but break
-everything that page links to (CSS/JS 404s, the login form posting to `/login` instead
-of `/wiki/login`, and so on).
+already-existing site (`https://example.com/wiki/`), it needs to know that prefix
+exists so every `href`/`fetch()` URL/redirect it generates client-side actually points
+somewhere real.
 
-**The correct fix is `[server].base_path` in `config.toml`**, not hacks on the nginx
-side:
+**Needs NO server-side configuration at all — there is no `[server].base_path` setting**
+(an earlier version of the app had one; removed once the frontend became a pure JSON
+API + client-rendered static shell, see `docs/architecture.md`'s "Later additions"
+section — a setting that would have needed threading through every `.csp`
+server-templated view doesn't mean anything once there are no server-templated views
+left). `static/shell.html` is served byte-identical no matter what path it's requested
+from, so instead it infers the mount prefix itself, client-side, the moment it loads:
+an inline script (the very first thing in `<head>`, before any other resource) matches
+`location.pathname` against this app's own known route shapes (`/d/...`, `/edit/...`,
+`/search`, ...) and sets a `<base href="{whatever came before that match}/">` tag, which
+every relative resource link/fetch URL in the rest of the page then resolves against
+automatically. Point a reverse proxy at a subpath, or none at all, and this correctly
+adapts either way with nothing to set anywhere.
 
-```toml
-[server]
-base_path = "/wiki"
-```
+The one case that inference can't solve by pattern-matching alone — a path that matches
+NO known route (a typo, an old broken link, anything Drogon's own default handler ends
+up serving `shell.html` for with a 404 status) — falls back to whatever prefix the
+MOST RECENT successful page load already proved correct, cached in `localStorage`
+(`wiki.lastKnownBasePath`) specifically for this. That covers the realistic case (a
+broken link clicked FROM an already-loaded page on this same site) completely; only a
+genuinely cold start — landing directly on a broken link with no prior successful page
+load in that browser at all — still can't know the prefix and falls back to none,
+same residual gap the bare `/` case has always had. See `static/shell.html`'s own inline
+script comment for the full reasoning, including a real bug this exact mechanism
+shipped with once (assuming an unmatched path's ENTIRE contents WAS the prefix, caught
+live against this deployment's own real nginx config, not a synthetic test).
 
-Once set, the app itself bakes the prefix into EVERY `href`/`action`/`hx-*`/redirect/JS
-path it generates (login/view/edit/search pages, `edit.js`, the `EditPage`/`SearchPage`
-CSP templates) — the routes themselves stay unchanged (`/login`, `/d/{path}`, ...),
-because the proxy strips the prefix BEFORE forwarding the request inward. That means
-the nginx side is a plain prefix-stripping `proxy_pass`, with no response-body or
+The nginx side is a plain prefix-stripping `proxy_pass`, with no response-body or
 header rewriting at all:
 
 ```nginx
@@ -334,9 +347,11 @@ location /wiki/ {
 }
 ```
 
-No `sub_filter`, no `proxy_redirect`, no `Accept-Encoding ""` hack — all of those were
-necessary crutches BEFORE `base_path` existed in the app itself (the first working
-version of this exact deployment actually went live through them); `base_path` removes
+No `sub_filter`, no `proxy_redirect`, no `Accept-Encoding ""` hack, no app-side config
+of any kind — all of those (including the config setting) were necessary crutches
+BEFORE the frontend became fully client-rendered (the first working version of this
+exact deployment actually went live through the proxy-side hacks, back when the
+backend still templated pages server-side); the current shape removes
 the need for them completely and permanently, rather than patching the symptom on the
 proxy side over and over.
 

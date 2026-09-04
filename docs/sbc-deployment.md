@@ -199,7 +199,8 @@ Edit `config.toml` as needed — the fields that actually matter for a real depl
 listen_addr = "127.0.0.1"   # keep on loopback; a reverse proxy handles TLS/public exposure
 port = 8080
 threads = 2
-# base_path = "/wiki"       # only if reverse-proxying under a subpath — see below
+# No base_path setting here — the app needs none, subpath or not. See
+# "Under a subpath of an existing site" below for how it actually works.
 
 [vault]
 path = "./vault_data"       # relative to the working directory (WorkingDirectory= in the unit)
@@ -286,10 +287,14 @@ server {
 
 ### Under a subpath of an existing site (e.g. `/wiki`)
 
-Set `[server].base_path = "/wiki"` in `config.toml` (restart the service after
-changing it). The app then bakes the `/wiki` prefix into every `href`/`action`/
-`hx-*`/redirect it emits — routes inside the app stay unprefixed (`/login`,
-`/d/{path}`, ...), the proxy just needs to strip the prefix on the way in:
+**No `config.toml` setting needed — there is no `[server].base_path` key.** The
+frontend is a client-rendered static shell (`static/shell.html`, served
+byte-identical no matter what path it's requested from — see
+`docs/architecture.md`), so nothing server-side can bake a prefix into it anyway.
+Instead `shell.html`'s own inline bootstrap script infers the mount prefix itself
+on load, by matching `location.pathname` against this app's known route shapes
+(`/d/...`, `/edit/...`, `/search`, ...) and setting a `<base href>` from whatever
+came before that match — works correctly under any subpath, or none, automatically:
 
 ```nginx
 location = /wiki {
@@ -305,13 +310,18 @@ location /wiki/ {
 }
 ```
 
-No `sub_filter`, no `proxy_redirect`, no response-rewriting of any kind needed — that
-was only ever necessary before `base_path` existed as an app-level setting; don't
-reach for it, `base_path` is the actual fix.
+No `sub_filter`, no `proxy_redirect`, no response-rewriting of any kind needed, and no
+app-side config either — that whole class of hack was only ever necessary back when
+the backend still templated pages server-side; the current client-rendered shell
+removes the need for all of it permanently.
 
-Without `base_path` set, do NOT reverse-proxy this app under a subpath at all — every
-absolute link/redirect/asset the app emits is rooted at `/`, so CSS/JS will 404 and the
-login form will post to the wrong place.
+The one gap this inference can't close by pattern-matching alone: a path matching NO
+known route (a typo, a stale `[[wiki-link]]`) falls back to the prefix the most recent
+successful page load already proved correct, cached in `localStorage`
+(`wiki.lastKnownBasePath`) — covers the realistic case (a broken link clicked from an
+already-loaded page) completely, and only degrades — gracefully, no crash, just an
+unstyled fallback — on a genuinely cold start with zero prior page loads in that
+browser. Full reasoning in `shell.html`'s own inline script comment.
 
 ## Backup
 
@@ -357,13 +367,17 @@ For a cross-compiled deployment, "install" means: rebuild `build-arm`, re-verify
   fixed for Drogon's own upload-buffer path (see "systemd" above); if this shows up
   again for a different path, either add it to `ReadWritePaths=` in the unit or, if
   it's app-generated, redirect it into the vault path the way `.uploads-tmp` already is.
-- **`GET /` (or the base_path-prefixed equivalent) returns a 404** — expected if there's
-  no request-matching route (no dedicated homepage view exists; `wiki-server` redirects
-  bare `/` to `/search`). Confirm `/healthz` and `/search` both return `200` before
-  suspecting anything is actually broken.
+- **`GET /` (or the subpath-prefixed equivalent) returns a 404** — expected if there's
+  no request-matching route (no dedicated homepage view exists; the client-side router
+  redirects bare `/` to `/search`). Confirm `/healthz` and `/search` both return `200`
+  before suspecting anything is actually broken.
 - **CSS/JS 404 or the login form posts to the wrong path when reverse-proxied under a
-  subpath** — `[server].base_path` isn't set to match the proxy's location prefix, or
-  the service wasn't restarted after changing it.
+  subpath** — check that the request actually matches one of `shell.html`'s known route
+  patterns (see "Under a subpath of an existing site" above); an unmatched path falls
+  back to the last known-good prefix cached in `localStorage`, which is empty on a
+  genuinely cold start in that browser (first-ever visit landing directly on a
+  subpath'd URL with nothing cached yet) — load `/search` (or any known route) first to
+  warm the cache, then retry.
 - **A static cross-compiled link crashes with `code=139`** — see "Known issues" above;
   almost certainly the `-Xlinker --dependency-file=...` / `CMAKE_LINK_DEPENDS_USE_LINKER`
   issue if the toolchain file has drifted from `cross/arm-musl/toolchain.cmake`.
