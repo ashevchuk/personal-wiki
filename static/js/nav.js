@@ -86,20 +86,21 @@
     render(root, container, "");
   }
 
+  // /api/nav/tags (NavQueries::tagCounts) already returns tags
+  // alphabetically (COLLATE NOCASE) — no client-side re-sort here
+  // anymore. There used to be one, by count descending, which fought
+  // the server's own order for no reason; an alphabetical list is
+  // easier to scan for a specific tag once there are more than a
+  // handful, which is the whole point of a nav aid.
   function buildTags(container, tags, bp) {
     var ul = el("ul");
-    tags
-      .slice()
-      .sort(function (a, b) {
-        return b.count - a.count;
-      })
-      .forEach(function (t) {
-        var li = el("li");
-        var a = el("a", { href: bp + "/search?tag=" + encodeURIComponent(t.tag) });
-        a.textContent = "#" + t.tag + " (" + t.count + ")";
-        li.appendChild(a);
-        ul.appendChild(li);
-      });
+    tags.forEach(function (t) {
+      var li = el("li");
+      var a = el("a", { href: bp + "/search?tag=" + encodeURIComponent(t.tag) });
+      a.textContent = "#" + t.tag + " (" + t.count + ")";
+      li.appendChild(a);
+      ul.appendChild(li);
+    });
     container.appendChild(ul);
   }
 

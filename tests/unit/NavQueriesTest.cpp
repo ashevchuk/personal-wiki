@@ -85,6 +85,33 @@ TEST_CASE("NavQueries::tagCounts does not leak a count for a tag used only "
   REQUIRE(findCount(adminTags, "secret-only") == 1);
 }
 
+TEST_CASE("NavQueries::tagCounts sorts alphabetically, case-insensitively, "
+          "not by count",
+          "[NavQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  // "zebra" carries the most documents but must still sort LAST -- a
+  // count-desc order (the old default) would have put it first.
+  // "Apple"/"banana" differ in case from a real-world un-normalized tag
+  // (nothing in this app lowercases tags on save) -- COLLATE NOCASE is
+  // what keeps "Apple" from sorting after every lowercase tag via plain
+  // ASCII byte order.
+  updater.upsertOne(makeEntry("a.md", "public", {"zebra"}));
+  updater.upsertOne(makeEntry("b.md", "public", {"zebra"}));
+  updater.upsertOne(makeEntry("c.md", "public", {"zebra"}));
+  updater.upsertOne(makeEntry("d.md", "public", {"Apple"}));
+  updater.upsertOne(makeEntry("e.md", "public", {"banana"}));
+
+  NavQueries nav(database);
+  const auto tags = nav.tagCounts(true);
+  REQUIRE(tags.size() == 3);
+  REQUIRE(tags[0].tag == "Apple");
+  REQUIRE(tags[1].tag == "banana");
+  REQUIRE(tags[2].tag == "zebra");
+}
+
 TEST_CASE("NavQueries::typeCounts excludes untyped docs and leaks no count "
           "for a type used only by private documents",
           "[NavQueries]") {

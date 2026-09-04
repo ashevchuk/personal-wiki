@@ -20,6 +20,19 @@ std::vector<DocSummary> NavQueries::listVisibleDocuments(bool includePrivate) co
 }
 
 std::vector<TagCount> NavQueries::tagCounts(bool includePrivate) const {
+  // Alphabetical, not count-desc (the pre-existing order here, before
+  // this change) — the sidebar's tag list and the search page's tag
+  // multiselect (both consumers of this, via /api/nav/tags) are
+  // navigation aids: once a vault has more than a handful of tags,
+  // finding a specific one by scanning a count-sorted list means
+  // reading the whole thing, while an alphabetical one lets you jump
+  // straight to where it'd be. COLLATE NOCASE because nothing anywhere
+  // in this app normalizes tag casing on save (confirmed: no
+  // tolower()/toLowerCase() on the tag-write path) — plain byte-order
+  // ASCII sort would put every uppercase-first tag before every
+  // lowercase one ('Z' < 'a'), which reads as broken, not alphabetical,
+  // to a human. Count is still shown next to each tag ("#food (3)") —
+  // only the ORDER changed, no information lost.
   Statement stmt(
       db_.handle(),
       "SELECT t.name, COUNT(*) FROM tags t "
@@ -27,7 +40,7 @@ std::vector<TagCount> NavQueries::tagCounts(bool includePrivate) const {
       "JOIN documents d ON d.rowid_id = dt.document_rowid "
       "WHERE (?1 = 1 OR d.visibility = 'public') "
       "GROUP BY t.name "
-      "ORDER BY COUNT(*) DESC, t.name ASC;");
+      "ORDER BY t.name COLLATE NOCASE ASC;");
   stmt.bind(1, static_cast<int64_t>(includePrivate ? 1 : 0));
 
   std::vector<TagCount> results;
