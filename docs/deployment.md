@@ -21,15 +21,18 @@ nginx/Samba/NFS/ProFTPD/mosquitto/munin, with zero impact on any of them. The co
 contains nothing deliberately x86-specific, and this is now empirically confirmed, not
 just "should work by construction".
 
-## Live production target
+## Recording your own live deployment target
 
-**The actual, currently-running instance — record this here, not just in a chat
-session, or it gets lost the next time context gets compacted (confirmed the hard
-way: happened once already).**
+Worth writing down somewhere durable — a private note, not this public repo — once
+you have a real instance running: the host/IP, the install root, the public URL (and
+whether it's reverse-proxied under a subpath — see below), and which systemd unit/user
+runs it. Losing track of "which box is actually live" between sessions is a real
+failure mode, not a hypothetical one — this section used to name a specific real host
+here until the repo went public; that level of detail belongs in your own private
+ops notes, not a public git history. Example shape, filled with placeholder values
+(RFC 5737 documentation IP, `.example.com`):
 
-- Host: `root@192.0.2.10` (`httpd.wiki.example.com`, armv7l/sunxi, Debian 9
-  stretch — the same real hardware "Real-hardware verification status" above
-  describes).
+- Host: `root@192.0.2.10` (`wiki.example.com`, armv7l/sunxi, Debian 9 stretch).
 - Install root: `/opt/wiki` (`bin/`, `static/`, `config.toml`, `vault_data/`).
 - Public URL: `http://192.0.2.10/wiki/` (nginx `default` vhost, prefix-stripping
   `proxy_pass` to `127.0.0.1:8080` — see "Reverse-proxying under a subpath" below;

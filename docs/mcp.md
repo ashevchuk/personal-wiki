@@ -191,9 +191,10 @@ this.
 ## Verification: remote transport, live against real production (2026-09-04)
 
 Unlike the stdio verification above (a local dev-environment script), this one is a
-handful of plain `curl` calls against the actual public endpoint
-(`https://wiki.example.com/wiki/mcp`) with the real production bearer token — no
-sandbox, no synthetic double:
+handful of plain `curl` calls against the actual public endpoint of the real,
+live-running production deployment (real domain, real reverse proxy, real bearer
+token — the specific host isn't named here on purpose, see "Recording your own live
+deployment target" in `docs/deployment.md`) — no sandbox, no synthetic double:
 
 - `tools/list` — all 6 tools present (`write_enabled=1` on prod at the time), matching
   what "Write tools" above says should be exposed vs. hidden per that flag.
