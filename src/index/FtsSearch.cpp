@@ -17,6 +17,63 @@ std::vector<std::string> splitCsv(const std::string& csv) {
   return out;
 }
 
+// Turns raw user input into a safe, prefix-matching FTS5 MATCH
+// expression instead of handing FTS5's own query parser the typed text
+// verbatim. Two real problems that fixes:
+//
+// 1. Bare words that happen to collide with FTS5 query syntax — "AND",
+//    "OR", "NOT", a leading "-", an unmatched '"' — used to go straight
+//    into MATCH unescaped. Best case that's a confusing non-match
+//    (searching for the literal word "and" silently became the boolean
+//    AND operator with nothing on one side); worst case it's a MATCH
+//    syntax error surfaced to the caller as a 500. Wrapping every
+//    whitespace-split word in "double quotes" makes FTS5 treat it as
+//    literal text regardless of what's inside — a literal '"' is
+//    escaped by doubling it, the one character quoting itself doesn't
+//    neutralize.
+// 2. No partial-word matching at all — confirmed live: searching "time"
+//    found a document containing the literal word "time" but NOT one
+//    that only said "Timers"/"timer", even with the porter stemmer
+//    active (porter doesn't reduce the "-er" agent-noun suffix, so
+//    "timer" and "time" are different stems — this is correct per the
+//    stemmer, just not what anyone actually wants from a search box).
+//    Appending '*' after each quoted word turns it into an FTS5 prefix
+//    query: it matches any INDEXED (post-stemming) term that starts
+//    with the given text, so "time*" matches the stored stem "timer"
+//    (itself the stem of both "Timer" and "Timers") the same way it
+//    matches the stem "time" — turning a query into a widening rather
+//    than an exact filter, exactly what "start typing a word and see
+//    matches" search UX means. No FTS5 prefix index (`prefix=`) was
+//    added for this — at a personal-wiki-sized corpus, a plain term
+//    scan for a prefix is not a real performance concern, and adding
+//    one is a schema migration (schema_version bump) not obviously
+//    worth it before this is ever seen to be slow.
+//
+// Deliberately NOT trying to parse/preserve the user's own quoted
+// phrases or explicit AND/OR/NOT — every word is an independent,
+// implicitly-ANDed (FTS5's default between space-separated match
+// expressions) prefix term. A power-user "advanced query syntax" mode
+// is a different feature, not a silent behavior change on top of this
+// one.
+std::string buildMatchExpression(const std::string& rawText) {
+  std::ostringstream out;
+  std::istringstream words(rawText);
+  std::string word;
+  bool first = true;
+  while (words >> word) {
+    std::string escaped;
+    escaped.reserve(word.size() + 2);
+    for (char c : word) {
+      if (c == '"') escaped += '"';  // double it — FTS5's own quote-escape
+      escaped += c;
+    }
+    if (!first) out << ' ';
+    out << '"' << escaped << "\"*";
+    first = false;
+  }
+  return out.str();
+}
+
 constexpr const char* kTagsSubquery =
     "(SELECT GROUP_CONCAT(t.name, ',') FROM document_tags dt "
     " JOIN tags t ON t.id = dt.tag_id WHERE dt.document_rowid = d.rowid_id)";
@@ -46,7 +103,12 @@ std::vector<SearchResultItem> runQuery(Statement& stmt, bool highlighted) {
 
 std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const {
   std::ostringstream sql;
-  const bool textSearch = !query.text.empty();
+  // Built once, used both to decide the query mode AND as the actual
+  // bound MATCH text below — also correctly demotes an all-whitespace
+  // query.text (e.g. "   ") to browse mode, which a plain
+  // !query.text.empty() check would have missed.
+  const std::string matchExpr = buildMatchExpression(query.text);
+  const bool textSearch = !matchExpr.empty();
 
   if (textSearch) {
     // Match markers are bound parameters (kSnippetMatchStart/End), not
@@ -80,7 +142,16 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
     sql << " AND substr(d.path, 1, ?) = ?";
   }
 
-  sql << (textSearch ? " ORDER BY bm25(documents_fts) " : " ORDER BY d.updated_at DESC ")
+  // Column order is (title, body, tags_flat) per schema.h — weights make
+  // a title hit count for more than the same word buried in the body, and
+  // a tag (a deliberate, curated label, not incidental prose) count for
+  // more than body text too, without either drowning out an actual body
+  // match entirely. bm25() returns more-negative for a better match, so
+  // ORDER BY ascending (the default, unchanged) is still correct here —
+  // only the relative weighting of columns changes, not the sort
+  // direction.
+  sql << (textSearch ? " ORDER BY bm25(documents_fts, 4.0, 1.0, 2.5) "
+                      : " ORDER BY d.updated_at DESC ")
       << "LIMIT ? OFFSET ?;";
 
   Statement stmt(db_.handle(), sql.str());
@@ -90,7 +161,7 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
     // snippet() markers, then MATCH text, then the visibility guard.
     stmt.bind(idx++, std::string(1, kSnippetMatchStart));
     stmt.bind(idx++, std::string(1, kSnippetMatchEnd));
-    stmt.bind(idx++, query.text);
+    stmt.bind(idx++, matchExpr);
   }
   stmt.bind(idx++, static_cast<int64_t>(query.includePrivate ? 1 : 0));
   if (query.docType) stmt.bind(idx++, *query.docType);

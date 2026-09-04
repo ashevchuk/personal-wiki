@@ -175,3 +175,71 @@ TEST_CASE("FtsSearch tags (plural) filter uses AND semantics", "[FtsSearch]") {
   REQUIRE(results.size() == 1);
   REQUIRE(results[0].path == "a.md");
 }
+
+// Regression test for a real, live-observed report: searching "time"
+// found a document containing the literal word "time" but missed one
+// that only ever said "Timer"/"Timers" — porter stemming doesn't reduce
+// the "-er" agent-noun suffix, so "time" and "timer" are different
+// stems and an exact (non-prefix) MATCH correctly, if unhelpfully, told
+// them apart. Prefix matching (FtsSearch.cpp's buildMatchExpression)
+// fixes this: "time*" matches any indexed term starting with "time",
+// which includes the stored stem "timer" (itself what both "Timer" and
+// "Timers" stem to).
+TEST_CASE("FtsSearch prefix-matches a short query against a longer stem",
+          "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("timer.md", "Systemd Timers", "public", "note", {},
+                               "A systemd timer unit replaces cron."));
+  updater.upsertOne(makeEntry("literal.md", "Cooking", "public", "recipe", {},
+                               "Add vegetables in order of cook time."));
+  updater.upsertOne(makeEntry("unrelated.md", "Unrelated", "public", "note", {},
+                               "Nothing about clocks here."));
+
+  FtsSearch search(database);
+  SearchQuery q;
+  q.text = "time";
+  q.includePrivate = true;
+  const auto results = search.search(q);
+  REQUIRE(results.size() == 2);
+  bool foundTimer = false, foundLiteral = false;
+  for (const auto& r : results) {
+    if (r.path == "timer.md") foundTimer = true;
+    if (r.path == "literal.md") foundLiteral = true;
+  }
+  REQUIRE(foundTimer);
+  REQUIRE(foundLiteral);
+}
+
+// A query word that collides with FTS5's own query-language syntax used
+// to go straight into MATCH unescaped — a bare "AND"/"OR"/"NOT", a
+// leading '-', or an unmatched '"' could throw a MATCH syntax error
+// back at the caller instead of just... searching for that word.
+TEST_CASE("FtsSearch treats FTS5-syntax-colliding words as literal text, "
+          "not query operators",
+          "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "A", "public", "note", {},
+                               "Bonnie and Clyde were partners in crime."));
+
+  FtsSearch search(database);
+
+  SearchQuery qAnd;
+  qAnd.text = "and";
+  qAnd.includePrivate = true;
+  // Must not throw (a raw "AND" handed to FTS5 as an operator with
+  // nothing around it is a MATCH syntax error) and must actually find
+  // the literal word.
+  const auto andResults = search.search(qAnd);
+  REQUIRE(andResults.size() == 1);
+
+  SearchQuery qQuote;
+  qQuote.text = "crim\"e";  // embedded literal double-quote
+  qQuote.includePrivate = true;
+  REQUIRE_NOTHROW(search.search(qQuote));
+}
