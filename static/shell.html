@@ -56,6 +56,19 @@
   document.head.appendChild(base);
 })();
 </script>
+<!-- Tells the browser this page IS dark on purpose (theme.css's --bg is a
+     hardcoded #000, no light variant exists at all) — without this,
+     Chrome's own "Force Dark Mode for websites" setting (chrome://flags,
+     confirmed present in this session's browser via --force-dark-mode)
+     doesn't know that and applies its OWN heuristic re-coloring on top
+     of ours, which was caught silently suppressing toolbar icon sprites
+     (background-image computing to "none" despite a verified-valid,
+     loadable data-URI in the CSS) — not a bug in this app's own CSS,
+     but worth neutralizing here since any visitor with that Chrome
+     setting on would hit the same thing. color-scheme is the documented
+     signal Chromium's forced-darkening explicitly checks before
+     deciding whether a page needs its help. -->
+<meta name="color-scheme" content="dark">
 <title id="page-title">wiki</title>
 <link rel="stylesheet" href="css/theme.css">
 <link rel="stylesheet" href="js/toastui-editor/toastui-editor.css">
