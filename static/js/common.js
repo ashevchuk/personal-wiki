@@ -81,6 +81,17 @@ window.WikiCommon = (function () {
   function stripMarkdownSyntax(text) {
     return text
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+      // [[target|label]] / [[target]] — this app's OWN wiki-link syntax
+      // (util/WikiLinks.h), a separate thing from the CommonMark
+      // [text](url) handled above, and never rewritten server-side for a
+      // search SNIPPET (rewriteWikiLinksToMarkdownLinks only runs on a
+      // document's full body, at view time — see MarkdownRenderer.cpp).
+      // Found live: a search match landing inside a "[[...]]" span showed
+      // the raw brackets in the result list. Same "keep the readable
+      // half" contract as WikiLinks' own normalizeTarget — prefer the
+      // label when there is one, the bare target text otherwise.
+      .replace(/\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
+      .replace(/\[\[([^\]]*)\]\]/g, "$1")
       // NOT `/^#{1,6}\s+/gm` (start-of-LINE anchored) — confirmed the hard
       // way against a real search snippet: FTS5's snippet() flattens the
       // document's original newlines into plain spaces, so a heading that
@@ -99,7 +110,12 @@ window.WikiCommon = (function () {
       // catches exactly that: an opened-but-never-closed pattern running
       // to the end of the string, keeping the alt/link text and dropping
       // the truncated URL fragment.
-      .replace(/!?\[([^\]]*)\]\([^)]*$/, "$1");
+      .replace(/!?\[([^\]]*)\]\([^)]*$/, "$1")
+      // Same truncation hazard, wiki-link shaped: an opened-but-never-
+      // closed "[[..." (with or without a "|label" already typed) running
+      // to the end of a truncated snippet.
+      .replace(/\[\[([^\]|]*)\|([^\]]*)$/, "$2")
+      .replace(/\[\[([^\]]*)$/, "$1");
   }
 
   function markSnippet(rawSnippet, isHighlighted) {
