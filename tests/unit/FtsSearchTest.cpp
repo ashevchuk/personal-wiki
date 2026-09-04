@@ -138,3 +138,40 @@ TEST_CASE("FtsSearch tag filter narrows results", "[FtsSearch]") {
   REQUIRE(results.size() == 1);
   REQUIRE(results[0].path == "a.md");
 }
+
+TEST_CASE("FtsSearch docTypes filter uses OR semantics (a doc has one type)",
+          "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "A", "public", "recipe", {}, "pasta"));
+  updater.upsertOne(makeEntry("b.md", "B", "public", "note", {}, "systemd"));
+  updater.upsertOne(makeEntry("c.md", "C", "public", "log", {}, "diary entry"));
+
+  FtsSearch search(database);
+  SearchQuery q;
+  q.includePrivate = true;
+  q.docTypes = {"recipe", "note"};
+  const auto results = search.search(q);
+  REQUIRE(results.size() == 2);
+  for (const auto& r : results) REQUIRE(r.path != "c.md");
+}
+
+TEST_CASE("FtsSearch tags (plural) filter uses AND semantics", "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(
+      makeEntry("a.md", "A", "public", "note", {"food", "quick"}, "pasta"));
+  updater.upsertOne(makeEntry("b.md", "B", "public", "note", {"food"}, "soup"));
+
+  FtsSearch search(database);
+  SearchQuery q;
+  q.includePrivate = true;
+  q.tags = {"food", "quick"};
+  const auto results = search.search(q);
+  REQUIRE(results.size() == 1);
+  REQUIRE(results[0].path == "a.md");
+}

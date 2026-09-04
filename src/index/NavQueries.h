@@ -35,6 +35,13 @@ class NavQueries {
 
   std::vector<TagCount> tagCounts(bool includePrivate) const;
 
+  // Same visibility-gated shape as tagCounts, over documents.doc_type
+  // instead of the tags join table — backs the search page's type
+  // multiselect (see NavRoutes.h). Reuses TagCount as the return element
+  // (field named `tag` there, holds a doc_type value here) rather than
+  // introducing a near-identical struct for one extra column.
+  std::vector<TagCount> typeCounts(bool includePrivate) const;
+
  private:
   Database& db_;
 };

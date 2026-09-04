@@ -84,3 +84,36 @@ TEST_CASE("NavQueries::tagCounts does not leak a count for a tag used only "
   REQUIRE(findCount(adminTags, "shared") == 2);
   REQUIRE(findCount(adminTags, "secret-only") == 1);
 }
+
+TEST_CASE("NavQueries::typeCounts excludes untyped docs and leaks no count "
+          "for a type used only by private documents",
+          "[NavQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+
+  auto withType = [](DocumentIndexEntry e, std::string type) {
+    e.docType = std::move(type);
+    return e;
+  };
+  updater.upsertOne(withType(makeEntry("a.md", "public", {}), "recipe"));
+  updater.upsertOne(withType(makeEntry("b.md", "private", {}), "secret-type"));
+  updater.upsertOne(makeEntry("c.md", "public", {}));  // docType left "" -> excluded
+
+  NavQueries nav(database);
+  auto findCount = [](const std::vector<TagCount>& types, const std::string& name) {
+    for (const auto& t : types) {
+      if (t.tag == name) return t.count;
+    }
+    return static_cast<int64_t>(-1);
+  };
+
+  const auto anonTypes = nav.typeCounts(false);
+  REQUIRE(findCount(anonTypes, "recipe") == 1);
+  REQUIRE(findCount(anonTypes, "secret-type") == -1);  // absent, not zero
+  REQUIRE(findCount(anonTypes, "") == -1);              // untyped never appears
+
+  const auto adminTypes = nav.typeCounts(true);
+  REQUIRE(findCount(adminTypes, "secret-type") == 1);
+}

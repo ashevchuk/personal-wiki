@@ -16,6 +16,12 @@ struct SearchQuery {
   // callers — the HTTP search API sets `tag`, the MCP tools set `tags`).
   std::vector<std::string> tags;
   std::optional<std::string> docType;
+  // OR semantics — unlike `tags` above, a document carries exactly ONE
+  // doc_type, so "must match every requested type" would be
+  // unsatisfiable for anything past the first. Populated by the
+  // search-page multiselect (SearchRoutes.cpp splits the `type` query
+  // param on ','); independent of `docType`, same as `tag`/`tags`.
+  std::vector<std::string> docTypes;
   // Path prefix, e.g. "notes/" — matches "notes/foo.md" and
   // "notes/sub/bar.md" alike. Used by the MCP list_documents tool's
   // `folder` parameter.

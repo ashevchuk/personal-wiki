@@ -190,9 +190,75 @@ form p {
 .search-form input[name="q"] {
   flex: 1 1 240px;
 }
-.search-form input[name="tag"],
-.search-form input[name="type"] {
+
+/* Tag/type multiselect dropdowns (search.js's createMultiSelect) —
+   replaced what used to be free-text <input name="tag">/<input
+   name="type"> pickers of exactly this same flex-basis, so the two
+   filter dropdowns still sit the same size/position next to the search
+   box as the inputs they replaced. */
+.ms-select {
+  position: relative;
   flex: 0 1 140px;
+}
+.ms-toggle {
+  width: 100%;
+  text-align: left;
+}
+.ms-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  min-width: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: #001a00;
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+  padding: 0.5rem;
+  white-space: nowrap;
+}
+/* CAUGHT LIVE, not theoretical: search.js toggles this menu via the
+   `hidden` DOM property (per this project's own convention — never
+   style.display), but the UA stylesheet's own "[hidden] { display: none }"
+   has attribute-selector specificity, IDENTICAL to ".ms-menu"'s
+   class-selector specificity above — and at equal specificity, an AUTHOR
+   rule always beats a user-agent rule regardless of source order. So
+   ".ms-menu { display: flex }" silently won over "[hidden]" and the
+   dropdown rendered permanently open, `menu.hidden = true` doing
+   nothing visible at all. Confirmed via getComputedStyle in a real
+   browser before writing this fix. An explicit [hidden] override,
+   listed after the base rule, is what actually makes the property work. */
+.ms-menu[hidden] {
+  display: none;
+}
+.ms-menu label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.ms-menu label:hover {
+  color: #fff;
+  text-shadow: 0 0 10px rgba(0, 255, 0, 0.9);
+}
+.ms-menu input[type="checkbox"] {
+  accent-color: var(--fg);
+  width: auto;
+  padding: 0;
+}
+.ms-count {
+  color: var(--fg-dim);
+  font-size: 0.8em;
+}
+.ms-empty {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+  margin: 0;
 }
 label {
   display: flex;

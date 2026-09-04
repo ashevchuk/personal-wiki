@@ -64,6 +64,13 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
   }
 
   if (query.docType) sql << " AND d.doc_type = ?";
+  // IN (...) -> OR semantics (see docTypes' doc comment in FtsSearch.h for
+  // why AND, as used for tags below, would never match anything here).
+  if (!query.docTypes.empty()) {
+    sql << " AND d.doc_type IN (";
+    for (size_t i = 0; i < query.docTypes.size(); ++i) sql << (i == 0 ? "?" : ",?");
+    sql << ")";
+  }
   if (query.tag) sql << " AND " << kTagFilterClause;
   // One EXISTS per requested tag -> AND semantics (must carry all of them).
   for (size_t i = 0; i < query.tags.size(); ++i) sql << " AND " << kTagFilterClause;
@@ -87,6 +94,7 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
   }
   stmt.bind(idx++, static_cast<int64_t>(query.includePrivate ? 1 : 0));
   if (query.docType) stmt.bind(idx++, *query.docType);
+  for (const auto& t : query.docTypes) stmt.bind(idx++, t);
   if (query.tag) stmt.bind(idx++, *query.tag);
   for (const auto& t : query.tags) stmt.bind(idx++, t);
   if (query.folderPrefix) {

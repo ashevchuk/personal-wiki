@@ -37,4 +37,25 @@ std::vector<TagCount> NavQueries::tagCounts(bool includePrivate) const {
   return results;
 }
 
+std::vector<TagCount> NavQueries::typeCounts(bool includePrivate) const {
+  // doc_type is a plain nullable/empty TEXT column on documents (no join
+  // table, unlike tags) — an untyped document stores "" there (see
+  // IndexUpdater::upsertOne, always binds entry.docType as a string,
+  // never NULL), so it's excluded explicitly rather than showing up as a
+  // bogus blank option in the search page's type dropdown.
+  Statement stmt(
+      db_.handle(),
+      "SELECT d.doc_type, COUNT(*) FROM documents d "
+      "WHERE d.doc_type <> '' AND (?1 = 1 OR d.visibility = 'public') "
+      "GROUP BY d.doc_type "
+      "ORDER BY COUNT(*) DESC, d.doc_type ASC;");
+  stmt.bind(1, static_cast<int64_t>(includePrivate ? 1 : 0));
+
+  std::vector<TagCount> results;
+  while (stmt.step()) {
+    results.push_back(TagCount{stmt.columnText(0), stmt.columnInt64(1)});
+  }
+  return results;
+}
+
 }  // namespace wikicore::index

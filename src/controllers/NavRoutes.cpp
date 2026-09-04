@@ -43,6 +43,22 @@ void registerNavRoutes(HttpAppFramework& app, NavQueries& nav) {
         callback(HttpResponse::newHttpJsonResponse(arr));
       },
       {Get, "wikicore::auth::AuthFilter"});
+
+  app.registerHandler(
+      "/api/nav/types",
+      [&nav](const HttpRequestPtr& req,
+             std::function<void(const HttpResponsePtr&)>&& callback) {
+        const auto types = nav.typeCounts(isAuthenticated(req));
+        Json::Value arr(Json::arrayValue);
+        for (const auto& t : types) {
+          Json::Value item;
+          item["type"] = t.tag;
+          item["count"] = static_cast<Json::Int64>(t.count);
+          arr.append(item);
+        }
+        callback(HttpResponse::newHttpJsonResponse(arr));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
 }
 
 }  // namespace wikicore::controllers

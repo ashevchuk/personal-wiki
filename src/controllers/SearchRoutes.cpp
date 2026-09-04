@@ -12,13 +12,37 @@ namespace wikicore::controllers {
 
 namespace {
 
+// Splits a comma-separated query param into trimmed, non-empty pieces.
+// Used for both `tag` and `type` below — the search page's multiselect
+// widget joins its selected checkboxes with ',' into one URL param
+// rather than repeating the key (keeps /api/search's URL shape identical
+// to what a hand-typed single value already looked like: "?tag=food" is
+// just a one-element list here, unchanged behavior for old links/bookmarks).
+std::vector<std::string> splitCsvParam(const std::string& raw) {
+  std::vector<std::string> out;
+  std::string current;
+  for (char c : raw) {
+    if (c == ',') {
+      if (!current.empty()) out.push_back(current);
+      current.clear();
+    } else {
+      current += c;
+    }
+  }
+  if (!current.empty()) out.push_back(current);
+  return out;
+}
+
 SearchQuery buildQuery(const HttpRequestPtr& req, bool includePrivate) {
   SearchQuery q;
   q.text = req->getParameter("q");
-  const std::string tag = req->getParameter("tag");
-  if (!tag.empty()) q.tag = tag;
-  const std::string type = req->getParameter("type");
-  if (!type.empty()) q.docType = type;
+  // AND semantics (FtsSearch.cpp: one EXISTS clause per entry) — a
+  // document must carry every tag selected in the multiselect.
+  q.tags = splitCsvParam(req->getParameter("tag"));
+  // OR semantics (FtsSearch.cpp: doc_type IN (...)) — a document has
+  // exactly one doc_type, so multiple selected types can only ever mean
+  // "any of these".
+  q.docTypes = splitCsvParam(req->getParameter("type"));
   q.includePrivate = includePrivate;
   q.limit = 50;
   return q;
