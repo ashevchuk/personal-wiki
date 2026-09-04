@@ -29,6 +29,23 @@ window.WikiPages = window.WikiPages || {};
         var title = doc.title || "(untitled)";
         document.getElementById("page-title").textContent = title + " — wiki";
 
+        // Available to every viewer, not just admin — printing/exporting a
+        // PUBLIC document is a plain reader action, no auth implied. Real
+        // PDF generation stays entirely client-side: window.print() hands
+        // off to the browser's own "Save as PDF" in its print dialog,
+        // rather than this app growing a server-side PDF renderer (would
+        // be the first HTML-generation the C++ side ever did — see
+        // CLAUDE.md's "pure JSON API" architecture rule). The @media
+        // print rules in theme.css do the actual work of making the
+        // output look like a print-out (white background, black text, no
+        // neon glow) instead of a screenshot of the terminal theme.
+        // Plain .doc-actions — no separate "no-print" marker needed, the
+        // print stylesheet already blanket-hides every .doc-actions/
+        // .folder-actions button row (Edit/Delete/this one alike; none
+        // of them belong in a print-out).
+        var printBar =
+          '<div class="doc-actions"><button type="button" id="doc-print-btn">Print / Export PDF</button></div>';
+
         var chrome = "";
         if (session.authenticated) {
           // Both actions as same-look buttons in one flex row (see
@@ -59,11 +76,18 @@ window.WikiPages = window.WikiPages || {};
         var titleHtml = bodyHasOwnH1 ? "" : "<h1>" + escapeHtml(title) + "</h1>";
 
         container.innerHTML =
-          renderBreadcrumbs(docPath) + chrome + titleHtml + doc.renderedHtml;
+          renderBreadcrumbs(docPath) + printBar + chrome + titleHtml + doc.renderedHtml;
 
         var deleteBtn = document.getElementById("doc-delete-btn");
         if (deleteBtn && window.WikiDocument) {
           window.WikiDocument.wireDeleteButton(deleteBtn);
+        }
+
+        var printBtn = document.getElementById("doc-print-btn");
+        if (printBtn) {
+          printBtn.addEventListener("click", function () {
+            window.print();
+          });
         }
       })
       .catch(function () {

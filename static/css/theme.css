@@ -442,3 +442,103 @@ a.btn:focus {
 .toastui-editor-dark .toastui-editor-md-container {
   color: #eee;
 }
+
+/* Print / "Export PDF" (view.js's #doc-print-btn just calls window.print()
+   — real PDF generation is the browser's own "Save as PDF" print
+   destination, not a server-side renderer; see the button's own comment
+   for why that's the deliberate choice here). The screen theme (black bg,
+   neon-green glowing text, Orbitron display font) is exactly wrong for a
+   printed page — unreadable in black-and-white, wastes toner/ink trying to
+   reproduce a glow that doesn't exist on paper, and a display font meant
+   to look like a terminal is a bad fit for body text on a page. This
+   overrides it entirely for @media print rather than trying to make the
+   terminal theme "work" on paper.
+   `!important` on the display:none list specifically (not the color
+   resets below, which don't need it): confirmed earlier THIS session that
+   an unrelated rule sharing an element's selector, later or not, is an
+   easy way to silently lose a display override at equal specificity (see
+   .ms-menu[hidden] above) — not leaving that to source-order chance here,
+   where the wrong output is a wasted printed page, not just a UI glitch. */
+@media print {
+  #matrix-bg,
+  .sidebar,
+  .doc-actions,
+  .folder-actions,
+  .breadcrumbs {
+    display: none !important;
+  }
+
+  .layout {
+    display: block;
+  }
+
+  .content {
+    max-width: none;
+    padding: 0;
+  }
+
+  html,
+  body {
+    background: #fff;
+    color: #000;
+    text-shadow: none;
+    font-family: Georgia, 'Times New Roman', serif;
+  }
+
+  h1,
+  h2,
+  h3 {
+    color: #000;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  a,
+  a:hover,
+  a:focus {
+    color: #000;
+    text-decoration: underline;
+    text-shadow: none;
+  }
+
+  mark {
+    background: #ffff88;
+    color: #000;
+    text-shadow: none;
+  }
+
+  pre,
+  code {
+    font-family: 'Courier New', monospace;
+    background: #f4f4f4;
+    color: #000;
+  }
+
+  pre {
+    border: 1px solid #ccc;
+    padding: 0.6rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  blockquote {
+    border-left: 3px solid #999;
+    margin: 0.6rem 0;
+    padding: 0.2rem 0.8rem;
+    color: #333;
+  }
+
+  img {
+    max-width: 100%;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  th,
+  td {
+    border: 1px solid #999;
+    padding: 0.3rem 0.5rem;
+  }
+}
