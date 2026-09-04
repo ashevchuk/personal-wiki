@@ -17,7 +17,7 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
 
 | | |
 |---|---|
-| ![Document view](docs/screenshots/document-view.png) **Document view** — tag cloud, resizable document tree, print/export | ![Backlinks](docs/screenshots/backlinks.png) **`[[wiki-links]]` + backlinks** — "Linked from" section, generated automatically |
+| ![Document view](docs/screenshots/document-view.png) **Document view** — filterable, namespace-grouped tags (`lang/cpp`, `lang/python`…), resizable document tree, print/export | ![Backlinks](docs/screenshots/backlinks.png) **`[[wiki-links]]` + backlinks** — "Linked from" section, generated automatically |
 | ![Search](docs/screenshots/search.png) **Full-text search** — FTS5 with prefix matching, `bm25()` ranking, tag/type filters | ![Editor](docs/screenshots/editor.png) **WYSIWYG editor** — Toast UI Editor, undo/redo, syntax-highlighted code blocks |
 | ![Browse](docs/screenshots/browse.png) **Folder browser** — every document and folder, one click away | ![Account page](docs/screenshots/account-mcp.png) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
 
