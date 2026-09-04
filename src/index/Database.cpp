@@ -23,8 +23,8 @@ void execOrThrow(sqlite3* db, const char* sql) {
 
 // Ordered list of migrations; index 0 is schema_version 1, etc. Add new
 // entries at the end only — never edit or reorder an already-shipped one.
-constexpr std::array<const char*, 3> kMigrations = {schema::kMigration1, schema::kMigration2,
-                                                      schema::kMigration3};
+constexpr std::array<const char*, 4> kMigrations = {schema::kMigration1, schema::kMigration2,
+                                                      schema::kMigration3, schema::kMigration4};
 
 }  // namespace
 

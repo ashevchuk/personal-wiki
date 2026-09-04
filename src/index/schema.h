@@ -134,4 +134,26 @@ CREATE TABLE mcp_audit_log (
 CREATE INDEX idx_mcp_audit_log_at ON mcp_audit_log(at DESC);
 )sql";
 
+// Migration 4: remote (HTTP) MCP transport settings — see
+// src/auth/McpRemoteConfig.h. Runtime-mutable via the Web UI on purpose
+// (not config.toml), so an admin can flip enabled/write_enabled or edit
+// the IP allowlist without a server restart. Singleton row (id=1, same
+// `CHECK (id = 1)` pattern as `users`) — there is exactly one remote MCP
+// configuration for this instance, same as there's exactly one admin
+// account. token_hash is nullable: no token has ever been issued until
+// the admin's first "regenerate" click.
+inline constexpr const char* kMigration4 = R"sql(
+CREATE TABLE mcp_remote_config (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled       INTEGER NOT NULL DEFAULT 0,
+  write_enabled INTEGER NOT NULL DEFAULT 0,
+  token_hash    TEXT
+);
+
+CREATE TABLE mcp_remote_allowed_cidrs (
+  id   INTEGER PRIMARY KEY,
+  cidr TEXT NOT NULL UNIQUE
+);
+)sql";
+
 }  // namespace wikicore::index::schema

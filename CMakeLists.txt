@@ -20,6 +20,10 @@ find_package(md4c CONFIG REQUIRED)
 find_package(tomlplusplus CONFIG REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(ARGON2 REQUIRED IMPORTED_TARGET libargon2)
+# Otherwise only ever pulled in transitively via Drogon (wiki-server) — an
+# explicit find_package here is needed for unit_tests to link
+# auth/Crypto.cpp (SHA-256, via EVP) directly without dragging in Drogon.
+find_package(OpenSSL REQUIRED)
 
 # ---------------------------------------------------------------------------
 # libwikicore — config, vault, index/search, MCP tool logic. NO Drogon/
@@ -71,6 +75,9 @@ find_package(Drogon CONFIG REQUIRED)  # also brings in drogon_create_views()
 
 add_executable(wiki-server
   src/main.cpp
+  src/auth/CidrMatch.cpp
+  src/auth/Crypto.cpp
+  src/auth/McpRemoteConfig.cpp
   src/auth/PasswordHasher.cpp
   src/auth/AdminAccount.cpp
   src/auth/SessionStore.cpp

@@ -19,10 +19,15 @@ add_executable(unit_tests
   # comment on why auth/ isn't part of wikicore) but have zero Drogon/
   # OpenSSL dependency themselves, so it's cheap to compile them straight
   # into the test binary rather than standing up a whole second library.
+  unit/CidrMatchTest.cpp
+  unit/McpRemoteConfigTest.cpp
   ${CMAKE_SOURCE_DIR}/src/auth/PasswordHasher.cpp
   ${CMAKE_SOURCE_DIR}/src/auth/RateLimiter.cpp
+  ${CMAKE_SOURCE_DIR}/src/auth/CidrMatch.cpp
+  ${CMAKE_SOURCE_DIR}/src/auth/Crypto.cpp
+  ${CMAKE_SOURCE_DIR}/src/auth/McpRemoteConfig.cpp
 )
-target_link_libraries(unit_tests PRIVATE wikicore Catch2::Catch2WithMain)
+target_link_libraries(unit_tests PRIVATE wikicore Catch2::Catch2WithMain OpenSSL::Crypto)
 
 add_test(NAME unit_tests COMMAND unit_tests)
 
