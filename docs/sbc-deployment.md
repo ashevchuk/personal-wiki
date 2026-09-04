@@ -43,7 +43,10 @@ target's libc at all.
 ```sh
 git clone <repo-url> wiki && cd wiki
 
-git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+# FULL clone, not --depth 1 — see docs/architecture.md's "Build" section
+# for why a shallow clone can silently miss vcpkg.json's pinned baseline
+# commit (worse on a slow SBC network link, but no less necessary).
+git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
 cmake -S . -B build -G Ninja \

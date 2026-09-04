@@ -278,7 +278,23 @@ Linked into both executables:
 
 ```sh
 # one-time: clone + bootstrap vcpkg (not in git)
-git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+#
+# A FULL clone, not --depth 1 -- confirmed live (2026-09-04, building the
+# Docker image) that a fresh shallow clone of vcpkg TODAY does not
+# contain vcpkg.json's own pinned builtin-baseline commit, and manifest
+# mode needs `git show <that commit>:versions/baseline.json` to resolve
+# every dependency's version. This isn't a one-off fluke: upstream vcpkg
+# advances constantly, and --depth 1 only fetches whatever commit
+# happens to be its CURRENT tip at clone time -- a baseline pinned any
+# amount of time ago eventually falls outside that single commit's
+# shallow history, and a shallow clone of a repo history that long
+# doesn't get *safer* over time, only more likely to be missing it.
+# --depth 1 looked harmless the day this baseline was pinned (the tip
+# WAS recent then); it silently stopped working at some point since,
+# with nothing about the command itself changing. A full clone is ~185MB
+# (vs. ~30% less shallow) and costs nothing at runtime -- vcpkg/ is
+# gitignored, never shipped, cloned once per machine/image build.
+git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
 # configure + build (installs deps from vcpkg.json automatically)

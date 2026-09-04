@@ -101,8 +101,10 @@ long-lived deployment accumulates them; sweep old ones by hand occasionally.
 ```sh
 git clone <repo-url> wiki && cd wiki
 
-# vcpkg is not vendored, cloned separately (see CLAUDE.md)
-git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+# vcpkg is not vendored, cloned separately. FULL clone, not --depth 1 —
+# see docs/architecture.md's "Build" section for why a shallow clone can
+# silently miss vcpkg.json's pinned baseline commit.
+git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
 cmake -S . -B build -G Ninja \

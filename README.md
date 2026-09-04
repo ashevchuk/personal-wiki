@@ -59,8 +59,11 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
 ```sh
 git clone <this-repo> wiki && cd wiki
 
-# vcpkg is bootstrapped locally, not vendored — one-time setup
-git clone --depth 1 https://github.com/microsoft/vcpkg.git vcpkg
+# vcpkg is bootstrapped locally, not vendored — one-time setup. A FULL
+# clone, not --depth 1 — a shallow clone can end up missing vcpkg.json's
+# pinned baseline commit once upstream has moved far enough past it (see
+# docs/architecture.md's "Build" section for exactly why, confirmed live).
+git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
 cmake -S . -B build -G Ninja \
@@ -78,6 +81,15 @@ cp config.example.toml config.toml
 Deploying somewhere real (systemd unit, reverse proxy for TLS, native vs. cross-
 compiled build for a weak/old SBC, backup timer): [`docs/deployment.md`](docs/deployment.md)
 and the self-contained [`docs/sbc-deployment.md`](docs/sbc-deployment.md) runbook.
+
+**Or, on a normal x86_64/arm64 machine (not a weak/old ARM SBC — see
+[`docs/docker.md`](docs/docker.md) for why):**
+
+```sh
+mkdir -p vault_data
+docker compose up -d
+docker compose exec wiki wiki-server --create-admin
+```
 
 ## Using it from Claude (MCP)
 
@@ -160,6 +172,7 @@ of real bugs caught by an actual E2E test, not just theory) live in
 | Tests | [Catch2](https://github.com/catchorg/Catch2) (unit) + a stdlib-only Python HTTP suite (integration) |
 | Package manager | [vcpkg](https://github.com/microsoft/vcpkg), manifest mode |
 | Cross-compilation | [zig](https://ziglang.org/) → static `arm-linux-musleabihf`, for old/weak ARM targets |
+| Containers | Docker, multi-stage build — for a normal x86_64/arm64 machine, not the weak-SBC path above |
 
 ## Status
 

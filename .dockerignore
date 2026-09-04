@@ -1,0 +1,23 @@
+# Keep the build context small and the vcpkg-install Docker layer stable
+# — none of this is needed inside the image, and letting any of it into
+# the build context would fight the Dockerfile's own layer-caching trick
+# (only vcpkg.json should be able to invalidate the vcpkg-install layer).
+.git/
+build/
+build-arm/
+vcpkg/
+vcpkg_installed/
+vcpkg_installed_arm/
+vault_data/
+uploads/
+*.db
+*.db-journal
+*.db-wal
+config.toml
+config.local.toml
+.env
+*.env
+.claude/
+.vscode/
+.idea/
+docs/screenshots/

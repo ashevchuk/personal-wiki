@@ -1,0 +1,25 @@
+# Config baked into the Docker image at build time (see Dockerfile's final
+# stage) — NOT a copy of config.example.toml with values filled in, a
+# separate, purpose-built file, because the one thing that has to differ
+# is [vault].path/[index].db_path: they need to point at /data (the
+# VOLUME declared in the Dockerfile), not the relative ./vault_data every
+# other deployment path in this repo uses. Everything else here matches
+# config.example.toml's own defaults.
+
+[server]
+listen_addr = "0.0.0.0"   # 127.0.0.1 would be unreachable from outside the container
+port = 8080
+threads = 2
+
+[vault]
+path = "/data/vault"
+
+[index]
+db_path = "/data/vault/.index.db"
+
+[mcp]
+scope = "admin"
+write_access = false
+
+[log]
+level = "info"

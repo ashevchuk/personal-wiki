@@ -1,0 +1,26 @@
+# Quick start: `mkdir -p vault_data && docker compose up -d`, then
+# `docker compose exec wiki wiki-server --create-admin` (interactive,
+# needs the real TTY `docker compose exec` gives you — `-T`/detached exec
+# would break the password prompt's echo-disabling).
+#
+# ./vault_data on the HOST is bind-mounted straight into the container —
+# same markdown-files-are-the-source-of-truth principle as every other
+# deployment path in this repo (docs/architecture.md); the vault stays a
+# plain directory of .md files you can browse, edit, or `git`/rsync/
+# restic outside Docker entirely, not something locked inside a container
+# volume nothing else can reach.
+#
+# The container runs as a fixed uid/gid 1000 (Dockerfile) — matches the
+# default first-user uid on most Linux distros, so a freshly `mkdir -p`'d
+# vault_data usually just works. If your host user is a different uid,
+# `chown -R 1000:1000 vault_data` once before the first start, or add
+# `user: "$(id -u):$(id -g)"` here and rebuild.
+services:
+  wiki:
+    build: .
+    image: personal-wiki:latest
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./vault_data:/data/vault
+    restart: unless-stopped
