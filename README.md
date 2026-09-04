@@ -17,9 +17,9 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
 
 | | |
 |---|---|
-| ![Document view](docs/screenshots/document-view.jpg) **Document view** — tag cloud, resizable document tree, print/export | ![Backlinks](docs/screenshots/backlinks.jpg) **`[[wiki-links]]` + backlinks** — "Linked from" section, generated automatically |
-| ![Search](docs/screenshots/search.jpg) **Full-text search** — FTS5 with prefix matching, `bm25()` ranking, tag/type filters | ![Editor](docs/screenshots/editor.jpg) **WYSIWYG editor** — Toast UI Editor, undo/redo, syntax-highlighted code blocks |
-| ![Browse](docs/screenshots/browse.jpg) **Folder browser** — every document and folder, one click away | ![Account page](docs/screenshots/account-mcp.jpg) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
+| ![Document view](docs/screenshots/document-view.png) **Document view** — tag cloud, resizable document tree, print/export | ![Backlinks](docs/screenshots/backlinks.png) **`[[wiki-links]]` + backlinks** — "Linked from" section, generated automatically |
+| ![Search](docs/screenshots/search.png) **Full-text search** — FTS5 with prefix matching, `bm25()` ranking, tag/type filters | ![Editor](docs/screenshots/editor.png) **WYSIWYG editor** — Toast UI Editor, undo/redo, syntax-highlighted code blocks |
+| ![Browse](docs/screenshots/browse.png) **Folder browser** — every document and folder, one click away | ![Account page](docs/screenshots/account-mcp.png) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
 
 ## Features
 
