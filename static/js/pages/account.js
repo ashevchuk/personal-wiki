@@ -18,6 +18,28 @@ window.WikiPages = window.WikiPages || {};
   // here applies immediately (PUT/POST on change, no separate "Save"
   // button) — that immediacy (no server restart) is the entire point of
   // storing this in SQLite instead of config.toml.
+  // Backup — GET /api/admin/backup (AdminRoutes.h) streams the whole
+  // vault as a .tar.gz with a Content-Disposition header, so a plain
+  // navigation to the URL is enough to trigger the browser's own download
+  // prompt: no fetch()+blob dance, no CSRF token (it's a pure GET that
+  // mutates nothing, same convention as the audit-log fetch below).
+  function renderBackupSection() {
+    return (
+      "<h2>Backup</h2>" +
+      "<p>Downloads the entire vault (documents, <code>.trash/</code>, and the " +
+      "search index) as one <code>.tar.gz</code> — see docs/deployment.md's " +
+      '"Backup" section for the full story, including automating this on a ' +
+      "schedule outside the browser.</p>" +
+      '<p><button type="button" id="backup-download-btn">Download backup</button></p>'
+    );
+  }
+
+  function wireBackupSection() {
+    document.getElementById("backup-download-btn").addEventListener("click", function () {
+      window.location.href = basePath() + "/api/admin/backup";
+    });
+  }
+
   function renderRemoteMcpSection() {
     return (
       "<h2>Remote MCP</h2>" +
@@ -257,8 +279,10 @@ window.WikiPages = window.WikiPages || {};
       '<input type="password" name="confirmPassword" autocomplete="new-password" required></label></p>' +
       '<p><button type="submit">Change password</button></p>' +
       "</form>" +
+      renderBackupSection() +
       renderRemoteMcpSection();
 
+    wireBackupSection();
     wireRemoteMcpSection();
 
     var errorEl = document.getElementById("account-error");

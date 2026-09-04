@@ -287,7 +287,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog,
-                                              remoteMcpConfig);
+                                              remoteMcpConfig, cfg.vaultPath);
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
   wikicore::controllers::registerVersionRoutes(drogon::app(), indexUpdater, snapshotStore,
                                                 documentService);

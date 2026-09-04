@@ -1,0 +1,31 @@
+[Unit]
+Description=Personal Wiki vault backup
+# Deliberately NOT `After=wiki.service`/`Requires=wiki.service` -- this
+# backs up the vault directly off disk (see wiki-backup.sh's own header
+# comment), so it works whether wiki-server is up, crashed, or mid-restart.
+# The only real dependency is the filesystem(s) VAULT_PATH/BACKUP_DIR live
+# on being mounted.
+After=local-fs.target
+
+[Service]
+Type=oneshot
+User=wiki
+Group=wiki
+ExecStart=/opt/wiki/bin/wiki-backup.sh
+EnvironmentFile=-/etc/wiki/wiki-backup.env
+
+# Hardening -- same shape as wiki.service's, but this unit never needs to
+# WRITE the vault itself (ReadOnlyPaths, not ReadWritePaths), only read it
+# and write the backup destination. BACKUP_DIR isn't known at unit-file
+# authoring time (it's whatever the admin configured in wiki-backup.env),
+# so ReadWritePaths can't name it here the way wiki.service names
+# /opt/wiki/vault_data -- if BACKUP_DIR ends up somewhere ProtectSystem=
+# strict would otherwise block (most places outside /opt, /mnt, /media,
+# /srv, or a path already writable by the `wiki` user), add it as a
+# ReadWritePaths= override in /etc/systemd/system/wiki-backup.service.d/
+# rather than loosening this file's own hardening.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadOnlyPaths=/opt/wiki/vault_data

@@ -6,6 +6,8 @@
 
 #include <drogon/HttpAppFramework.h>
 
+#include <string>
+
 namespace wikicore::controllers {
 
 // POST /api/admin/reindex - admin+CSRF. Runs IndexBuilder::fullRescan()
@@ -45,8 +47,19 @@ namespace wikicore::controllers {
 //        last entry returns to "no IP
 //        restriction configured" (allow), not "allow nothing" — see
 //        McpRemoteConfig::isIpAllowed's own comment on why.
+//
+// GET /api/admin/backup - admin only, no CSRF (a pure GET that mutates
+// nothing — same convention as /api/admin/mcp-audit-log above). Streams
+// the entire vault directory as a .tar.gz (see vault/BackupService.h for
+// exactly what that includes and how it's built) with a
+// Content-Disposition that names the file `wiki-backup-<timestamp>.tar.gz`
+// so a plain browser navigation to this URL downloads it directly — no
+// client-side JS blob/fetch dance needed, same reasoning as why this route
+// doesn't need CSRF: reading response bytes cross-origin is blocked by the
+// browser regardless, and there's no state here to forge a change to.
 void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::index::IndexBuilder& indexBuilder,
                           wikicore::index::McpAuditLog& mcpAuditLog,
-                          wikicore::auth::McpRemoteConfig& mcpRemoteConfig);
+                          wikicore::auth::McpRemoteConfig& mcpRemoteConfig,
+                          const std::string& vaultPath);
 
 }  // namespace wikicore::controllers

@@ -40,6 +40,7 @@ add_library(wikicore STATIC
   src/vault/DocumentService.cpp
   src/vault/AttachmentService.cpp
   src/vault/FolderService.cpp
+  src/vault/BackupService.cpp
   src/index/Database.cpp
   src/index/IndexUpdater.cpp
   src/index/IndexBuilder.cpp
@@ -158,6 +159,12 @@ install(TARGETS wiki-server wiki-mcp RUNTIME DESTINATION bin)
 install(DIRECTORY static/ DESTINATION static)
 install(FILES config.example.toml DESTINATION .)
 install(FILES systemd/wiki.service systemd/wiki.env.example DESTINATION share/wiki/systemd)
+# wiki-backup.sh is a PROGRAMS install (not FILES) so it lands executable —
+# wiki-backup.service's ExecStart= points straight at /opt/wiki/bin/wiki-backup.sh,
+# matching where wiki-server/wiki-mcp themselves land above.
+install(PROGRAMS systemd/wiki-backup.sh DESTINATION bin)
+install(FILES systemd/wiki-backup.service systemd/wiki-backup.timer
+              systemd/wiki-backup.env.example DESTINATION share/wiki/systemd)
 
 enable_testing()
 add_subdirectory(tests)

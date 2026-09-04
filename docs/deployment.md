@@ -171,7 +171,55 @@ The source of truth is `[vault].path` (the directory of `.md` files plus `.trash
 The SQLite index (`[index].db_path`) is fully disposable and gets rebuilt by
 `wiki-server --reindex` — backing it up isn't required, but doesn't hurt either
 (faster to restore than a full rescan from scratch on a very large vault). Minimum:
-back up `[vault].path` regularly.
+back up `[vault].path` regularly. Two ways to actually do that:
+
+**Ad hoc, from the Web UI**: Account page (admin only) → "Download backup" — hits
+`GET /api/admin/backup` (`src/vault/BackupService.h`), which shells out to the
+system `tar` binary (never `system()`/`popen()` — `fork()`+`execlp()` with an
+explicit argv, so nothing about the vault path's own content can be interpreted as
+shell syntax) and streams back a `.tar.gz` of the whole vault, `.trash/` and the
+index db included, `.uploads-tmp/` (Drogon's own transient upload-staging buffer,
+never real content) excluded. Good for "grab a snapshot right now before I do
+something risky"; not a substitute for the automated path below — it only helps if
+the server and its disk are both still alive, which is exactly the case a real
+disaster (dead SD card) is not.
+
+**Automated, via systemd timer** (`systemd/wiki-backup.{service,timer}`,
+`systemd/wiki-backup.sh`) — NOT installed/enabled by a plain `cmake --install`;
+opt in explicitly:
+
+```sh
+sudo cp /opt/wiki/share/wiki/systemd/wiki-backup.{service,timer} /etc/systemd/system/
+sudo mkdir -p /etc/wiki
+sudo cp /opt/wiki/share/wiki/systemd/wiki-backup.env.example /etc/wiki/wiki-backup.env
+sudo "$EDITOR" /etc/wiki/wiki-backup.env   # set BACKUP_DIR to a DIFFERENT disk/mount, see below
+sudo systemctl daemon-reload
+sudo systemctl enable --now wiki-backup.timer
+```
+
+`wiki-backup.sh` tars `VAULT_PATH` straight off disk (same `.uploads-tmp/`
+exclusion as the Web UI button, same atomic temp-file-then-rename discipline as
+`VaultRepository`'s own document writes — a run that dies partway through never
+leaves a truncated file under the real `wiki-backup-*.tar.gz` name), then prunes
+down to `RETENTION_COUNT` (default 14), oldest first, only after a new backup has
+actually landed. Deliberately does NOT go through `wiki-server`/the HTTP endpoint
+above — no admin session or credentials needed, and it keeps working whether the
+server is healthy, crashed, or mid-restart, which is the whole point of a backup
+that's supposed to survive a disaster rather than assume one didn't happen.
+
+**Point `BACKUP_DIR` at a disk/mount OTHER than the one `VAULT_PATH` lives on** —
+an external USB drive, a network share, another machine over sshfs/NFS, anything
+that doesn't share the SD card's own failure mode. `wiki-backup.service`'s
+`ProtectSystem=strict` only grants read access to `/opt/wiki/vault_data` by
+default (see the unit file's own comment) — an unusual `BACKUP_DIR` outside the
+paths systemd hardening normally allows needs a
+`ReadWritePaths=` override in `/etc/systemd/system/wiki-backup.service.d/`, not a
+loosening of the shipped unit.
+
+The timer defaults to `OnCalendar=daily`, `Persistent=true` (a missed run — e.g.
+the device was off — fires as soon as it's back up, same convention as the
+`systemd-timers.md` example in this very vault). Check it landed with
+`systemctl list-timers wiki-backup.timer` and `journalctl -u wiki-backup.service`.
 
 ## Update
 

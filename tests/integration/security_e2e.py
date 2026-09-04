@@ -258,6 +258,12 @@ def run_checks(sandbox, vault):
     status, _, _ = anon.get("/api/admin/mcp-audit-log")
     check("anon mcp-audit-log -> 401", status == 401, f"got {status}")
 
+    # Vault backup download (AdminRoutes.cpp / BackupService.h) -- a plain
+    # GET, but the full vault contents are exactly the kind of thing that
+    # must never come back to an unauthenticated caller.
+    status, _, _ = anon.get("/api/admin/backup")
+    check("anon backup download -> 401", status == 401, f"got {status}")
+
     # Remote MCP transport (RemoteMcpRoutes.cpp) -- off by default, so an
     # anon POST to the actual /mcp endpoint (no bearer token needed to
     # provoke this -- it's not even reachable yet) must read as a plain

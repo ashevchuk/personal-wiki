@@ -1,12 +1,17 @@
 #include "controllers/AdminRoutes.h"
 
 #include "auth/RequireAdmin.h"
+#include "util/Time.h"
+#include "vault/BackupService.h"
 
 #include <drogon/HttpResponse.h>
+
+#include <algorithm>
 
 using namespace drogon;
 using namespace wikicore::auth;
 using namespace wikicore::index;
+using namespace wikicore::vault;
 
 namespace wikicore::controllers {
 
@@ -24,10 +29,22 @@ Json::Value remoteConfigToJson(const McpRemoteConfig& cfg) {
   return body;
 }
 
+// Turns "2026-09-04T14:26:55Z" into "2026-09-04T14-26-55Z" — colons are
+// legal in a Linux filename but a suggested Content-Disposition name with
+// them in it trips up some browsers/OSes on the receiving end (Windows
+// most notably), so swap them out purely for the download's filename;
+// nothing else in this app uses this sanitized form.
+std::string backupFilename() {
+  std::string ts = wikicore::util::nowIso8601();
+  std::replace(ts.begin(), ts.end(), ':', '-');
+  return "wiki-backup-" + ts + ".tar.gz";
+}
+
 }  // namespace
 
 void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
-                          McpAuditLog& mcpAuditLog, McpRemoteConfig& mcpRemoteConfig) {
+                          McpAuditLog& mcpAuditLog, McpRemoteConfig& mcpRemoteConfig,
+                          const std::string& vaultPath) {
   app.registerHandler(
       "/api/admin/reindex",
       [&indexBuilder](const HttpRequestPtr& req,
@@ -171,6 +188,32 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
         callback(HttpResponse::newHttpJsonResponse(remoteConfigToJson(mcpRemoteConfig)));
       },
       {Delete, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/admin/backup",
+      [vaultPath](const HttpRequestPtr& req,
+                  std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        const BackupResult result = createVaultBackup(vaultPath);
+        if (!result.success) {
+          Json::Value err;
+          err["error"] = result.errorMessage;
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k500InternalServerError);
+          callback(resp);
+          return;
+        }
+        auto resp = HttpResponse::newHttpResponse();
+        resp->setContentTypeCodeAndCustomString(CT_CUSTOM, "application/gzip");
+        resp->setBody(std::string(result.archive.begin(), result.archive.end()));
+        resp->addHeader("Content-Disposition",
+                         "attachment; filename=\"" + backupFilename() + "\"");
+        callback(resp);
+      },
+      {Get, "wikicore::auth::AuthFilter"});
 }
 
 }  // namespace wikicore::controllers
