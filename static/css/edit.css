@@ -37,3 +37,28 @@
 #f-status.ok {
   color: var(--ok, #55ff99);
 }
+
+/* ![youtube](url) thumbnail shown inside Toast UI Editor's WYSIWYG
+   canvas / markdown-preview tab only -- see youtube-embed-preview.js.
+   Never appears on a saved document's real view (that's a genuine
+   <iframe> by then, styled by .youtube-embed in theme.css). A single
+   plain <img> -- deliberately not a wrapper + overlay badge, see that
+   file's own comment on why ProseMirror's WYSIWYG canvas can't render
+   one; `alt`/`title` carry the "plays after saving" explanation instead.
+
+   Fixed 16:9 box (width + aspect-ratio, not just max-width on a
+   shrink-to-fit element) rather than sizing off the <img>'s own intrinsic
+   dimensions -- the fallback both browsers land on whenever the
+   thumbnail fails to load (blocked network, offline editing, YouTube's
+   CDN down, a stale ID) is the tiny native "broken image" glyph's own
+   size, confirmed by testing this for real in a network-sandboxed
+   browser rather than assumed to always have internet. */
+.yt-embed-preview {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  aspect-ratio: 16 / 9;
+  background: #111;
+  border-radius: 4px;
+  object-fit: cover;
+}

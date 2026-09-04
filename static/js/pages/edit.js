@@ -167,6 +167,15 @@ window.WikiPages = window.WikiPages || {};
             });
         },
       },
+      // Cosmetic only -- see youtube-embed-preview.js. The actual
+      // ![youtube](url) -> <iframe> substitution happens server-side on
+      // save+view (util/YouTubeEmbed.h, MarkdownRenderer.cpp); without
+      // this hook the editor's own markdown engine would just try to
+      // load the YouTube page URL as a normal <img> and show a broken
+      // image icon while editing.
+      customHTMLRenderer: {
+        image: window.WikiYouTubeEmbedPreview.customImageRenderer,
+      },
     });
 
     document.getElementById("doc-form").addEventListener("submit", function (evt) {

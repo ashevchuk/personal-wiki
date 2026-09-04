@@ -71,6 +71,16 @@
 <meta name="color-scheme" content="dark">
 <title id="page-title">wiki</title>
 <link rel="stylesheet" href="css/theme.css">
+<!-- Edit-page-specific layout (.field-row, .visibility-toggle, #f-status
+     colors, .yt-embed-preview) — was a real, orphaned file for who knows
+     how long before this link existed: edit.css was written, referenced
+     by class/id from pages/edit.js, and documented in theme.css's own
+     header comment, but never actually <link>ed anywhere, so none of its
+     rules had EVER applied to a real page load. Found by testing the
+     YouTube-embed WYSIWYG preview live rather than trusting a green
+     ctest run — unrelated to that feature, fixed alongside it since it
+     was the same file this session already had open. -->
+<link rel="stylesheet" href="css/edit.css">
 <link rel="stylesheet" href="js/toastui-editor/toastui-editor.css">
 <!-- Official dark theme (theme: 'dark' in pages/edit.js's Editor
      constructor call applies the .toastui-editor-dark class it's scoped
@@ -118,6 +128,7 @@
 <script src="js/nav.js"></script>
 <script src="js/document.js"></script>
 <script src="js/toastui-editor/toastui-editor.min.js"></script>
+<script src="js/youtube-embed-preview.js"></script>
 <script src="js/pages/login.js"></script>
 <script src="js/pages/search.js"></script>
 <script src="js/pages/view.js"></script>
