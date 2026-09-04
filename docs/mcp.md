@@ -49,7 +49,16 @@ before the first MCP client connection.
 - **get_document**(id_or_path: string) — the full document body + metadata. Accepts
   either a vault-relative path (`notes/foo.md`) or an `id` (uuid) — resolved via the
   index.
-- **list_tags**() — every tag with its document count.
+- **list_tags**() — every tag with its document count, e.g.
+  `[{"tag": "lang/cpp", "count": 3}, {"tag": "meta", "count": 12}, ...]`. A `/` inside a
+  tag has no special meaning to this tool, or to anything server-side — it's a plain
+  character in the tag string, same as any other. It IS a convention the Web UI
+  understands purely client-side: a tag containing `/` (e.g. `lang/cpp`, `lang/python`,
+  `project/wiki`) renders grouped into a collapsible namespace tree in the sidebar
+  (`nav.js::buildTags`) instead of a flat list, with a filter box above it — worth
+  knowing if an MCP client is the one CHOOSING tags for `create_document`/
+  `update_document` below: picking `lang/cpp` over a bare `cpp` costs nothing and gets
+  free grouping in the actual UI a human later browses.
 - **list_documents**(tag?: string, type?: string, folder?: string, limit?: number,
   offset?: number) — browsing without a search query, with pagination. `folder` is a
   path prefix (`"notes/"` matches `notes/foo.md`, `notes/sub/bar.md`).
