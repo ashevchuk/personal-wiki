@@ -328,3 +328,16 @@ its own directives produce the same guarantee — a misconfigured proxy here doe
 break the bearer-token check, only the IP allowlist's own guarantee on top of it. The
 token is still the actual gate; treat the allowlist as a defense-in-depth layer, not
 the only thing standing between the internet and this vault.
+
+**Current status on the real SBC deployment**: enabled, WITH write access, as of
+2026-09-04 (toggled on directly via the Account page, not via this doc). CIDR
+allowlist is empty (unrestricted by IP — the bearer token is the only gate right
+now). The raw token itself is deliberately **not** written here or anywhere else in
+this repo — this file is git-tracked, and `McpRemoteConfig::regenerateToken()` is
+designed around exactly one display of the raw value, ever, specifically so a
+plaintext credential never ends up sitting in version control forever. To use or
+rotate it: Account page → Remote MCP section (view whether a token is set, hit
+Regenerate to invalidate the old one and see a fresh raw value once) or
+`POST /api/admin/mcp-remote-config/regenerate-token` as admin. If you're reading
+this and don't already have the current value, that's the point — go regenerate one
+rather than dig for the old one.

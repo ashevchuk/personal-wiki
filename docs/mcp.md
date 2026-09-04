@@ -188,6 +188,39 @@ almost certainly because it matched responses by their `"id"` field rather than
 assuming one line in, one line out in strict order, which is exactly what papers over
 this.
 
+## Verification: remote transport, live against real production (2026-09-04)
+
+Unlike the stdio verification above (a local dev-environment script), this one is a
+handful of plain `curl` calls against the actual public endpoint
+(`https://wiki.example.com/wiki/mcp`) with the real production bearer token — no
+sandbox, no synthetic double:
+
+- `tools/list` — all 6 tools present (`write_enabled=1` on prod at the time), matching
+  what "Write tools" above says should be exposed vs. hidden per that flag.
+- `list_documents` / `search_documents` — returned both public and private documents,
+  confirming remote requests get the same `includePrivate=true` treatment as the local
+  stdio server once past the bearer check (see "Remote (HTTP) transport" above).
+- `create_document` → `get_document` — created `mcp-remote-write-test.md`, read it
+  back, content matched byte for byte.
+- `update_document` → `get_document` — updated the body, read it back again, matched
+  again.
+- `mcp_audit_log` — both calls recorded with the `remote:` prefix
+  (`remote:create_document`, `remote:update_document`), `success=1`, confirming the
+  naming convention documented above actually holds in the real table, not just in
+  the code that's supposed to write it.
+- Cleanup — no MCP tool exposes delete (see "Versioning" above: Phase 2's write scope
+  stopped at the current document, on purpose), so the test document was soft-deleted
+  by hand into `.trash/`, mirroring `DocumentService`'s own soft-delete convention
+  rather than a raw `rm`. A follow-up `get_document` call correctly came back
+  `isError:true, "document not found"` — confirming `VaultWatcher` picks up a
+  *deletion* live over the remote path too, with no `--reindex` in between, the same
+  guarantee `docs/architecture.md` documents for the local/web-UI paths.
+
+No gaps found end to end: auth, rate limiting (never triggered — well under threshold),
+the (empty, at the time) IP allowlist, read, write, audit logging, and live
+reindexing all behaved exactly as designed on the very deployment this is meant to
+protect.
+
 ## Known issue: an extra blank `{}` line after `notifications/initialized` (vendored library, not our code)
 
 Confirmed 2026-09-04 by driving a real JSON-RPC handshake into the actual prod
