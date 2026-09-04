@@ -12,6 +12,13 @@ namespace wikicore::controllers {
 //                       cookies, or {ok:false, error} with 401/429
 //   POST /api/logout    -> {ok:true}, clears cookies (CSRF-protected)
 //   GET  /api/session   -> {authenticated: bool}
+//   POST /api/account/password  {currentPassword, newPassword} -> {ok:true}
+//                       (admin+CSRF protected). Verifies currentPassword
+//                       via PasswordHasher before overwriting the stored
+//                       hash, then destroys every OTHER session for this
+//                       account (see SessionStore::destroyAllExcept) —
+//                       the caller's own session survives so this doesn't
+//                       also log the caller out.
 //
 // No HTML here at all — see docs/architecture.md's frontend section: the
 // client (static/js/pages/login.js) owns the login form and redirect

@@ -19,7 +19,7 @@
 (function () {
   "use strict";
   var path = location.pathname;
-  var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/];
+  var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/, /\/account\/?$/];
   var prefix = "";
   for (var i = 0; i < patterns.length; i++) {
     var m = path.match(patterns[i]);
@@ -59,6 +59,7 @@
     <a data-href="/search" href="#">Search</a>
     <a data-href="/folder" href="#">Browse</a>
     <button type="button" id="sidebar-new-doc" hidden>+ New</button>
+    <a id="sidebar-account" data-href="/account" href="#" hidden>Password</a>
     <button type="button" id="sidebar-logout" hidden>Log out</button>
   </div>
   <div class="sidebar-section"><h3>Tags</h3><div id="nav-tags"></div></div>
@@ -83,6 +84,7 @@
 <script src="js/pages/view.js"></script>
 <script src="js/pages/edit.js"></script>
 <script src="js/pages/folder.js"></script>
+<script src="js/pages/account.js"></script>
 <script src="js/router.js"></script>
 </body>
 </html>

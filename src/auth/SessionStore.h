@@ -35,6 +35,13 @@ class SessionStore {
 
   void destroy(const std::string& rawToken);
 
+  // Invalidates every OTHER session belonging to `userId` — used after a
+  // password change, so a leaked/stolen session token elsewhere gets
+  // kicked out immediately rather than surviving until its own natural
+  // expiry. Keeps `keepRawToken`'s own session alive (the one that made
+  // the change) so changing your own password doesn't also log you out.
+  void destroyAllExcept(int64_t userId, const std::string& keepRawToken);
+
   // Opportunistic cleanup — called on create(), not on a timer (this is a
   // low-traffic personal service; a background sweep thread is
   // unnecessary complexity for what create() already does for free).

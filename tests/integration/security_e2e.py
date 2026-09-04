@@ -2,8 +2,9 @@
 """
 End-to-end security/correctness checks against a real wiki-server process:
 auth, CSRF, path traversal, session fixation, visibility gating (search/
-nav/attachments), rate limiting, and VaultWatcher pickup of external
-filesystem changes.
+nav/attachments), rate limiting, admin password change (wrong-current-
+password rejection, other-session invalidation), and VaultWatcher pickup
+of external filesystem changes.
 
 This exists specifically because unit tests can't catch HTTP-layer wiring
 bugs — see the M2 postmortem in docs/architecture.md: an unauthenticated
@@ -371,7 +372,58 @@ def run_checks(sandbox, vault):
     check("VaultWatcher swept the externally-deleted file from the index",
           "external/dropped.md" not in paths, f"paths={paths}")
 
-    # --- 10. Rate limiting on repeated failed logins ---------------------
+    # --- 10. Change admin password ----------------------------------------
+    # Deliberately runs BEFORE the rate-limiter check below: RateLimiter is
+    # keyed by IP, not by session/cookie (see RateLimiter.h), so the
+    # deliberate run of failed logins in check 11 would otherwise still
+    # have this IP locked out when the plain-login assertions here run.
+    # Also deliberately near the end: this actually rotates the real admin
+    # credential, so nothing above this point may depend on
+    # "SuperSecret123" still being valid afterwards.
+    other = Client(HOST, PORT)
+    status, _, _ = other.post_json("/api/login", {"username": "admin", "password": "SuperSecret123"})
+    check("second session login (pre password-change) -> 200", status == 200, f"got {status}")
+
+    status, _, _ = anon.post_json(
+        "/api/account/password", {"currentPassword": "SuperSecret123", "newPassword": "NewSecret456"})
+    check("anon password change -> 401", status == 401, f"got {status}")
+
+    status, _, _ = admin.post_json(
+        "/api/account/password", {"currentPassword": "SuperSecret123", "newPassword": "NewSecret456"})
+    check("password change without csrf header -> 403", status == 403, f"got {status}")
+
+    status, _, _ = admin.post_json(
+        "/api/account/password", {"currentPassword": "WRONG", "newPassword": "NewSecret456"},
+        headers={"X-CSRF-Token": csrf})
+    check("password change with wrong current password -> 401", status == 401, f"got {status}")
+
+    status, _, _ = admin.post_json(
+        "/api/account/password", {"currentPassword": "SuperSecret123", "newPassword": "NewSecret456"},
+        headers={"X-CSRF-Token": csrf})
+    check("password change with correct current password -> 200", status == 200, f"got {status}")
+
+    status, _, body = admin.get_json("/api/session")
+    check("caller's OWN session survives its own password change",
+          body == {"authenticated": True}, f"got {body}")
+
+    status, _, body = other.get_json("/api/session")
+    check("every OTHER session was invalidated by the password change",
+          body == {"authenticated": False}, f"got {body}")
+
+    # Success before failure, deliberately: a failed /api/login attempt
+    # trips RateLimiter.recordFailure() (1s+ backoff on this IP, see
+    # RateLimiter.cpp), and a follow-up request landing inside that
+    # backoff window would get 429 instead of the 200 this is checking
+    # for. A successful attempt calls recordSuccess() (clears the entry),
+    # so doing the success check first keeps the failure check after it
+    # from needing its own backoff-clearing delay.
+    fresh = Client(HOST, PORT)
+    status, _, _ = fresh.post_json("/api/login", {"username": "admin", "password": "NewSecret456"})
+    check("new password accepted after change", status == 200, f"got {status}")
+    status, _, _ = fresh.post_json("/api/login", {"username": "admin", "password": "SuperSecret123"})
+    check("old password rejected after change", status == 401, f"got {status}")
+
+    # --- 11. Rate limiting on repeated failed logins ---------------------
     rl = Client(HOST, PORT)
     statuses = []
     for _ in range(6):

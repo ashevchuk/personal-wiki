@@ -27,8 +27,11 @@
   // GET /api/session of its own for the SAME chrome decision.
   function wireSidebarAuthChrome(session) {
     var newDocBtn = document.getElementById("sidebar-new-doc");
+    var accountLink = document.getElementById("sidebar-account");
     var logoutBtn = document.getElementById("sidebar-logout");
     if (!session.authenticated) return;
+
+    if (accountLink) accountLink.hidden = false;
 
     if (newDocBtn) {
       newDocBtn.hidden = false;
@@ -83,6 +86,10 @@
       }
       if (path === "/folder" || path === "/folder/") {
         pages.renderFolder(content, "", session);
+        return;
+      }
+      if (path === "/account" || path === "/account/") {
+        pages.renderAccount(content, session);
         return;
       }
       // location.pathname is already percent-decoded by the browser, so

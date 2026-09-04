@@ -133,6 +133,55 @@ void registerAuthRoutes(HttpAppFramework& app) {
       // See DocumentRoutes.cpp: filters are registered under their
       // fully-qualified, demangled type name.
       {Post, "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/account/password",
+      [](const HttpRequestPtr& req,
+         std::function<void(const HttpResponsePtr&)>&& callback) {
+        // AuthFilter/CsrfFilter never block by themselves — see
+        // RequireAdmin.h's comment and the M2 postmortem in
+        // docs/architecture.md. This is the actual gate.
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("currentPassword") || !json->isMember("newPassword")) {
+          callback(jsonError(k400BadRequest, "expected {currentPassword, newPassword}"));
+          return;
+        }
+        const std::string currentPassword = (*json)["currentPassword"].asString();
+        const std::string newPassword = (*json)["newPassword"].asString();
+        if (newPassword.empty()) {
+          callback(jsonError(k400BadRequest, "new password must not be empty"));
+          return;
+        }
+
+        // requireAdminApi() already proved a valid session; re-fetch the
+        // account row anyway rather than trusting anything cached — same
+        // "recheck the ground truth, don't trust an annotation" discipline
+        // as every other handler that reads req->attributes() here.
+        const auto admin = AuthServices::admin().find();
+        if (!admin || !PasswordHasher::verify(admin->passwordHash, currentPassword)) {
+          callback(jsonError(k401Unauthorized, "Current password is incorrect."));
+          return;
+        }
+
+        AuthServices::admin().createOrReplace(admin->username, PasswordHasher::hash(newPassword));
+
+        // Kick out every OTHER session for this account — a stolen/leaked
+        // token elsewhere shouldn't outlive a password change. Keep the
+        // CALLER's own session alive so changing your own password doesn't
+        // also log you out of the tab you just did it from.
+        const std::string& currentToken = req->getCookie(kSessionCookieName);
+        AuthServices::sessions().destroyAllExcept(admin->id, currentToken);
+
+        Json::Value body;
+        body["ok"] = true;
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 }
 
 }  // namespace wikicore::controllers

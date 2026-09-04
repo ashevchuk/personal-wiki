@@ -140,6 +140,20 @@ void SessionStore::destroy(const std::string& rawToken) {
   sqlite3_finalize(stmt);
 }
 
+void SessionStore::destroyAllExcept(int64_t userId, const std::string& keepRawToken) {
+  static constexpr const char* kSql =
+      "DELETE FROM sessions WHERE user_id = ?1 AND token_hash != ?2;";
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db_.handle(), kSql, -1, &stmt, nullptr) != SQLITE_OK) {
+    throw std::runtime_error(std::string("prepare failed: ") +
+                              sqlite3_errmsg(db_.handle()));
+  }
+  sqlite3_bind_int64(stmt, 1, userId);
+  bindText(stmt, 2, sha256Hex(keepRawToken));
+  sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+}
+
 void SessionStore::pruneExpired() {
   static constexpr const char* kSql = "DELETE FROM sessions WHERE expires_at <= ?1;";
   sqlite3_stmt* stmt = nullptr;

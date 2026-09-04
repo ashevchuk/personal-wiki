@@ -5,7 +5,7 @@
 namespace wikicore::controllers {
 
 // Registers every URL a human navigates to directly (/, /login, /search,
-// /folder[/...], /d/{path...}, /edit/{path...}) — each one returns the
+// /folder[/...], /d/{path...}, /edit/{path...}, /account) — each one returns the
 // EXACT SAME static file (static/shell.html) verbatim, regardless of the
 // specific path or any request data. This is the standard client-rendered
 // app fallback: the browser's own JS (static/js/router.js) inspects
