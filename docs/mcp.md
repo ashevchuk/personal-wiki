@@ -34,6 +34,12 @@ uses) — `wiki-mcp` looks for it relative to the current working directory, sam
 `wiki-server`. If `config.toml` is missing, it falls back to `config.example.toml`
 (defaults).
 
+Running the whole app in Docker instead (`docs/docker.md`) rather than natively? The
+`command` above doesn't apply — there's no `wiki-mcp` binary sitting on the host
+filesystem to point at. Use `docker exec -i <container> wiki-mcp` as the `command`
+instead; see `docs/docker.md`'s "`wiki-mcp` from a container" section for the full
+`claude_desktop_config.json` shape.
+
 **Important**: `wiki-mcp` does NOT rescan the vault on every start (unlike
 `wiki-server`) — a full walk on every MCP client spawn would contradict the
 "starts instantly" requirement. It trusts the existing index. Make sure `wiki-server`
