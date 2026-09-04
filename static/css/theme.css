@@ -470,6 +470,7 @@ a.btn:focus {
 
   .layout {
     display: block;
+    min-height: 0;
   }
 
   .content {
@@ -477,12 +478,24 @@ a.btn:focus {
     padding: 0;
   }
 
+  /* The screen layout leans on `min-height: 100vh` (html/body AND
+     .layout, both above) to keep a short page filling the viewport —
+     harmless on screen, but in print `vh` resolves against the PAPER
+     page box, not the browser window: 100vh pins these to "exactly one
+     full printed page" every time, no matter how short the actual
+     content is. Forgetting to zero this out here was confirmed live as
+     the actual cause of a spurious blank trailing page — any tiny
+     overflow past that pinned height (a fraction of a px from font
+     metrics/rounding is enough) has nowhere to go but a second, mostly
+     empty page. Zeroing both here lets the page box size to the
+     content's real height instead. */
   html,
   body {
     background: #fff;
     color: #000;
     text-shadow: none;
     font-family: Georgia, 'Times New Roman', serif;
+    min-height: 0;
   }
 
   h1,
