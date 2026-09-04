@@ -114,25 +114,39 @@ window.WikiCommon = (function () {
     return escaped.split(startMarker).join("<mark>").split(endMarker).join("</mark>");
   }
 
-  // Mirrors util::renderBreadcrumbs (used to live in the now-deleted
-  // src/util/PageChrome.cpp): "Home / notes / sub / foo.md" from a
-  // vault-relative path. Folder segments are plain text, not links —
-  // same reasoning as the C++ version had: only "Home" links anywhere,
-  // the trailing segment is styled as the current page/folder. `path`
-  // may be empty (renders just "Home"). Returns an HTML string.
+  // "Home / notes / sub / foo.md" from a vault-relative path. Every
+  // segment except the trailing one is a link to /folder/{cumulative
+  // path up to and including that segment} — used to be plain text for
+  // every segment but "Home", which made a breadcrumb trail from a
+  // document buried a few folders deep purely decorative: you could see
+  // where you were, but not jump back to any of the folders along the
+  // way without using the sidebar tree instead. The LAST segment stays
+  // non-clickable (crumb-current) either way — for a document path
+  // that's the filename itself (not a folder, nothing to link to); for
+  // a folder-browse path (folder.js) it's the folder currently being
+  // viewed, i.e. exactly the page already open. `path` may be empty
+  // (renders just "Home"). Returns an HTML string.
   function renderBreadcrumbs(path) {
     var html = '<nav class="breadcrumbs"><a href="' + basePath() + '/">Home</a>';
     var segments = path.split("/").filter(function (s) {
       return s.length > 0;
     });
+    var cumulative = [];
     segments.forEach(function (seg, i) {
       var isLast = i === segments.length - 1;
-      html +=
-        ' / <span class="' +
-        (isLast ? "crumb-current" : "crumb") +
-        '">' +
-        escapeHtml(seg) +
-        "</span>";
+      cumulative.push(seg);
+      if (isLast) {
+        html += ' / <span class="crumb-current">' + escapeHtml(seg) + "</span>";
+      } else {
+        html +=
+          ' / <a class="crumb" href="' +
+          basePath() +
+          "/folder/" +
+          encodeVaultPath(cumulative.join("/")) +
+          '">' +
+          escapeHtml(seg) +
+          "</a>";
+      }
     });
     html += "</nav>";
     return html;

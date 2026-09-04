@@ -10,6 +10,47 @@
   var encodeVaultPath = WikiCommon.encodeVaultPath;
   var el = WikiCommon.el;
 
+  // Which folder paths are expanded, persisted across the full page
+  // reload every navigation in this app does (see router.js's own
+  // comment on why — no History API, deliberately). Without this, the
+  // tree — collapsed by default on every fresh render — snapped back to
+  // fully collapsed on every single click, which made "the sidebar
+  // remembers where you were" impossible; a per-browser
+  // convenience only, same as sidebar-resize.js's width, never sent
+  // anywhere.
+  var EXPANDED_KEY = "wiki.expandedFolders";
+
+  function loadExpandedSet() {
+    var set = {};
+    try {
+      var raw = localStorage.getItem(EXPANDED_KEY);
+      var arr = raw ? JSON.parse(raw) : [];
+      arr.forEach(function (p) {
+        set[p] = true;
+      });
+    } catch (e) {
+      // Missing/blocked/corrupt localStorage — every folder just
+      // starts collapsed, same as this app's very first-ever load.
+    }
+    return set;
+  }
+
+  function saveExpandedSet(set) {
+    try {
+      localStorage.setItem(
+        EXPANDED_KEY,
+        JSON.stringify(
+          Object.keys(set).filter(function (p) {
+            return set[p];
+          })
+        )
+      );
+    } catch (e) {
+      // Expansion still works for the rest of THIS page load — it just
+      // won't survive a reload.
+    }
+  }
+
   // /api/nav/tree returns a FLAT list of {path, title, visibility} — the
   // folder tree is built here from '/' segments in each path (see
   // NavRoutes.h's doc comment: this is deliberate, left to the consumer).
@@ -32,27 +73,34 @@
     // itself is a link there; the separate arrow button only expands/
     // collapses the children in place, without navigating.
     //
-    // Collapsed by default (every level, not just top) — a vault with a
-    // few hundred documents would otherwise dump its ENTIRE tree open on
-    // every single page load, which is exactly the opposite of a nav
-    // aid at that size. A shallow vault costs the reader one extra click
-    // per folder to open it back up; a deep one doesn't bury the sidebar
-    // in everything at once before they've asked for any of it.
+    // Collapsed by default (every level, not just top) UNLESS this exact
+    // folder path is in the persisted expandedSet (see loadExpandedSet
+    // above) — a vault with a few hundred documents would otherwise dump
+    // its ENTIRE tree open on every single page load, which is exactly
+    // the opposite of a nav aid at that size; but a folder the reader
+    // deliberately opened should still be open after they click into a
+    // document inside it, not snap shut on the very next page load.
+    var expandedSet = loadExpandedSet();
+
     function render(node, targetEl, pathPrefix) {
       var ul = el("ul");
       Object.keys(node.children)
         .sort()
         .forEach(function (name) {
           var li = el("li");
-          var childUl = el("ul", { class: "nav-children collapsed" });
-          var arrow = el("span", { class: "nav-arrow", text: "▸" });
+          var childPrefix = pathPrefix + name;
+          var isExpanded = !!expandedSet[childPrefix];
+          var childUl = el("ul", { class: isExpanded ? "nav-children" : "nav-children collapsed" });
+          var arrow = el("span", { class: "nav-arrow", text: isExpanded ? "▾" : "▸" });
           var arrowBtn = el("button", { type: "button", class: "nav-arrow-btn" });
           arrowBtn.appendChild(arrow);
           arrowBtn.addEventListener("click", function () {
             var collapsed = childUl.classList.toggle("collapsed");
             arrow.textContent = collapsed ? "▸" : "▾";
+            if (collapsed) delete expandedSet[childPrefix];
+            else expandedSet[childPrefix] = true;
+            saveExpandedSet(expandedSet);
           });
-          var childPrefix = pathPrefix + name;
           var label = el("a", {
             class: "nav-folder-label",
             href: bp + "/folder/" + encodeVaultPath(childPrefix),
