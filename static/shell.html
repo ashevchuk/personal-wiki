@@ -21,18 +21,35 @@
   var path = location.pathname;
   var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/, /\/account\/?$/];
   var prefix = "";
+  var matched = false;
   for (var i = 0; i < patterns.length; i++) {
     var m = path.match(patterns[i]);
     if (m) {
       prefix = path.slice(0, m.index);
+      matched = true;
       break;
     }
   }
   // Bare "/" or exactly this deployment's own mount root (e.g. visiting
   // "/wiki" or "/wiki/" with nothing after) — no known route suffix to
   // anchor on, so there's nothing to strip; unprefixed deployments hit
-  // this branch too (prefix stays "").
-  if (!prefix && path !== "/") prefix = path.replace(/\/+$/, "");
+  // this branch too (matched stays false, prefix stays "").
+  //
+  // Tracked via a separate `matched` flag rather than testing `!prefix` —
+  // confirmed the hard way in a real headless-browser test: an UNPREFIXED
+  // deployment (no reverse-proxy subpath at all — e.g. hitting the app
+  // directly, no "/wiki/" in front) legitimately produces prefix === ""
+  // from a route matching right at the start of the path, and "" is
+  // falsy in JS. Testing `!prefix` there is indistinguishable from "the
+  // loop found nothing at all", so it fell through to this fallback and
+  // overwrote the correct empty prefix with the ENTIRE current path
+  // (e.g. "/login" instead of ""), sending <base href> to "/login/" and
+  // 404ing every single relative resource on the page — plain "/login"
+  // rendered as an unstyled, un-scripted, stuck-on-"Loading…" page. A
+  // subpath deployment (prefix comes out non-empty, e.g. "/wiki") never
+  // hit this, which is exactly why it went uncaught through every prior
+  // curl-based check against the live "/wiki/"-mounted production site.
+  if (!matched && path !== "/") prefix = path.replace(/\/+$/, "");
   window.__WIKI_BASE_PATH__ = prefix;
   var base = document.createElement("base");
   base.href = prefix + "/";

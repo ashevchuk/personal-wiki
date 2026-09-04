@@ -201,6 +201,24 @@ label {
   font-size: 0.9rem;
 }
 
+/* .visibility-toggle exists in the edit form's markup (pages/edit.js)
+   but had no matching rule here — it fell through to the generic `label`
+   rule above (flex-direction: column), stacking "Public" text on top of
+   its own checkbox instead of beside it, and the checkbox itself stayed
+   the browser's stock blue square, clashing hard with everything else
+   on the page being green-on-black. `accent-color` recolors a NATIVE
+   checkbox (no custom SVG/JS needed) — supported in every browser this
+   app is realistically viewed in. */
+.visibility-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+.visibility-toggle input[type="checkbox"] {
+  accent-color: var(--fg);
+  width: auto;
+}
+
 input,
 textarea,
 select,
@@ -253,11 +271,36 @@ mark {
   font-size: 0.9rem;
 }
 
-.folder-actions {
+.folder-actions,
+.doc-actions {
   display: flex;
   gap: 0.5rem;
   margin: 0.75rem 0 1.25rem;
   flex-wrap: wrap;
+}
+
+/* An <a> styled to be visually indistinguishable from a real <button> —
+   used wherever an action is a plain navigation (Edit) sitting next to
+   one that needs JS (Delete): both should look like the same kind of
+   thing, since a viewer has no reason to care which one is "really" a
+   link under the hood. Same box/padding/uppercase as `button` above,
+   text-decoration explicitly reset since `a` normally underlines. */
+a.btn {
+  display: inline-block;
+  background: #001a00;
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.5rem;
+  text-shadow: none;
+  text-decoration: none;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+a.btn:hover,
+a.btn:focus {
+  background: var(--fg);
+  color: #000;
+  text-shadow: none;
 }
 .folder-list {
   list-style: none;

@@ -81,7 +81,17 @@ window.WikiCommon = (function () {
   function stripMarkdownSyntax(text) {
     return text
       .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-      .replace(/^#{1,6}\s+/gm, "")
+      // NOT `/^#{1,6}\s+/gm` (start-of-LINE anchored) — confirmed the hard
+      // way against a real search snippet: FTS5's snippet() flattens the
+      // document's original newlines into plain spaces, so a heading that
+      // was on its own line in the source (e.g. "...soup.\n\n## Ingredients\n- Beets...")
+      // arrives as "...soup. ## Ingredients - Beets..." with no real "\n"
+      // for `^`/`m` to anchor on — `##` sat there raw in every snippet
+      // that crossed a heading. Anchoring on "start-of-string OR any
+      // whitespace" instead catches both the un-flattened (real editor
+      // body) and flattened (FTS5 snippet) cases alike, and still leaves
+      // "C#"/"F#" alone (no whitespace immediately before that '#').
+      .replace(/(^|\s)#{1,6}\s+/g, "$1")
       // FTS5's snippet() truncates with "..." — if that cut lands INSIDE
       // an image/link's URL portion, the pattern above never sees a
       // closing ')' and doesn't match at all, leaving raw "![alt](https:/..."
