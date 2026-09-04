@@ -226,7 +226,7 @@ def run_checks(sandbox, vault):
     #        the response (nothing here is per-request-rendered so there's
     #        no obvious injection surface, but worth a sanity check).
     for shell_path in ("/", "/login", "/search", "/folder", "/d/whatever.md",
-                        "/edit/whatever.md"):
+                        "/edit/whatever.md", "/history/whatever.md"):
         status, _, _ = anon.get(shell_path)
         check(f"shell route {shell_path} -> 200", status == 200, f"got {status}")
 
@@ -241,6 +241,22 @@ def run_checks(sandbox, vault):
     check("anon upload -> 401", status == 401, f"got {status}")
     check("vault has zero .md files after anon attempts",
           not any(f.endswith(".md") for _, _, files in os.walk(vault) for f in files))
+
+    # Versioning routes (VersionRoutes.cpp) -- distinct URL prefixes from
+    # /api/documents/{path...} on purpose (see that file's own comment on
+    # why), which also means AuthFilter/CsrfFilter being LISTED on them
+    # proves nothing on its own -- same discipline as every other
+    # mutating route here, applied to the newest ones too.
+    status, _, _ = anon.get("/api/document-history/x.md")
+    check("anon document-history -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/document-restore/x.md?id=1", {})
+    check("anon document-restore -> 401", status == 401, f"got {status}")
+
+    # MCP write-tool audit log (AdminRoutes.cpp) -- read-only but still
+    # admin-only (it's a record of what an MCP client did to this vault,
+    # not public information).
+    status, _, _ = anon.get("/api/admin/mcp-audit-log")
+    check("anon mcp-audit-log -> 401", status == 401, f"got {status}")
 
     # --- 2. Session fixation: server never adopts a client-supplied ---
     #        session token; login always issues a fresh one -------------

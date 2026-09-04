@@ -31,6 +31,13 @@ db_path = "./vault_data/.index.db"
 # public — wiki-mcp sees only public documents. Use for any future
 #          remote/shared MCP transport.
 scope = "admin"
+# Phase 2: exposes create_document/update_document tools, letting an MCP
+# client (an LLM) write to the vault, not just read it. Off by default —
+# a conscious opt-in, not a silent capability bump on rebuild. Every
+# write (success or failure) is recorded in the mcp_audit_log table
+# regardless of this setting's history, so you can always review what
+# was written after the fact.
+write_access = false
 
 # Any file can be uploaded as an attachment regardless of extension (see
 # vault/AttachmentService.h) — nothing to configure to allow/deny a type.

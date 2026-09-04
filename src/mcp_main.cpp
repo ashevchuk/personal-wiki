@@ -2,9 +2,12 @@
 //
 // Deliberately NOT linked against Drogon: Claude Desktop/Code spawn this
 // process directly per-session, so it must start instantly and carry no
-// HTTP-stack weight. MCP tools are read-only in the MVP (no write access) —
-// see docs/mcp.md for the client-config example and docs/architecture.md
-// for the design rationale.
+// HTTP-stack weight. Read-only tools (search/get/list) are always on;
+// create_document/update_document are Phase 2, gated behind
+// [mcp].write_access (default off — see AppConfig.h and McpServer.cpp)
+// and always recorded to mcp_audit_log regardless of outcome. See
+// docs/mcp.md for the client-config example and docs/architecture.md for
+// the design rationale.
 //
 // Unlike wiki-server, this does NOT rescan the vault at startup — a full
 // walk on every spawn would defeat "starts instantly" for an MCP client
@@ -18,6 +21,7 @@
 #include "index/Database.h"
 #include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
+#include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
 #include "index/SnapshotStore.h"
 #include "mcp/McpServer.h"
@@ -41,14 +45,14 @@ int main() {
 
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
   wikicore::index::IndexUpdater indexUpdater(db);
-  // MCP tools are read-only (see this file's own top comment) — this
-  // DocumentService instance only ever has .get() called on it, which
-  // never touches snapshots_, but the constructor still needs a real
-  // reference to wire through.
+  // Only actually exercised (snapshots_.record called) when
+  // [mcp].write_access is on and update_document runs — DocumentService
+  // itself doesn't know or care which caller (HTTP or MCP) is driving it.
   wikicore::index::SnapshotStore snapshotStore(db);
   wikicore::vault::DocumentService documents(vault, indexUpdater, snapshotStore);
   wikicore::index::FtsSearch search(db);
   wikicore::index::NavQueries nav(db);
+  wikicore::index::McpAuditLog auditLog(db);
 
   // "admin" (the AppConfig default) sees public+private; only an exact
   // "public" restricts it — this is the opposite direction from the HTTP
@@ -58,7 +62,8 @@ int main() {
   const bool includePrivate = cfg.mcpScope != "public";
 
   wikicore::mcp::runServer("personal-wiki", wikicore::versionString(), search, nav,
-                            indexUpdater, documents, includePrivate);
+                            indexUpdater, documents, auditLog, includePrivate,
+                            cfg.mcpWriteAccess);
 
   return 0;
 }

@@ -40,6 +40,7 @@ add_library(wikicore STATIC
   src/index/IndexUpdater.cpp
   src/index/IndexBuilder.cpp
   src/index/FtsSearch.cpp
+  src/index/McpAuditLog.cpp
   src/index/NavQueries.cpp
   src/index/SnapshotStore.cpp
   src/index/VaultWatcher.cpp

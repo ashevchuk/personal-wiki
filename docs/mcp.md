@@ -1,7 +1,10 @@
 # MCP server
 
 `wiki-mcp` is a separate binary, stdio transport (JSON-RPC 2.0), spawned directly by an
-MCP client (Claude Desktop, Claude Code). Read-only in the MVP: no write tools at all.
+MCP client (Claude Desktop, Claude Code). Read-only tools are always available;
+Phase 2 added two write tools, gated behind `[mcp].write_access` (default **off** — see
+"Write tools" below) so an MCP client writing to the vault is a conscious opt-in, not a
+silent capability that showed up on the next rebuild.
 
 ## Connecting from Claude Desktop
 
@@ -50,6 +53,50 @@ All four are visibility-aware: a private document never appears in any result un
 the MCP client to public content only — the same fail-safe-private principle as the
 HTTP layer, applied to a different trust boundary (a local process spawn by the
 machine's owner, not an anonymous web visit).
+
+## Write tools (Phase 2, off by default)
+
+Set `write_access = true` under `[mcp]` in `config.toml` to expose two more tools:
+
+- **create_document**(path: string, title?: string, body?: string, type?: string,
+  visibility?: string, tags?: string[]) — fails if a document already exists at
+  `path`. `visibility` defaults to `"private"` (fail-safe, same as the HTTP create
+  route) if omitted.
+- **update_document**(path: string, title?: string, body?: string, type?: string,
+  visibility?: string, tags?: string[]) — a genuine PARTIAL update: any field left out
+  keeps its current value, unlike the HTTP `PUT` route (which always replaces every
+  field). Fails if `path` doesn't exist yet.
+
+Both go through the exact same `DocumentService::create`/`update` the HTTP API uses —
+same validation, same path-traversal rejection, same atomic write, same index sync,
+and (for `update_document`) the same pre-edit snapshot `document_snapshots` records for
+every other save (see the "Versioning" section below) — an MCP-driven edit is undoable
+through `/history/{path}` exactly like a human-made one.
+
+When `write_access` is `false` (the default), these two tools are not registered at
+all — absent from `tools/list`, not present-and-erroring. An MCP client asking "what
+can you do" never learns they exist unless the admin opted in.
+
+**Every call through either tool is recorded in the `mcp_audit_log` SQLite table,
+success or failure alike** — this is the accountability half of turning `write_access`
+on: an LLM writing to your vault unsupervised is a different risk than it reading from
+one, and the log is what lets you find out what it actually did, after the fact.
+Review it via `GET /api/admin/mcp-audit-log` (admin session required, same as any other
+`/api/admin/*` route) — newest first, capped at 200 rows. The table itself persists
+regardless of `write_access`'s current value: turning it off after some writes already
+happened doesn't erase the record of what was written while it was on.
+
+## Versioning
+
+Every `DocumentService::update` (HTTP `PUT` or the MCP `update_document` tool alike)
+snapshots the document's PRE-edit content into `document_snapshots` before overwriting
+it — `create`/`create_document` snapshot nothing (there's no "before" state for a
+brand-new document). The web UI's `/history/{path}` page lists every past version for a
+document, diffs any of them against the current live content (a small client-side
+LCS line diff — see `static/js/diff.js`, no vendored diff library), and can restore
+one — which itself snapshots the pre-restore state first, so restoring is undoable the
+same way any other edit is. No MCP tool exposes this directly (Phase 2's own scope
+stopped at write access to the current document); browse history through the web UI.
 
 ## Implementation
 

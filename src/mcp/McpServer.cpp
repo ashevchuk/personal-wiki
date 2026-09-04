@@ -180,12 +180,103 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
   };
 }
 
+// A path an LLM client hands us is exactly as untrusted as one from an
+// anonymous HTTP request — DocumentService/VaultRepository already
+// reject traversal (PathTraversalError), this just makes sure the
+// attempt still lands in the audit log rather than only ever showing up
+// as a generic error the caller sees but the admin never does.
+::mcp::tool_handler makeCreateDocumentHandler(vault::DocumentService& documents,
+                                               index::McpAuditLog& auditLog) {
+  return [&documents, &auditLog](const ::mcp::json& params,
+                                  const std::string&) -> ::mcp::json {
+    if (!params.contains("path") || !params["path"].is_string() ||
+        params["path"].get<std::string>().empty()) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
+    }
+    const std::string path = params["path"].get<std::string>();
+
+    vault::DocumentInput input;
+    input.title = params.value("title", std::string());
+    input.body = params.value("body", std::string());
+    input.type = params.value("type", std::string());
+    // Fail-safe-private applies here exactly as it does to a
+    // human-authored save through the HTTP API — an LLM omitting
+    // "visibility" (or getting the exact string wrong) must not
+    // accidentally publish something.
+    input.visibility = params.value("visibility", std::string("private"));
+    if (params.contains("tags") && params["tags"].is_array()) {
+      input.tags = params["tags"].get<std::vector<std::string>>();
+    }
+
+    try {
+      const auto rec = documents.create(path, input);
+      auditLog.record("create_document", path, true, "created");
+      return textContent("Created " + rec.path);
+    } catch (const vault::DocumentAlreadyExistsError&) {
+      auditLog.record("create_document", path, false, "a document already exists at that path");
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+                                  "a document already exists at that path");
+    } catch (const vault::PathTraversalError&) {
+      auditLog.record("create_document", path, false, "path traversal rejected");
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+    } catch (const std::exception& e) {
+      auditLog.record("create_document", path, false, e.what());
+      throw ::mcp::mcp_exception(::mcp::error_code::internal_error, e.what());
+    }
+  };
+}
+
+// Merges onto the EXISTING document rather than requiring every field —
+// DocumentService::update() itself has no concept of a partial update
+// (it always writes a complete DocumentInput, same as the HTTP PUT
+// route), so an LLM caller that only means to change the body shouldn't
+// have to first fetch and echo back the title/tags/type/visibility it
+// isn't touching.
+::mcp::tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
+                                               index::McpAuditLog& auditLog) {
+  return [&documents, &auditLog](const ::mcp::json& params,
+                                  const std::string&) -> ::mcp::json {
+    if (!params.contains("path") || !params["path"].is_string() ||
+        params["path"].get<std::string>().empty()) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
+    }
+    const std::string path = params["path"].get<std::string>();
+
+    try {
+      const vault::DocumentRecord existing = documents.get(path);
+
+      vault::DocumentInput input;
+      input.title = params.value("title", existing.frontMatter.title);
+      input.body = params.value("body", existing.body);
+      input.type = params.value("type", existing.frontMatter.type);
+      input.visibility = params.value("visibility", existing.frontMatter.visibility);
+      input.tags = existing.frontMatter.tags;
+      if (params.contains("tags") && params["tags"].is_array()) {
+        input.tags = params["tags"].get<std::vector<std::string>>();
+      }
+
+      const auto rec = documents.update(path, input);
+      auditLog.record("update_document", path, true, "updated");
+      return textContent("Updated " + rec.path);
+    } catch (const vault::DocumentNotFoundError&) {
+      auditLog.record("update_document", path, false, "document not found");
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "document not found: " + path);
+    } catch (const vault::PathTraversalError&) {
+      auditLog.record("update_document", path, false, "path traversal rejected");
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+    } catch (const std::exception& e) {
+      auditLog.record("update_document", path, false, e.what());
+      throw ::mcp::mcp_exception(::mcp::error_code::internal_error, e.what());
+    }
+  };
+}
+
 }  // namespace
 
 void runServer(const std::string& serverName, const std::string& serverVersion,
                index::FtsSearch& search, index::NavQueries& nav,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
-               bool includePrivate) {
+               index::McpAuditLog& auditLog, bool includePrivate, bool writeAccess) {
   ::mcp::server::configuration conf;
   conf.name = serverName;
   conf.version = serverVersion;
@@ -236,6 +327,41 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
           .build();
   srv.register_tool(listDocumentsTool,
                      makeListDocumentsHandler(search, includePrivate));
+
+  // Absent from tools/list entirely when writeAccess is false — not
+  // registered-but-erroring. An MCP client asking "what can you do"
+  // never even learns these exist unless the admin opted in.
+  if (writeAccess) {
+    ::mcp::tool createDocumentTool =
+        ::mcp::tool_builder("create_document")
+            .with_description(
+                "Create a new document in the wiki. Fails if a document "
+                "already exists at that path.")
+            .with_string_param("path", "Vault-relative path, e.g. \"notes/foo.md\"", true)
+            .with_string_param("title", "Document title", false)
+            .with_string_param("body", "Markdown body", false)
+            .with_string_param("type", "Document type, e.g. \"note\"", false)
+            .with_string_param("visibility", "\"public\" or \"private\" (default private)", false)
+            .with_array_param("tags", "Tags for this document", "string", false)
+            .build();
+    srv.register_tool(createDocumentTool, makeCreateDocumentHandler(documents, auditLog));
+
+    ::mcp::tool updateDocumentTool =
+        ::mcp::tool_builder("update_document")
+            .with_description(
+                "Update an existing document. Any field left out keeps its "
+                "current value — this is a partial update, not a full "
+                "replace.")
+            .with_string_param("path", "Vault-relative path of the document to update", true)
+            .with_string_param("title", "New title (omit to keep current)", false)
+            .with_string_param("body", "New markdown body (omit to keep current)", false)
+            .with_string_param("type", "New document type (omit to keep current)", false)
+            .with_string_param("visibility",
+                                "New \"public\"/\"private\" (omit to keep current)", false)
+            .with_array_param("tags", "New tag list (omit to keep current)", "string", false)
+            .build();
+    srv.register_tool(updateDocumentTool, makeUpdateDocumentHandler(documents, auditLog));
+  }
 
   // CRITICAL: nothing in this process may ever write to stdout except the
   // library's own JSON-RPC framing — any stray std::cout (a debug print, a

@@ -32,6 +32,15 @@ struct AppConfig {
   // "admin" — sees public + private (default; local stdio spawn by owner).
   // "public" — sees only public. Reserved for a future remote transport.
   std::string mcpScope = "admin";
+  // Phase 2: create_document/update_document tools. Defaults OFF — MCP
+  // clients (an LLM) writing to the vault unsupervised is a materially
+  // different risk than read-only search/browse, worth an explicit,
+  // conscious opt-in rather than showing up silently the first time
+  // this binary gets rebuilt. Every write through these tools (success
+  // OR failure) is recorded in the mcp_audit_log table regardless —
+  // see McpServer.cpp — so turning this on is "let the LLM write,
+  // reviewably", not "let it write invisibly".
+  bool mcpWriteAccess = false;
 
   // [attachments] — empty means "use AttachmentService's own built-in
   // defaults" (see main.cpp and AttachmentService::defaultMimeTypes() /

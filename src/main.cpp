@@ -27,6 +27,7 @@
 #include "index/IndexBuilder.h"
 #include "index/IndexUpdater.h"
 #include "index/NavQueries.h"
+#include "index/McpAuditLog.h"
 #include "index/SnapshotStore.h"
 #include "index/VaultWatcher.h"
 #include "vault/AttachmentService.h"
@@ -166,6 +167,13 @@ int main(int argc, char** argv) {
   wikicore::vault::FolderService folderService(vault, indexUpdater, indexBuilder);
   wikicore::index::FtsSearch ftsSearch(db);
   wikicore::index::NavQueries navQueries(db);
+  // Read-only from wiki-server's side — write_access is a wiki-mcp-only
+  // concept (see McpServer.cpp); this exists here purely to back the
+  // admin-facing GET /api/admin/mcp-audit-log route, reading rows a
+  // SEPARATE wiki-mcp process wrote through its own connection to the
+  // same db file (WAL mode, same coordination VaultWatcher's own
+  // separate connection already relies on).
+  wikicore::index::McpAuditLog mcpAuditLog(db);
 
   // The db is a disposable cache, never assumed correct on faith — rescan
   // unconditionally at every startup so the index reflects whatever's
@@ -267,7 +275,7 @@ int main(int argc, char** argv) {
                                                  attachmentService, navQueries);
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
-  wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);
+  wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog);
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
   wikicore::controllers::registerVersionRoutes(drogon::app(), indexUpdater, snapshotStore,
                                                 documentService);

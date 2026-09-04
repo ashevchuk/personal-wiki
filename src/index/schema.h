@@ -112,4 +112,26 @@ CREATE TABLE document_links (
 CREATE INDEX idx_document_links_target ON document_links(target_path);
 )sql";
 
+// Migration 3: audit trail for MCP write tools (create_document/
+// update_document — see McpServer.cpp, gated behind [mcp].write_access,
+// default off). Every call through either tool is recorded here
+// regardless of outcome — `success = 0` rows (a rejected path, a
+// validation failure, ...) are kept, not discarded, so the admin
+// reviewing this table sees attempted writes too, not just ones that
+// landed. This table exists independent of write_access's own value:
+// turning write_access off after some writes already happened doesn't
+// erase the history of what was written while it was on.
+inline constexpr const char* kMigration3 = R"sql(
+CREATE TABLE mcp_audit_log (
+  id        INTEGER PRIMARY KEY,
+  at        TEXT NOT NULL,
+  tool_name TEXT NOT NULL,
+  path      TEXT NOT NULL,
+  success   INTEGER NOT NULL,
+  detail    TEXT
+);
+
+CREATE INDEX idx_mcp_audit_log_at ON mcp_audit_log(at DESC);
+)sql";
+
 }  // namespace wikicore::index::schema

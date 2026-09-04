@@ -37,6 +37,7 @@ AppConfig AppConfig::load(const std::string& path) {
   }
   if (auto* mcp = root["mcp"].as_table()) {
     cfg.mcpScope = (*mcp)["scope"].value_or(cfg.mcpScope);
+    cfg.mcpWriteAccess = (*mcp)["write_access"].value_or(cfg.mcpWriteAccess);
   }
   if (auto* attachments = root["attachments"].as_table()) {
     if (auto* mimeTypes = (*attachments)["mime_types"].as_table()) {
