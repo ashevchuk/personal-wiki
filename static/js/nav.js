@@ -30,16 +30,22 @@
     // NavQueries) — but /folder/{path} (see FolderRoutes.cpp) DOES exist
     // now as a real page listing everything under a prefix, so the label
     // itself is a link there; the separate arrow button only expands/
-    // collapses the children in place, without navigating. Expanded by
-    // default.
+    // collapses the children in place, without navigating.
+    //
+    // Collapsed by default (every level, not just top) — a vault with a
+    // few hundred documents would otherwise dump its ENTIRE tree open on
+    // every single page load, which is exactly the opposite of a nav
+    // aid at that size. A shallow vault costs the reader one extra click
+    // per folder to open it back up; a deep one doesn't bury the sidebar
+    // in everything at once before they've asked for any of it.
     function render(node, targetEl, pathPrefix) {
       var ul = el("ul");
       Object.keys(node.children)
         .sort()
         .forEach(function (name) {
           var li = el("li");
-          var childUl = el("ul", { class: "nav-children" });
-          var arrow = el("span", { class: "nav-arrow", text: "▾" });
+          var childUl = el("ul", { class: "nav-children collapsed" });
+          var arrow = el("span", { class: "nav-arrow", text: "▸" });
           var arrowBtn = el("button", { type: "button", class: "nav-arrow-btn" });
           arrowBtn.appendChild(arrow);
           arrowBtn.addEventListener("click", function () {

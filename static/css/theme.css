@@ -62,13 +62,49 @@ h3 {
 }
 
 .sidebar {
-  width: 260px;
-  flex: 0 0 260px;
+  /* --sidebar-w is set by sidebar-resize.js (drag the handle, or read
+     back from localStorage on load) — the 260px here is only the
+     fallback for a first-ever visit/no-JS, not a value this rule itself
+     ever changes. */
+  width: var(--sidebar-w, 260px);
+  flex: 0 0 var(--sidebar-w, 260px);
   min-height: 100vh;
   padding: 1rem;
   border-right: 1px solid var(--border);
   background: var(--panel-bg);
   overflow-y: auto;
+}
+
+/* Drag handle sitting between .sidebar and .content (see shell.html) —
+   deliberately a separate flex sibling rather than a border/pseudo-
+   element ON .sidebar, so its hit area (6px) can be wider than the
+   hairline border it visually sits on without the border itself having
+   to grow. */
+.sidebar-resizer {
+  flex: 0 0 6px;
+  /* .layout uses "align-items: flex-start" — flex items size to their
+     OWN content height under that, not the row's height, and this is an
+     empty <div> with none. Confirmed live: without this, the resizer's
+     real getBoundingClientRect() height was exactly 0, making it
+     physically unclickable outside its single top pixel. align-self:
+     stretch opts just this one item back into filling the row's full
+     height, same as .sidebar/.content already do implicitly via their
+     own explicit min-height:100vh. */
+  align-self: stretch;
+  margin-left: -6px; /* overlaps the sidebar's own border-right, doesn't add extra width to .layout */
+  cursor: col-resize;
+  background: transparent;
+}
+.sidebar-resizer:hover {
+  background: var(--border);
+}
+/* Set on <body> for the duration of a drag (sidebar-resize.js) — without
+   this, fast mouse movement during a drag can outrun the resizer's own
+   6px hit box and the OS reverts to a text-selection cursor mid-drag,
+   plus the page's own text starts highlighting under the pointer. */
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .sidebar-brand {
@@ -119,6 +155,20 @@ h3 {
   margin: 0;
   padding-left: 0.6rem;
   font-size: 0.85rem;
+}
+/* nav.js sorts tags by count with no cap — a vault that's accumulated a
+   few hundred tags would otherwise render one giant flat <ul> here,
+   pushing everything below it (originally the Documents section; now
+   nothing, Tags moved last — see shell.html) an arbitrary distance down
+   and making the WHOLE sidebar one long scroll to reach it. Capping
+   just this list's own height keeps that overflow local: the tag list
+   becomes its own small scroll pocket instead of dominating the
+   sidebar. Not a hard limit on tag count anywhere — nav.js still
+   fetches and renders every one of them, just not all visible without
+   scrolling this one box. */
+#nav-tags > ul {
+  max-height: 220px;
+  overflow-y: auto;
 }
 .sidebar-section li {
   margin: 0.15rem 0;
@@ -394,6 +444,12 @@ a.btn:focus {
   .content {
     padding: 1rem;
   }
+  /* Stacked layout has no side-by-side width to negotiate — dragging
+     left/right would do nothing meaningful once .sidebar is full-width
+     and .layout is a column. */
+  .sidebar-resizer {
+    display: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -462,6 +518,7 @@ a.btn:focus {
 @media print {
   #matrix-bg,
   .sidebar,
+  .sidebar-resizer,
   .doc-actions,
   .folder-actions,
   .breadcrumbs {

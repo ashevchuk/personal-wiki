@@ -92,9 +92,14 @@
     <a id="sidebar-account" data-href="/account" href="#" hidden>Password</a>
     <button type="button" id="sidebar-logout" hidden>Log out</button>
   </div>
-  <div class="sidebar-section"><h3>Tags</h3><div id="nav-tags"></div></div>
   <div class="sidebar-section"><h3>Documents</h3><div id="nav-tree"></div></div>
+  <div class="sidebar-section"><h3>Tags</h3><div id="nav-tags"></div></div>
 </nav>
+<!-- Drag handle for sidebar-resize.js — a hair's-width strip between the
+     sidebar and the content column, not part of either. Hidden on the
+     narrow/stacked layout (see theme.css's max-width:720px block) where
+     there's no side-by-side width to negotiate. -->
+<div class="sidebar-resizer" id="sidebar-resizer"></div>
 <main id="app-content" class="content">Loading&hellip;</main>
 </div>
 
@@ -106,6 +111,7 @@
      at its own top level, not lazily inside an event handler. -->
 <script src="js/common.js"></script>
 <script src="js/matrix.js"></script>
+<script src="js/sidebar-resize.js"></script>
 <script src="js/nav.js"></script>
 <script src="js/document.js"></script>
 <script src="js/toastui-editor/toastui-editor.min.js"></script>
