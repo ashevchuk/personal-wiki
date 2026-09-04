@@ -13,7 +13,9 @@ Instead, **cross-compiled binaries HAVE actually been deployed to and verified o
 live target device** — armv7l, Debian 9 (stretch, EOL, glibc 2.24) — via
 `arm-linux-musleabihf`+musl+static (see "Cross-compilation" below): `wiki-server` and
 `wiki-mcp` running NATIVELY (not emulated) on the real device, `unit_tests` passing
-under `qemu-arm-static` (112 assertions, 52 test cases), the full
+under `qemu-arm-static` (315 assertions, 117 test cases — re-verified 2026-09-04; this
+number only ever grows as features get their own tests, don't be alarmed if it's
+higher again by the time you read this, be alarmed if it's LOWER), the full
 login → CSRF → document creation → atomic disk write → FTS5 search with snippet
 highlighting cycle verified with live HTTP traffic against a real systemd unit
 (`ProtectSystem=strict` and the rest of the hardening below included), alongside live
@@ -382,15 +384,15 @@ break the bearer-token check, only the IP allowlist's own guarantee on top of it
 token is still the actual gate; treat the allowlist as a defense-in-depth layer, not
 the only thing standing between the internet and this vault.
 
-**Current status on the real SBC deployment**: enabled, WITH write access, as of
-2026-09-04 (toggled on directly via the Account page, not via this doc). CIDR
-allowlist is empty (unrestricted by IP — the bearer token is the only gate right
-now). The raw token itself is deliberately **not** written here or anywhere else in
-this repo — this file is git-tracked, and `McpRemoteConfig::regenerateToken()` is
-designed around exactly one display of the raw value, ever, specifically so a
-plaintext credential never ends up sitting in version control forever. To use or
-rotate it: Account page → Remote MCP section (view whether a token is set, hit
-Regenerate to invalidate the old one and see a fresh raw value once) or
-`POST /api/admin/mcp-remote-config/regenerate-token` as admin. If you're reading
-this and don't already have the current value, that's the point — go regenerate one
-rather than dig for the old one.
+**Whether this is currently on, and with what settings, is deliberately not recorded
+here** — a live security-posture snapshot ("enabled, write access on, no IP
+restriction, as of [date]") is the same category of information as a real host/domain:
+accurate the day it's written, guaranteed to drift the next time anyone flips a toggle
+in the Account page, and worth exactly nothing to a reader who can't act on it anyway.
+Check the actual current state from the Account page's Remote MCP section directly —
+that's also the ONLY place the raw bearer token itself is ever shown, exactly once, on
+generation (`McpRemoteConfig::regenerateToken()` is built around that single display on
+purpose — a plaintext credential has no business sitting in version control forever,
+which is the same reason this whole paragraph doesn't try to track live state either).
+To rotate it: Account page → Remote MCP section → Regenerate (invalidates the old
+value immediately), or `POST /api/admin/mcp-remote-config/regenerate-token` as admin.
