@@ -156,19 +156,54 @@ body.sidebar-resizing {
   padding-left: 0.6rem;
   font-size: 0.85rem;
 }
-/* nav.js sorts tags by count with no cap — a vault that's accumulated a
-   few hundred tags would otherwise render one giant flat <ul> here,
-   pushing everything below it (originally the Documents section; now
-   nothing, Tags moved last — see shell.html) an arbitrary distance down
-   and making the WHOLE sidebar one long scroll to reach it. Capping
-   just this list's own height keeps that overflow local: the tag list
-   becomes its own small scroll pocket instead of dominating the
-   sidebar. Not a hard limit on tag count anywhere — nav.js still
-   fetches and renders every one of them, just not all visible without
-   scrolling this one box. */
-#nav-tags > ul {
+/* A vault that's accumulated a few hundred tags would otherwise render
+   one giant list here, pushing everything below it (originally the
+   Documents section; now nothing, Tags moved last — see shell.html) an
+   arbitrary distance down and making the WHOLE sidebar one long scroll
+   to reach it. Capping just this box's own height keeps that overflow
+   local: the tag list becomes its own small scroll pocket instead of
+   dominating the sidebar. Not a hard limit on tag count anywhere —
+   nav.js still fetches and groups every one of them (namespaced tags
+   collapse into a tree, see buildTags's own comment) and the filter
+   input above this box narrows a long list further; this is purely
+   about the box never growing past a fixed height on screen. */
+.nav-tags-list > ul {
   max-height: 220px;
   overflow-y: auto;
+}
+.nav-tags-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.4rem;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.8rem;
+}
+/* A real <button>, not the <span> wrapper + separate <button class="nav-
+   arrow-btn"> pair buildTree's document folders use — a tag namespace
+   group has no second, separately-clickable label link to coexist with
+   (see buildTags's own comment on why), so this needs its own complete
+   set of button-reset styles rather than borrowing .nav-folder-btn
+   (that class is a flex-container <span> in the document tree, never
+   itself a <button> — applying it to a real <button> here would leave
+   the browser's own default button chrome showing through). */
+.nav-tag-group-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--fg-dim);
+  font: inherit;
+  text-shadow: none;
+  cursor: pointer;
+}
+.nav-tag-group-btn:hover {
+  background: none;
+  color: var(--fg);
 }
 .sidebar-section li {
   margin: 0.15rem 0;
