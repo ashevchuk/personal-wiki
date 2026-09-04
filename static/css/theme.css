@@ -200,6 +200,20 @@ body.sidebar-resizing {
   font: inherit;
   text-shadow: none;
   cursor: pointer;
+  /* `font: inherit` above resets family/size/weight/line-height, but
+     text-transform and letter-spacing are NOT part of the `font`
+     shorthand — the base `button { text-transform: uppercase;
+     letter-spacing: 0.05em; }` rule (further down this file, meant for
+     real action buttons like EDIT/HISTORY/DELETE) leaked through here
+     uncontested, rendering a namespace group's own name in caps
+     ("lang/" showing as "LANG/") even though nothing about a tag
+     group's name is meant to be shouted — a leaf tag right below it in
+     the same tree is a plain <a>, never touched by the button rule,
+     and stays exactly as typed. Caught live comparing real namespaced
+     tags side by side, not a hypothetical. Reset explicitly rather
+     than relying on `font: inherit` to imply it does. */
+  text-transform: none;
+  letter-spacing: normal;
 }
 .nav-tag-group-btn:hover {
   background: none;
