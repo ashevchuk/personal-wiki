@@ -258,6 +258,28 @@ def run_checks(sandbox, vault):
     status, _, _ = anon.get("/api/admin/mcp-audit-log")
     check("anon mcp-audit-log -> 401", status == 401, f"got {status}")
 
+    # Remote MCP transport (RemoteMcpRoutes.cpp) -- off by default, so an
+    # anon POST to the actual /mcp endpoint (no bearer token needed to
+    # provoke this -- it's not even reachable yet) must read as a plain
+    # 404, indistinguishable from a route that was never registered, not
+    # a 401 hinting "this exists, bring a token". The admin-only settings
+    # routes underneath it (enable it, see/rotate the token, edit the
+    # allowlist) need the same "no session -> 401" as everything else.
+    status, _, _ = anon.post_json("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+    check("anon /mcp while disabled -> 404 (not 401 -- no hint it exists)",
+          status == 404, f"got {status}")
+    status, _, _ = anon.get("/api/admin/mcp-remote-config")
+    check("anon GET mcp-remote-config -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.put_json("/api/admin/mcp-remote-config", {"enabled": True})
+    check("anon PUT mcp-remote-config -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/admin/mcp-remote-config/regenerate-token", {})
+    check("anon regenerate-token -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/admin/mcp-remote-config/allowed-cidrs",
+                                   {"cidr": "203.0.113.0/24"})
+    check("anon POST allowed-cidrs -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.delete("/api/admin/mcp-remote-config/allowed-cidrs?cidr=203.0.113.0/24")
+    check("anon DELETE allowed-cidrs -> 401", status == 401, f"got {status}")
+
     # --- 2. Session fixation: server never adopts a client-supplied ---
     #        session token; login always issues a fresh one -------------
     fixation = Client(HOST, PORT)

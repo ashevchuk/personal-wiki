@@ -76,6 +76,7 @@ find_package(Drogon CONFIG REQUIRED)  # also brings in drogon_create_views()
 add_executable(wiki-server
   src/main.cpp
   src/auth/CidrMatch.cpp
+  src/auth/ClientIp.cpp
   src/auth/Crypto.cpp
   src/auth/McpRemoteConfig.cpp
   src/auth/PasswordHasher.cpp
@@ -93,6 +94,7 @@ add_executable(wiki-server
   src/controllers/AdminRoutes.cpp
   src/controllers/FolderRoutes.cpp
   src/controllers/PageRoutes.cpp
+  src/controllers/RemoteMcpRoutes.cpp
   src/controllers/VersionRoutes.cpp
 )
 target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)

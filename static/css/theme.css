@@ -500,6 +500,25 @@ a.btn:focus {
   color: var(--fg-dim);
 }
 
+/* Account page's Remote MCP section (account.js) — CIDR list and audit
+   log share the same plain, bulletless list treatment as .backlinks ul/
+   .history-list elsewhere, rather than the browser's default bullets. */
+#mcp-remote-cidr-list,
+#mcp-remote-audit-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+}
+#mcp-remote-cidr-list li,
+#mcp-remote-audit-list li {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+}
+#mcp-remote-token-reveal {
+  margin: 0.5rem 0 1rem;
+}
+
 @media (max-width: 720px) {
   .layout {
     flex-direction: column;

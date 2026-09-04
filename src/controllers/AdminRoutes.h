@@ -1,5 +1,6 @@
 #pragma once
 
+#include "auth/McpRemoteConfig.h"
 #include "index/IndexBuilder.h"
 #include "index/McpAuditLog.h"
 
@@ -15,9 +16,37 @@ namespace wikicore::controllers {
 //
 // GET /api/admin/mcp-audit-log - admin only. Every recorded
 // create_document/update_document call an MCP client made (success or
-// failure), newest first, capped at 200 rows — the accountability half
-// of [mcp].write_access (McpServer.cpp/McpAuditLog.h).
+// failure, "remote:"-prefixed tool names for calls that came through the
+// HTTP transport, RemoteMcpRoutes.cpp), newest first, capped at 200 rows
+// — the accountability half of write access, local or remote alike.
+//
+// Remote MCP settings (McpRemoteConfig.h) — all admin+CSRF, all take
+// effect immediately (no restart, the whole point of storing this in
+// SQLite instead of config.toml):
+//   GET    /api/admin/mcp-remote-config
+//     -> {enabled, writeEnabled, hasToken, allowedCidrs: [...]}. Never
+//        returns the token itself or its hash — hasToken is the only
+//        signal a client gets that one exists.
+//   PUT    /api/admin/mcp-remote-config   body: {enabled?, writeEnabled?}
+//     -> flips only the field(s) present in the body; omitted fields are
+//        left exactly as they were (see McpRemoteConfig::setEnabled/
+//        setWriteEnabled's own "each setter only touches its own
+//        column" guarantee).
+//   POST   /api/admin/mcp-remote-config/regenerate-token
+//     -> {token: "..."} — the RAW token, shown ONCE, right here. Nothing
+//        else in this app ever displays it again; losing it means
+//        regenerating a new one (which immediately invalidates the old).
+//   POST   /api/admin/mcp-remote-config/allowed-cidrs   body: {cidr}
+//     -> adds one allowlist entry (idempotent — adding the same one twice
+//        is a no-op, not an error).
+//   DELETE /api/admin/mcp-remote-config/allowed-cidrs?cidr=...
+//     -> removes one (query param, not a body — a DELETE body is
+//        stripped by some proxies/clients along the way). Removing the
+//        last entry returns to "no IP
+//        restriction configured" (allow), not "allow nothing" — see
+//        McpRemoteConfig::isIpAllowed's own comment on why.
 void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::index::IndexBuilder& indexBuilder,
-                          wikicore::index::McpAuditLog& mcpAuditLog);
+                          wikicore::index::McpAuditLog& mcpAuditLog,
+                          wikicore::auth::McpRemoteConfig& mcpRemoteConfig);
 
 }  // namespace wikicore::controllers

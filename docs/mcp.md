@@ -1,10 +1,16 @@
 # MCP server
 
 `wiki-mcp` is a separate binary, stdio transport (JSON-RPC 2.0), spawned directly by an
-MCP client (Claude Desktop, Claude Code). Read-only tools are always available;
-Phase 2 added two write tools, gated behind `[mcp].write_access` (default **off** — see
-"Write tools" below) so an MCP client writing to the vault is a conscious opt-in, not a
-silent capability that showed up on the next rebuild.
+MCP client (Claude Desktop, Claude Code) on the SAME machine as the vault. Read-only
+tools are always available; Phase 2 added two write tools, gated behind
+`[mcp].write_access` (default **off** — see "Write tools" below) so an MCP client
+writing to the vault is a conscious opt-in, not a silent capability that showed up on
+the next rebuild.
+
+A SEPARATE Phase 2 feature, the remote (HTTP) transport, lets an MCP client reach the
+same tools over the network instead — see "Remote (HTTP) transport" below. The two are
+independent: enabling remote access doesn't touch `wiki-mcp`/stdio at all, and vice
+versa.
 
 ## Connecting from Claude Desktop
 
@@ -97,6 +103,57 @@ LCS line diff — see `static/js/diff.js`, no vendored diff library), and can re
 one — which itself snapshots the pre-restore state first, so restoring is undoable the
 same way any other edit is. No MCP tool exposes this directly (Phase 2's own scope
 stopped at write access to the current document); browse history through the web UI.
+
+## Remote (HTTP) transport
+
+Phase 2 — an admin-toggleable `POST /mcp` route in `wiki-server` itself
+(`src/controllers/RemoteMcpRoutes.cpp`), letting an MCP client reach this wiki's tools
+over HTTPS from anywhere, not just a local stdio spawn. Off by default; every setting
+below is managed live from the Account page (SQLite-backed via `McpRemoteConfig`, not
+`config.toml` — the whole point is toggling this without a server restart):
+
+- **Enabled** — the master switch. While off, `POST /mcp` answers a plain `404` to
+  everyone, indistinguishable from a route that was never registered — not a `401`
+  hinting "this exists, bring a token."
+- **Write access** — independent of `[mcp].write_access` above (the LOCAL stdio
+  server's own flag). Allowing `create_document`/`update_document` from the open
+  internet is a bigger step than allowing it from a local process only your own
+  machine can spawn; it gets its own explicit opt-in rather than inheriting the local
+  setting.
+- **Bearer token** — a 64-char random hex string, checked via `Authorization: Bearer
+  <token>` on every request. Only its SHA-256 hash is ever stored (same discipline as
+  session cookies — see `docs/architecture.md`); "Regenerate token" shows the new raw
+  value exactly once, right there, and immediately invalidates whatever token was
+  issued before.
+- **IP allowlist** — optional, additional to the token, not instead of it. Empty means
+  no IP restriction. Accepts IPv4 and IPv6, CIDR or a bare address (treated as `/32` or
+  `/128`) — see `src/auth/CidrMatch.h`.
+
+**Requires TLS in front of this app** (a reverse proxy — see `docs/deployment.md`'s
+"Remote MCP" section for the exact nginx directives this needs, including the ones the
+IP allowlist depends on to see the real client address rather than the proxy's own).
+The token travels in a plain header; without TLS between the client and that proxy,
+it's readable by anything in between.
+
+**Every write through the remote tools is recorded in the same `mcp_audit_log` table
+the local stdio write tools use** (see "Write tools" above), with tool names prefixed
+`"remote:"` (`remote:create_document`, `remote:update_document`) so an admin reviewing
+`GET /api/admin/mcp-audit-log` can tell local and remote writes apart at a glance —
+no schema change needed for that, just a naming convention at the call site.
+
+The remote endpoint is a single stateless `POST /mcp` implementing MCP's Streamable
+HTTP transport, minus the optional `Mcp-Session-Id` (every tool here is a fast,
+synchronous call with nothing to carry across requests, so there's no session state
+worth tracking — each request is independently authenticated end to end). Deliberately
+hand-built rather than using cpp-mcp's own HTTP+SSE server: reading `mcp_server.cpp`
+directly turned up that its `set_auth_handler()` is set but **never actually invoked**
+anywhere in that library's request path — an unpatched, dead-code auth hook. Building
+on it and trusting that hook for a public endpoint would have shipped something that
+*looks* token-protected and isn't. `RemoteMcpRoutes.cpp` reuses only the underlying
+`wikicore` services (`FtsSearch`/`NavQueries`/`DocumentService`/`IndexUpdater`) that
+`McpServer.cpp` (stdio) also calls, gated by this app's own real, tested Drogon
+session-adjacent machinery instead — the stdio transport in `McpServer.cpp` is
+untouched by any of this, a completely separate, already-working code path.
 
 ## Implementation
 

@@ -10,6 +10,7 @@
 #include "auth/AuthServices.h"
 #include "auth/CsrfFilter.h"
 #include "auth/PasswordHasher.h"
+#include "auth/McpRemoteConfig.h"
 #include "auth/RateLimiter.h"
 #include "auth/SessionStore.h"
 #include "config/AppConfig.h"
@@ -20,6 +21,7 @@
 #include "controllers/NavRoutes.h"
 #include "controllers/PageRoutes.h"
 #include "controllers/SearchRoutes.h"
+#include "controllers/RemoteMcpRoutes.h"
 #include "controllers/VersionRoutes.h"
 #include "core/wikicore.h"
 #include "index/Database.h"
@@ -141,6 +143,15 @@ int main(int argc, char** argv) {
   wikicore::auth::SessionStore sessions(db);
   wikicore::auth::RateLimiter rateLimiter;
   wikicore::auth::AuthServices::init(sessions, rateLimiter, admin);
+
+  // Remote MCP transport settings (McpRemoteConfig.h) + its OWN,
+  // separate RateLimiter instance -- deliberately not sharing state with
+  // /login's limiter above. A flood of bad bearer-token attempts and a
+  // flood of bad passwords are different attackers hitting different
+  // surfaces; conflating them would let one drain the other's lockout
+  // budget for no reason.
+  wikicore::auth::McpRemoteConfig remoteMcpConfig(db);
+  wikicore::auth::RateLimiter remoteMcpRateLimiter;
 
   if (!admin.find()) {
     LOG_WARN << "no admin account configured yet — run "
@@ -275,10 +286,14 @@ int main(int argc, char** argv) {
                                                  attachmentService, navQueries);
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
-  wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog);
+  wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog,
+                                              remoteMcpConfig);
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
   wikicore::controllers::registerVersionRoutes(drogon::app(), indexUpdater, snapshotStore,
                                                 documentService);
+  wikicore::controllers::registerRemoteMcpRoutes(drogon::app(), remoteMcpConfig,
+                                                  remoteMcpRateLimiter, ftsSearch, navQueries,
+                                                  indexUpdater, documentService, mcpAuditLog);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)

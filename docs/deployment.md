@@ -284,3 +284,47 @@ necessary crutches BEFORE `base_path` existed in the app itself (the first worki
 version of this exact deployment actually went live through them); `base_path` removes
 the need for them completely and permanently, rather than patching the symptom on the
 proxy side over and over.
+
+## Remote MCP
+
+Phase 2 feature — an admin-toggleable, bearer-token-protected `POST /mcp` HTTP
+endpoint (see `docs/mcp.md`), letting an MCP client reach this wiki over the network
+instead of only a local stdio spawn. Enable/disable, write access, the token, and the
+IP allowlist are all managed live from the Account page — no config.toml edit, no
+restart.
+
+**Requires TLS in front of this app.** The bearer token travels in a plain
+`Authorization` header on every request — over plain HTTP that's readable by anything
+between the client and this box. `wiki-server` deliberately doesn't terminate TLS
+itself (see "TLS / public internet access" above) — put the SAME reverse proxy this
+app already needs for any public exposure in front of `/mcp` too; there's no separate
+listener to configure, it's one more route on the existing `127.0.0.1:8080` upstream.
+
+**The IP allowlist depends on the proxy setting the right headers correctly** — the
+exact nginx block already shown above for the subpath case is what this needs, and
+happens to already be right for it:
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+`auth::clientIp()` (`src/auth/ClientIp.h`) reads `X-Real-IP` first, falling back to
+`X-Forwarded-For`'s LAST entry. Both matter for the same reason: `proxy_set_header`
+OVERWRITES a header before forwarding it upstream (no client-supplied `X-Real-IP`
+survives that — `$remote_addr` is nginx's own view of the TCP connection, not
+spoofable from the client side), while `$proxy_add_x_forwarded_for` APPENDS
+`$remote_addr` to whatever `X-Forwarded-For` the client already sent — so that
+header's FIRST entry is exactly what the client claimed (trivially spoofable: a
+request with `X-Forwarded-For: <an-allowlisted-ip>` would walk straight past an
+allowlist that trusted the first entry), while the LAST is always nginx's own append.
+Confirmed live against this exact deployment's real nginx config, not assumed —
+including a direct test simulating a spoofed first entry with the real client IP
+appended after it, correctly still blocked.
+
+A deployment with a DIFFERENT proxy chain (more than one hop, or a proxy that doesn't
+set `X-Real-IP`/doesn't use `$proxy_add_x_forwarded_for` the same way) needs to verify
+its own directives produce the same guarantee — a misconfigured proxy here doesn't
+break the bearer-token check, only the IP allowlist's own guarantee on top of it. The
+token is still the actual gate; treat the allowlist as a defense-in-depth layer, not
+the only thing standing between the internet and this vault.
