@@ -78,3 +78,60 @@ register, search with highlighting works, `get_document` works by both path and 
 path traversal and "not found" correctly produce `isError:true` instead of a protocol
 crash, and, most importantly, visibility gating actually flips along with scope, not
 just "looks connected".
+
+That earlier pass apparently never surfaced the framing quirk documented right below —
+almost certainly because it matched responses by their `"id"` field rather than
+assuming one line in, one line out in strict order, which is exactly what papers over
+this.
+
+## Known issue: an extra blank `{}` line after `notifications/initialized` (vendored library, not our code)
+
+Confirmed 2026-09-04 by driving a real JSON-RPC handshake into the actual prod
+`wiki-mcp` binary over stdin/stdout by hand: right after the client sends the
+mandatory `notifications/initialized` notification (part of every spec-compliant MCP
+handshake, sent before any real tool call), the vendored `hkr04/cpp-mcp`'s
+`server::start_stdio()` prints a spurious, empty `{}\n` to stdout — a line with no
+`id`, no `result`, no `error`, which is not a valid JSON-RPC 2.0 message at all (a
+notification is defined as receiving **no** response, ever). Every following response
+shows up one line "late" behind it as a result — read one line per request the naive
+way (as this project's own now-doesn't-exist `/tmp/mcp_e2e_test.py` apparently didn't),
+and `tools/list`'s response reads back as `{}` while the actual tool list sits one
+`readline()` further down, still unread.
+
+Root cause, read directly in the vendored source
+(`mcp_server.cpp::process_request()` / `start_stdio()`): a notification is handled by
+
+```cpp
+if (req.is_notification()) {
+    if (req.method == "notifications/initialized") set_session_initialized(session_id, true);
+    return json::object();  // {} — NOT json(nullptr)
+}
+```
+
+and `start_stdio()` decides whether to print with
+
+```cpp
+if (!res.is_null() && !req.id.is_null()) {
+    std::cout << res.dump() << "\n" << std::flush;
+} else {
+    std::cerr << "Response is null or ID is null. Method: " << req.method << std::endl;
+    if (!res.is_null()) std::cout << res.dump() << "\n" << std::flush;  // <-- fires
+}
+```
+
+`json::object()` (an empty object) and `json(nullptr)` (JSON `null`) are different
+nlohmann::json values — `{}.is_null()` is `false` — so the `else` branch's own
+`if (!res.is_null())` guard, meant to be a fallback for something else, ends up
+matching every notification and prints it anyway.
+
+**Not our bug to fix in `libwikicore`/`src/mcp/` — this lives entirely inside the
+vendored, `FetchContent`-pinned `cpp-mcp` dependency** (see "Implementation" above).
+Not patched here: the practical blast radius looks small (a spec-conformant client
+reads the STDIO transport by matching each response's `id` against its own table of
+pending requests, per the MCP/JSON-RPC 2.0 spec — a stray `id`-less, non-conforming
+line has nothing to match and is expected to be ignored, not treated as fatal); no
+live Claude Desktop/Code session in this dev environment to confirm that empirically
+against the ACTUAL client rather than the spec's own description of correct client
+behavior. Revisit if a real MCP client session ever visibly chokes on this — the fix,
+if it's ever done, is either patching the vendored source post-fetch (a `PATCH_COMMAND`
+on the `FetchContent_Declare` call) or filing it upstream against `hkr04/cpp-mcp`.
