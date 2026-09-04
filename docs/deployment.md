@@ -101,7 +101,7 @@ long-lived deployment accumulates them; sweep old ones by hand occasionally.
 ## Build (native, on the device itself)
 
 ```sh
-git clone <repo-url> wiki && cd wiki
+git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 
 # vcpkg is not vendored, cloned separately. FULL clone, not --depth 1 —
 # see docs/architecture.md's "Build" section for why a shallow clone can

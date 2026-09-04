@@ -61,7 +61,7 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
 ## Quick start
 
 ```sh
-git clone <this-repo> wiki && cd wiki
+git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 
 # vcpkg is bootstrapped locally, not vendored — one-time setup. A FULL
 # clone, not --depth 1 — a shallow clone can end up missing vcpkg.json's

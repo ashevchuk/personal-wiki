@@ -11,7 +11,7 @@ all. For that class of device, use native build or the zig cross-compile path in
 ## Quick start
 
 ```sh
-git clone <this-repo> wiki && cd wiki
+git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 mkdir -p vault_data
 docker compose up -d
 docker compose exec wiki wiki-server --create-admin   # interactive, one time

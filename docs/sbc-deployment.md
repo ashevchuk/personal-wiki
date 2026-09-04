@@ -4,28 +4,36 @@ Everything needed to get `wiki-server`/`wiki-mcp` running on a real single-board
 computer (Raspberry Pi or similar ARM/x86_64 SBC), start to finish, in one place. This
 is the practical runbook; `docs/deployment.md` and `docs/architecture.md` carry the
 broader design rationale and history — this file exists so a deployment doesn't require
-reading either of them first.
+reading either of them first. What it does NOT cover: actually connecting an MCP client
+to `wiki-mcp` once it's built and installed (tool schemas, `claude_desktop_config.json`,
+the remote HTTP transport) — that's `docs/mcp.md`, a genuinely separate concern from
+getting the binary onto the device in the first place.
 
 See `docs/deployment.md`'s "Real-hardware verification status" for exactly what has and
 hasn't been verified live: cross-compiled binaries have been deployed to and verified
 running natively on a real armv7 (Debian 9 stretch) target; a full native build
 compiled on-device has not been done.
 
-## Two ways to get a binary onto the device
+## Three ways to get this running on the device
 
-| | Native build (on-device) | Cross-compile (from dev machine) |
-|---|---|---|
-| When to use | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device |
-| Toolchain | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ |
-| Output | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc |
-| Verified live | Not yet (no on-device compile has been run to completion) | Yes — see `docs/deployment.md` |
+| | Native build (on-device) | Cross-compile (from dev machine) | Docker |
+|---|---|---|---|
+| When to use | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device | Capable, modern-enough device (Pi 4/5, 64-bit OS) where you'd rather not manage a toolchain at all |
+| Toolchain | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ | Whatever `docker build` pulls in, entirely inside the image |
+| Output | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc | A container image; the device's own userland is untouched |
+| Verified live | Not yet (no on-device compile has been run to completion) | Yes — see `docs/deployment.md` | Not on real ARM SBC hardware specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
 
 Pick native if the device is reasonably capable and current (Raspberry Pi OS Bookworm+,
 a recent Debian/Ubuntu ARM64). Pick cross-compile if the target is old/weak/EOL (e.g.
 Debian 9 stretch on 32-bit ARM, glibc 2.24) — a modern glibc cross-toolchain would link
 against a newer glibc than the target has and fail at runtime with
 `GLIBC_2.XX not found`; a static musl binary sidesteps that by not touching the
-target's libc at all.
+target's libc at all. Docker sits between the two: it needs a device modern enough to
+run a current Docker Engine in the first place — which rules it out for exactly the
+old/weak targets cross-compilation exists for — but if the device qualifies, it trades
+a from-scratch native build for a `docker build` and skips toolchain management
+entirely. The rest of this runbook covers only the native/cross-compile paths in
+detail; see `docs/docker.md` for the Docker one.
 
 ## Path A — Native build, on the device
 
@@ -41,7 +49,7 @@ target's libc at all.
 ### Build
 
 ```sh
-git clone <repo-url> wiki && cd wiki
+git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 
 # FULL clone, not --depth 1 — see docs/architecture.md's "Build" section
 # for why a shallow clone can silently miss vcpkg.json's pinned baseline
@@ -158,7 +166,7 @@ Only after both of those pass cleanly should the binaries get copied to the targ
   `<string>`/`<vector>`/etc. "file not found" errors even though normal compilation
   finds them fine. Fixed (already applied): `set(CMAKE_CXX_SCAN_FOR_MODULES OFF)`.
 
-## Install (both paths)
+## Install (Path A or B — Docker doesn't use this step, see `docs/docker.md`)
 
 ```sh
 sudo cmake --install build --prefix /opt/wiki       # or build-arm for a cross-build
@@ -310,7 +318,21 @@ login form will post to the wrong place.
 The vault directory (`[vault].path`, plus its `.trash/`) is the entire source of truth.
 The SQLite index (`[index].db_path`) is fully disposable — `wiki-server --reindex`
 rebuilds it from scratch — backing it up is optional (saves a rescan on restore for a
-very large vault, nothing more). Minimum viable backup: the vault directory, regularly.
+very large vault, nothing more). Minimum viable backup: the vault directory, regularly
+— two ways to actually make that happen, full detail in `docs/deployment.md`'s own
+"Backup" section:
+
+- **Ad hoc**: Account page (admin, Web UI) → "Download backup" — streams a `.tar.gz` of
+  the whole vault on demand. Only useful while the box and its disk are both still
+  alive, which is exactly the case a dead SD card is not.
+- **Automated, unattended**: an opt-in `systemd` timer
+  (`share/wiki/systemd/wiki-backup.{service,timer}`, installed the same way `wiki.service`
+  itself was above — NOT enabled by a plain `cmake --install`). Tars `VAULT_PATH`
+  straight off disk, independent of `wiki-server` entirely — keeps working whether the
+  service is healthy, crashed, or mid-restart. Point its `BACKUP_DIR` at a DIFFERENT
+  disk/mount than the SD card the vault itself lives on (a USB drive, a network share,
+  another machine over sshfs/NFS) — a backup on the same card it's meant to protect
+  against doesn't survive that card dying, which is the actual disaster this exists for.
 
 ## Update
 
