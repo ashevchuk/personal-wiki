@@ -499,6 +499,81 @@ a.btn:focus {
   color: #eee;
 }
 
+/* Cmd/Ctrl+K quick-open (quick-open.js). Overlay is toggled via the
+   `hidden` DOM property — [hidden] gets an explicit override below for
+   the exact same reason .ms-menu[hidden] and the print stylesheet's
+   display:none list both do earlier in this file: an author rule sharing
+   the element's own selector at equal specificity beats the UA
+   stylesheet's "[hidden] { display: none }" regardless of source order,
+   so ".quick-open-overlay { display: flex }" alone would leave the
+   overlay permanently visible the same way .ms-menu once was — applying
+   that lesson here from the start instead of re-discovering it. */
+.quick-open-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.75);
+}
+.quick-open-overlay[hidden] {
+  display: none;
+}
+.quick-open-box {
+  width: min(560px, 90vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: #001a00;
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+}
+.quick-open-input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  font-size: 1rem;
+  padding: 0.7rem 0.8rem;
+}
+.quick-open-input:focus {
+  outline: none;
+  box-shadow: none; /* the box itself already glows; avoid a second, competing glow on the input */
+}
+.quick-open-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0;
+  overflow-y: auto;
+}
+.quick-open-item {
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.quick-open-item.selected {
+  background: rgba(0, 255, 0, 0.12);
+  color: #fff;
+}
+.quick-open-path {
+  color: var(--fg-dim);
+  font-size: 0.8em;
+}
+.quick-open-empty {
+  padding: 0.6rem 0.8rem;
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+
+/* Discoverability hint next to the sidebar's own Search/Browse row --
+   the shortcut has no other visible affordance anywhere on the page. */
+.quick-open-hint {
+  display: block;
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+  margin: -0.5rem 0 0.75rem;
+}
+
 /* Print / "Export PDF" (view.js's #doc-print-btn just calls window.print()
    — real PDF generation is the browser's own "Save as PDF" print
    destination, not a server-side renderer; see the button's own comment
@@ -519,6 +594,7 @@ a.btn:focus {
   #matrix-bg,
   .sidebar,
   .sidebar-resizer,
+  .quick-open-overlay,
   .doc-actions,
   .folder-actions,
   .breadcrumbs {
