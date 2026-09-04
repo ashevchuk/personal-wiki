@@ -261,7 +261,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerPageRoutes(drogon::app());
   wikicore::controllers::registerAuthRoutes(drogon::app());
   wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
-                                                 attachmentService);
+                                                 attachmentService, navQueries);
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);

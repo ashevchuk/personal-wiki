@@ -71,4 +71,23 @@ std::vector<TagCount> NavQueries::typeCounts(bool includePrivate) const {
   return results;
 }
 
+std::vector<DocSummary> NavQueries::backlinks(const std::string& targetPath,
+                                               bool includePrivate) const {
+  Statement stmt(
+      db_.handle(),
+      "SELECT d.path, d.title, d.visibility FROM document_links dl "
+      "JOIN documents d ON d.rowid_id = dl.source_rowid "
+      "WHERE dl.target_path = ?1 AND (?2 = 1 OR d.visibility = 'public') "
+      "ORDER BY d.path;");
+  stmt.bind(1, targetPath);
+  stmt.bind(2, static_cast<int64_t>(includePrivate ? 1 : 0));
+
+  std::vector<DocSummary> results;
+  while (stmt.step()) {
+    results.push_back(
+        DocSummary{stmt.columnText(0), stmt.columnText(1), stmt.columnText(2)});
+  }
+  return results;
+}
+
 }  // namespace wikicore::index

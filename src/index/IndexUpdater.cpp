@@ -1,6 +1,7 @@
 #include "index/IndexUpdater.h"
 
 #include "index/Statement.h"
+#include "util/WikiLinks.h"
 
 #include <optional>
 
@@ -49,6 +50,25 @@ void replaceTagLinks(Database& db, int64_t documentRowId,
                     "INSERT INTO document_tags(document_rowid, tag_id) "
                     "VALUES (?1, ?2);");
     link.bind(1, documentRowId).bind(2, tagId);
+    link.run();
+  }
+}
+
+// Mirrors replaceTagLinks below/above -- delete-then-reinsert the full
+// set rather than diffing, same reasoning: this only ever runs on a
+// single document's own save/rescan, never a hot path worth optimizing
+// for incremental updates.
+void replaceLinkRows(Database& db, int64_t documentRowId, const std::string& body) {
+  Statement clear(db.handle(),
+                   "DELETE FROM document_links WHERE source_rowid = ?1;");
+  clear.bind(1, documentRowId);
+  clear.run();
+
+  for (const auto& target : wikicore::util::extractWikiLinkTargets(body)) {
+    Statement link(db.handle(),
+                    "INSERT INTO document_links(source_rowid, target_path) "
+                    "VALUES (?1, ?2);");
+    link.bind(1, documentRowId).bind(2, target);
     link.run();
   }
 }
@@ -119,6 +139,7 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
 
     replaceTagLinks(db_, rowId, entry.tags);
     replaceFtsEntry(db_, rowId, entry);
+    replaceLinkRows(db_, rowId, entry.body);
 
     Statement commit(db_.handle(), "COMMIT;");
     commit.run();

@@ -92,4 +92,24 @@ CREATE TABLE document_snapshots (
 );
 )sql";
 
+// Migration 2: [[wiki-link]] backlinks (see src/util/WikiLinks.h).
+// target_path is plain TEXT, not a FK to documents(path) -- a link to a
+// document that doesn't exist yet ("red link") is still worth recording,
+// so IndexUpdater::upsertOne can store it as-is: the moment a real
+// document lands at that path, NavQueries::backlinks finds the link
+// immediately, with no re-save of the document that authored the link.
+// ON DELETE CASCADE is only on the SOURCE side (source_rowid) -- deleting
+// the *target* document intentionally leaves the linking document's own
+// row alone (it just becomes a red link again, same as if the target had
+// never existed).
+inline constexpr const char* kMigration2 = R"sql(
+CREATE TABLE document_links (
+  source_rowid INTEGER NOT NULL REFERENCES documents(rowid_id) ON DELETE CASCADE,
+  target_path  TEXT NOT NULL,
+  PRIMARY KEY (source_rowid, target_path)
+);
+
+CREATE INDEX idx_document_links_target ON document_links(target_path);
+)sql";
+
 }  // namespace wikicore::index::schema

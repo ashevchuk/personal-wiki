@@ -1,5 +1,6 @@
 #pragma once
 
+#include "index/NavQueries.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/VaultRepository.h"
@@ -17,7 +18,12 @@ namespace wikicore::controllers {
 //   GET    /api/documents/{path...}      - read (visibility-gated same
 //                                           as everything else: 404, not
 //                                           403, for a private document
-//                                           to an anonymous caller)
+//                                           to an anonymous caller).
+//                                           renderedHtml has [[wiki-links]]
+//                                           already rewritten to real
+//                                           <a> tags; "backlinks" lists
+//                                           every OTHER document that
+//                                           links here (NavQueries).
 //   GET    /api/documents/{path...}/raw  - literal file bytes (unchanged)
 //   POST   /api/documents                - create (path in the JSON body)
 //   PUT    /api/documents/{path...}      - update
@@ -35,6 +41,7 @@ namespace wikicore::controllers {
 void registerDocumentRoutes(drogon::HttpAppFramework& app,
                              wikicore::vault::VaultRepository& vault,
                              wikicore::vault::DocumentService& documentService,
-                             wikicore::vault::AttachmentService& attachmentService);
+                             wikicore::vault::AttachmentService& attachmentService,
+                             wikicore::index::NavQueries& nav);
 
 }  // namespace wikicore::controllers

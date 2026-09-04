@@ -47,6 +47,7 @@ add_library(wikicore STATIC
   src/util/HtmlEscape.cpp
   src/util/Excerpt.cpp
   src/util/MarkdownRenderer.cpp
+  src/util/WikiLinks.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC

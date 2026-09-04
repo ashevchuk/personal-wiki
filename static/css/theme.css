@@ -430,6 +430,31 @@ a.btn:focus {
   color: var(--fg-dim);
 }
 
+/* [[wiki-link]] backlinks section on the document view page (view.js) —
+   deliberately visually distinct from the document body: a horizontal
+   rule + dim heading so it reads as "documents that mention this one",
+   not as if it were content the author of THIS document actually wrote. */
+.backlinks {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.backlinks h3 {
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.5rem;
+}
+.backlinks ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.backlinks li {
+  padding: 0.2rem 0;
+}
+
 @media (max-width: 720px) {
   .layout {
     flex-direction: column;

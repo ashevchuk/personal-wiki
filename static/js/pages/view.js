@@ -75,8 +75,38 @@ window.WikiPages = window.WikiPages || {};
         var bodyHasOwnH1 = /^\s*<h1[\s>]/i.test(doc.renderedHtml || "");
         var titleHtml = bodyHasOwnH1 ? "" : "<h1>" + escapeHtml(title) + "</h1>";
 
+        // Every OTHER document that links here via [[wiki-link]] — see
+        // NavQueries::backlinks (already visibility-gated server-side,
+        // same fail-safe-private rule as everything else: a private
+        // linking document never appears to an anonymous viewer). Omit
+        // the section entirely rather than showing an empty "Linked
+        // from" heading when nothing links here — most documents in a
+        // fresh vault won't have any yet.
+        var backlinksHtml = "";
+        if (doc.backlinks && doc.backlinks.length > 0) {
+          backlinksHtml = '<div class="backlinks"><h3>Linked from</h3><ul>';
+          doc.backlinks.forEach(function (d) {
+            backlinksHtml +=
+              '<li><a href="' +
+              basePath() +
+              "/d/" +
+              encodeVaultPath(d.path) +
+              '">' +
+              escapeHtml(d.title || d.path) +
+              "</a>";
+            if (d.visibility !== "public") backlinksHtml += " <em>(private)</em>";
+            backlinksHtml += "</li>";
+          });
+          backlinksHtml += "</ul></div>";
+        }
+
         container.innerHTML =
-          renderBreadcrumbs(docPath) + printBar + chrome + titleHtml + doc.renderedHtml;
+          renderBreadcrumbs(docPath) +
+          printBar +
+          chrome +
+          titleHtml +
+          doc.renderedHtml +
+          backlinksHtml;
 
         var deleteBtn = document.getElementById("doc-delete-btn");
         if (deleteBtn && window.WikiDocument) {

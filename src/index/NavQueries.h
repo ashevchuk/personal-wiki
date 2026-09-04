@@ -42,6 +42,16 @@ class NavQueries {
   // introducing a near-identical struct for one extra column.
   std::vector<TagCount> typeCounts(bool includePrivate) const;
 
+  // Every document that links to `targetPath` via a [[wiki-link]] (see
+  // src/util/WikiLinks.h), visibility-gated the same fail-safe-private
+  // way as everything else here: a PRIVATE document's outgoing link
+  // never appears to an anonymous caller, not even as a count — same
+  // discipline as tagCounts not leaking a tag used only by private docs.
+  // `targetPath` is compared as stored (already normalized by whoever's
+  // asking — DocumentRoutes.cpp uses the request's own docPath, which is
+  // already a real, normalized vault-relative path).
+  std::vector<DocSummary> backlinks(const std::string& targetPath, bool includePrivate) const;
+
  private:
   Database& db_;
 };

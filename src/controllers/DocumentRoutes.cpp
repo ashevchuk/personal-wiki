@@ -2,6 +2,7 @@
 
 #include "auth/RequireAdmin.h"
 #include "util/MarkdownRenderer.h"
+#include "util/WikiLinks.h"
 #include "vault/FrontMatter.h"
 #include "vault/PathGuard.h"
 
@@ -13,6 +14,7 @@
 
 using namespace drogon;
 using namespace wikicore::auth;
+using namespace wikicore::index;
 using namespace wikicore::vault;
 
 namespace wikicore::controllers {
@@ -44,6 +46,18 @@ HttpResponsePtr jsonOk(const std::string& path) {
 Json::Value tagsToJson(const std::vector<std::string>& tags) {
   Json::Value arr(Json::arrayValue);
   for (const auto& t : tags) arr.append(t);
+  return arr;
+}
+
+Json::Value backlinksToJson(const std::vector<DocSummary>& docs) {
+  Json::Value arr(Json::arrayValue);
+  for (const auto& d : docs) {
+    Json::Value item;
+    item["path"] = d.path;
+    item["title"] = d.title;
+    item["visibility"] = d.visibility;
+    arr.append(item);
+  }
   return arr;
 }
 
@@ -84,7 +98,8 @@ DocumentInput parseDocumentInput(const Json::Value& json) {
 
 void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
                              DocumentService& documentService,
-                             AttachmentService& attachmentService) {
+                             AttachmentService& attachmentService,
+                             NavQueries& nav) {
   // --- GET /api/documents/{path...} — read --------------------------------
   // Backs BOTH the document view page and the edit page (client-side —
   // see static/js/pages/view.js and edit.js): the edit page treats a 404
@@ -93,7 +108,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
   // 404, not 403, for a private document to an anonymous caller.
   app.registerHandlerViaRegex(
       "^/api/documents/(.*)$",
-      [&vault](const HttpRequestPtr& req,
+      [&vault, &nav](const HttpRequestPtr& req,
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& docPath) {
         std::string raw;
@@ -122,9 +137,17 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         body["type"] = fm.type;
         body["visibility"] = fm.visibility;
         body["body"] = parsed.body;
-        body["renderedHtml"] = util::renderMarkdownToHtml(parsed.body);
+        // [[wiki-links]] rewritten to plain markdown links BEFORE md4c
+        // ever sees the body — md4c has no idea this syntax exists (see
+        // util::rewriteWikiLinksToMarkdownLinks's own doc comment).
+        body["renderedHtml"] =
+            util::renderMarkdownToHtml(util::rewriteWikiLinksToMarkdownLinks(parsed.body));
         body["created"] = fm.created;
         body["updated"] = fm.updated;
+        // Same fail-safe-private gating as the document itself: a
+        // private document's own outgoing link never appears here to an
+        // anonymous caller.
+        body["backlinks"] = backlinksToJson(nav.backlinks(docPath, authenticated));
         callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Get, "wikicore::auth::AuthFilter"});

@@ -144,3 +144,56 @@ TEST_CASE("NavQueries::typeCounts excludes untyped docs and leaks no count "
   const auto adminTypes = nav.typeCounts(true);
   REQUIRE(findCount(adminTypes, "secret-type") == 1);
 }
+
+TEST_CASE("NavQueries::backlinks finds documents linking here via "
+          "[[wiki-links]] and leaks nothing from a private linker",
+          "[NavQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+
+  auto withBody = [](DocumentIndexEntry e, std::string body) {
+    e.body = std::move(body);
+    return e;
+  };
+  // Two public docs link to target.md, one private doc also links to it,
+  // and one doc's link points somewhere else entirely (must never appear).
+  updater.upsertOne(makeEntry("target.md", "public", {}));
+  updater.upsertOne(withBody(makeEntry("a.md", "public", {}), "See [[target]]."));
+  updater.upsertOne(withBody(makeEntry("b.md", "public", {}), "Also [[target.md]]."));
+  updater.upsertOne(withBody(makeEntry("secret.md", "private", {}), "[[target]] too."));
+  updater.upsertOne(withBody(makeEntry("c.md", "public", {}), "[[somewhere/else]]."));
+
+  NavQueries nav(database);
+
+  const auto anonLinks = nav.backlinks("target.md", false);
+  REQUIRE(anonLinks.size() == 2);
+  for (const auto& d : anonLinks) REQUIRE(d.path != "secret.md");
+
+  const auto adminLinks = nav.backlinks("target.md", true);
+  REQUIRE(adminLinks.size() == 3);
+}
+
+TEST_CASE("NavQueries::backlinks re-derives from a document's CURRENT body, "
+          "not a stale one, on re-save",
+          "[NavQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+
+  auto withBody = [](DocumentIndexEntry e, std::string body) {
+    e.body = std::move(body);
+    return e;
+  };
+  updater.upsertOne(makeEntry("target.md", "public", {}));
+  updater.upsertOne(withBody(makeEntry("a.md", "public", {}), "[[target]]"));
+  NavQueries nav(database);
+  REQUIRE(nav.backlinks("target.md", true).size() == 1);
+
+  // Re-save "a.md" with the link removed -- upsertOne must replace the
+  // link set, not accumulate it (same discipline as replaceTagLinks).
+  updater.upsertOne(withBody(makeEntry("a.md", "public", {}), "no link anymore"));
+  REQUIRE(nav.backlinks("target.md", true).empty());
+}
