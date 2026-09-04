@@ -28,6 +28,20 @@ window.WikiPages = window.WikiPages || {};
       return;
     }
 
+    // An empty path (sidebar "+ New") or one ending in "/" (a folder's
+    // own "+ New Document", which pre-fills that folder as a prefix —
+    // see folder.js::newDocument) can never be an EXISTING document's
+    // path — skip the round-trip to the server and go straight to the
+    // "new document" form instead of asking the backend to 404 on
+    // something that was never going to be a real lookup. Also sidesteps
+    // depending on how DocumentRoutes/PathGuard happen to answer a
+    // trailing-slash or empty path, which was never a case worth
+    // exercising over the network just to throw the answer away.
+    if (!docPath || docPath.endsWith("/")) {
+      buildForm(container, docPath, { isNew: true });
+      return;
+    }
+
     fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath), {
       credentials: "same-origin",
     })
@@ -56,7 +70,7 @@ window.WikiPages = window.WikiPages || {};
       renderBreadcrumbs(docPath) +
       '<form id="doc-form" autocomplete="off">' +
       '<div class="field-row">' +
-      '<label>Path <input type="text" id="f-path" required></label>' +
+      '<label>Path <input type="text" id="f-path" placeholder="e.g. notes/getting-started.md" required></label>' +
       '<label>Type <input type="text" id="f-type" placeholder="note"></label>' +
       "</div>" +
       '<div class="field-row">' +

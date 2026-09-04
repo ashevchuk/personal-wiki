@@ -19,10 +19,22 @@ window.WikiPages = window.WikiPages || {};
 
   // Shared with the sidebar's own "+ New" button (see router.js) — a
   // folder-scoped version just passes a non-empty prefix.
-  window.WikiPages.promptNewDocument = function (prefix) {
-    var name = window.prompt("New document path (e.g. getting-started.md):");
-    if (!name) return;
-    window.location.href = basePath() + "/edit/" + encodeVaultPath(prefix + name.trim());
+  //
+  // Used to window.prompt() for the path FIRST, then land on the
+  // already-full form (title/tags/type/visibility/editor — see
+  // edit.js::buildForm, which has always rendered all of that for a new
+  // document, prompt() or not) with that path baked in. That meant
+  // creating a document was a native browser dialog immediately
+  // followed by a real form asking for everything else — two different
+  // UIs, one right after the other, for one action. Now it's just a
+  // navigation straight to the form; edit.js treats an empty/prefix-only
+  // path as "new" without a round-trip to the server first (see its own
+  // comment), and the Path field there is a normal, editable input
+  // pre-filled with `prefix` — typing the filename is now the SAME
+  // form field a rename/inspect of the path would use anyway, not a
+  // separate one-shot dialog.
+  window.WikiPages.newDocument = function (prefix) {
+    window.location.href = basePath() + "/edit/" + encodeVaultPath(prefix);
   };
 
   function renderContents(contentsEl, folderPath, docs) {
@@ -83,7 +95,7 @@ window.WikiPages = window.WikiPages || {};
   function wireActions(actionsEl, folderPath) {
     var newBtn = el("button", { type: "button", id: "folder-new-doc", text: "+ New document" });
     newBtn.addEventListener("click", function () {
-      window.WikiPages.promptNewDocument(folderPath ? folderPath + "/" : "");
+      window.WikiPages.newDocument(folderPath ? folderPath + "/" : "");
     });
     actionsEl.appendChild(newBtn);
 

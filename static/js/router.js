@@ -36,8 +36,8 @@
     if (newDocBtn) {
       newDocBtn.hidden = false;
       newDocBtn.addEventListener("click", function () {
-        if (window.WikiPages && window.WikiPages.promptNewDocument) {
-          window.WikiPages.promptNewDocument("");
+        if (window.WikiPages && window.WikiPages.newDocument) {
+          window.WikiPages.newDocument("");
         }
       });
     }
