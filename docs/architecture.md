@@ -289,7 +289,7 @@ editor, full stop, rather than try to detect and coordinate the two.
 Obsidian/MediaWiki-style `[[target]]` / `[[target|label]]` syntax, layered on top of
 md4c rather than as a parser extension — a hand-rolled scanner
 (`util/WikiLinks.cpp`, deliberately no `std::regex`, matching every other string-parsing
-file in this codebase) rewrites it to a plain CommonMark `[label](target)` link BEFORE
+file in this codebase) rewrites it to a plain CommonMark `[label](d/target)` link BEFORE
 `renderMarkdownToHtml` ever runs; md4c has no idea the syntax exists. Targets are
 normalized once (`normalizeTarget`: trim, strip a leading `/`, append `.md` if missing)
 so `[[notes/foo]]` and `[[notes/foo.md]]` mean the same document on both the write side
@@ -299,6 +299,23 @@ equal. `target_path` in `document_links` is plain TEXT, not a foreign key: a lin
 document that doesn't exist YET is still recorded as a "red link", and starts resolving
 correctly the moment a document actually lands at that path, with no re-edit of the
 document that linked to it required.
+
+**A real, shipped bug, caught by a user clicking a real link, not by any test**: the
+generated href used to be the bare `target` with no `d/` prefix. `shell.html` sets
+`<base href="{basePath}/">`, so every relative href on the page resolves against the
+MOUNT ROOT — but `normalizeTarget()`'s output is a path in FILE space (matching the
+vault's own directory layout), while viewing a document is a ROUTE at `/d/{path}`, a
+different path space that happens to look identical for a simple target. Every existing
+test for `rewriteWikiLinksToMarkdownLinks` asserted the bare, broken shape as "correct"
+— written by copying what the code produced at the time, not by independently deriving
+what the href actually needed to resolve to. The M2 postmortem above is about a
+different bug entirely (an unauthenticated route, not a broken link), but the same
+underlying lesson applies here too: a test (or a filter being listed on a route) that
+merely reflects what the code already does proves nothing about whether the code is
+actually right. Fixed by prefixing with `d/`; the reverse relationship (backlinks) was
+never affected — `extractWikiLinkTargets`/`document_links` don't build hrefs at all, so
+a page's own "Linked from" section stayed correct the entire time this was broken,
+which is exactly how the asymmetry got noticed (one direction worked, the other 404'd).
 
 ### Document versioning (snapshot / diff / restore)
 
