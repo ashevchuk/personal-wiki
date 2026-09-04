@@ -1,6 +1,7 @@
 #pragma once
 
 #include "index/IndexUpdater.h"
+#include "index/SnapshotStore.h"
 #include "vault/FrontMatter.h"
 #include "vault/VaultRepository.h"
 
@@ -44,8 +45,9 @@ struct DocumentRecord {
 // by the caller.
 class DocumentService {
  public:
-  DocumentService(VaultRepository& vault, index::IndexUpdater& indexUpdater)
-      : vault_(vault), indexUpdater_(indexUpdater) {}
+  DocumentService(VaultRepository& vault, index::IndexUpdater& indexUpdater,
+                   index::SnapshotStore& snapshots)
+      : vault_(vault), indexUpdater_(indexUpdater), snapshots_(snapshots) {}
 
   // Throws DocumentAlreadyExistsError if `relativePath` is already
   // occupied, PathTraversalError if it escapes the vault. Assigns a fresh
@@ -70,6 +72,7 @@ class DocumentService {
 
   VaultRepository& vault_;
   index::IndexUpdater& indexUpdater_;
+  index::SnapshotStore& snapshots_;
 };
 
 }  // namespace wikicore::vault

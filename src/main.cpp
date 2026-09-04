@@ -20,12 +20,14 @@
 #include "controllers/NavRoutes.h"
 #include "controllers/PageRoutes.h"
 #include "controllers/SearchRoutes.h"
+#include "controllers/VersionRoutes.h"
 #include "core/wikicore.h"
 #include "index/Database.h"
 #include "index/FtsSearch.h"
 #include "index/IndexBuilder.h"
 #include "index/IndexUpdater.h"
 #include "index/NavQueries.h"
+#include "index/SnapshotStore.h"
 #include "index/VaultWatcher.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
@@ -146,7 +148,8 @@ int main(int argc, char** argv) {
 
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
   wikicore::index::IndexUpdater indexUpdater(db);
-  wikicore::vault::DocumentService documentService(vault, indexUpdater);
+  wikicore::index::SnapshotStore snapshotStore(db);
+  wikicore::vault::DocumentService documentService(vault, indexUpdater, snapshotStore);
   // config.toml's [attachments] table REPLACES the built-in defaults
   // entirely when present (see AppConfig::attachmentMimeTypes' comment);
   // empty (the common case — nothing in config.toml) falls back to
@@ -266,6 +269,8 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder);
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
+  wikicore::controllers::registerVersionRoutes(drogon::app(), indexUpdater, snapshotStore,
+                                                documentService);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)

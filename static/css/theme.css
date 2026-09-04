@@ -455,6 +455,51 @@ a.btn:focus {
   padding: 0.2rem 0;
 }
 
+/* History page (history.js) — snapshot list + diff view. */
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+}
+.history-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.history-timestamp {
+  color: var(--fg-dim);
+  font-size: 0.9rem;
+}
+.history-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+/* Same red/green-on-black convention as #f-status's .ok/.error classes
+   (edit.js's save-status line) — reusing it here rather than inventing a
+   second "good/bad" color pairing for the same two concepts. */
+.diff-view {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  background: #001a00;
+  border: 1px solid var(--border);
+  padding: 0.75rem;
+  margin: 0;
+}
+.diff-add {
+  color: var(--ok);
+}
+.diff-remove {
+  color: var(--error);
+}
+.diff-same {
+  color: var(--fg-dim);
+}
+
 @media (max-width: 720px) {
   .layout {
     flex-direction: column;

@@ -43,6 +43,7 @@ void registerPageRoutes(HttpAppFramework& app) {
   registerShellRoutePrefix(app, "^/folder/(.*)$");
   registerShellRoutePrefix(app, "^/d/(.*)$");
   registerShellRoutePrefix(app, "^/edit/(.*)$");
+  registerShellRoutePrefix(app, "^/history/(.*)$");
   registerShellRoute(app, "/account");
 }
 

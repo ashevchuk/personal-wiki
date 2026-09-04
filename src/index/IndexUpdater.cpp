@@ -160,6 +160,10 @@ std::vector<std::string> IndexUpdater::allIndexedPaths() const {
   return paths;
 }
 
+std::optional<int64_t> IndexUpdater::rowIdForPath(const std::string& path) const {
+  return findRowIdByPath(db_, path);
+}
+
 std::optional<std::string> IndexUpdater::findPathByUuid(const std::string& uuid) const {
   Statement stmt(db_.handle(), "SELECT path FROM documents WHERE uuid = ?1;");
   stmt.bind(1, uuid);

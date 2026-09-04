@@ -41,6 +41,7 @@ add_library(wikicore STATIC
   src/index/IndexBuilder.cpp
   src/index/FtsSearch.cpp
   src/index/NavQueries.cpp
+  src/index/SnapshotStore.cpp
   src/index/VaultWatcher.cpp
   src/util/Time.cpp
   src/util/Uuid.cpp
@@ -84,6 +85,7 @@ add_executable(wiki-server
   src/controllers/AdminRoutes.cpp
   src/controllers/FolderRoutes.cpp
   src/controllers/PageRoutes.cpp
+  src/controllers/VersionRoutes.cpp
 )
 target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
 

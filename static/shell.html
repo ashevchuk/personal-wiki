@@ -19,7 +19,7 @@
 (function () {
   "use strict";
   var path = location.pathname;
-  var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/, /\/account\/?$/];
+  var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/history\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/, /\/account\/?$/];
   var prefix = "";
   var matched = false;
   for (var i = 0; i < patterns.length; i++) {
@@ -111,6 +111,7 @@
 <!-- common.js MUST load first — everything else reads window.WikiCommon
      at its own top level, not lazily inside an event handler. -->
 <script src="js/common.js"></script>
+<script src="js/diff.js"></script>
 <script src="js/matrix.js"></script>
 <script src="js/sidebar-resize.js"></script>
 <script src="js/quick-open.js"></script>
@@ -121,6 +122,7 @@
 <script src="js/pages/search.js"></script>
 <script src="js/pages/view.js"></script>
 <script src="js/pages/edit.js"></script>
+<script src="js/pages/history.js"></script>
 <script src="js/pages/folder.js"></script>
 <script src="js/pages/account.js"></script>
 <script src="js/router.js"></script>

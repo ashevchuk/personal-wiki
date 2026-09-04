@@ -54,6 +54,13 @@ class IndexUpdater {
   // on disk before any rescan).
   std::optional<std::string> findPathByUuid(const std::string& uuid) const;
 
+  // The `documents.rowid_id` for `path`, or nullopt if it isn't indexed.
+  // Public wrapper around the same lookup upsertOne already does
+  // internally — used by DocumentService (to snapshot the pre-edit
+  // state against the right row) and VersionRoutes (to resolve a
+  // document's history without duplicating this query).
+  std::optional<int64_t> rowIdForPath(const std::string& path) const;
+
  private:
   Database& db_;
 };

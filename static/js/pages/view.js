@@ -60,6 +60,11 @@ window.WikiPages = window.WikiPages || {};
             "/edit/" +
             encodeVaultPath(docPath) +
             '">Edit</a>' +
+            '<a class="btn" href="' +
+            basePath() +
+            "/history/" +
+            encodeVaultPath(docPath) +
+            '">History</a>' +
             '<button type="button" id="doc-delete-btn" data-path="' +
             escapeHtml(docPath) +
             '">Delete</button></div>';

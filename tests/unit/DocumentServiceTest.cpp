@@ -1,5 +1,6 @@
 #include "index/Database.h"
 #include "index/IndexUpdater.h"
+#include "index/SnapshotStore.h"
 #include "vault/DocumentService.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -42,8 +43,9 @@ TEST_CASE("DocumentService create/get round-trips front matter and body",
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
-  vault::DocumentService svc(repo, indexUpdater);
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
 
   vault::DocumentInput input;
   input.title = "Systemd timers";
@@ -71,8 +73,9 @@ TEST_CASE("DocumentService create rejects a path that already exists",
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
-  vault::DocumentService svc(repo, indexUpdater);
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
 
   vault::DocumentInput input;
   input.title = "One";
@@ -88,8 +91,9 @@ TEST_CASE("DocumentService update preserves id/created, bumps updated, "
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
-  vault::DocumentService svc(repo, indexUpdater);
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
 
   vault::DocumentInput input;
   input.title = "Original";
@@ -114,6 +118,55 @@ TEST_CASE("DocumentService update preserves id/created, bumps updated, "
                      vault::DocumentNotFoundError);
 }
 
+TEST_CASE("DocumentService::update snapshots the PRE-edit state, "
+          "create() snapshots nothing",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput v1;
+  v1.title = "V1";
+  v1.body = "version one";
+  svc.create("a.md", v1);
+
+  const auto rowId = indexUpdater.rowIdForPath("a.md");
+  REQUIRE(rowId.has_value());
+  // create() must not have snapshotted anything -- there's no "before"
+  // state for a brand-new document.
+  REQUIRE(snapshots.list(*rowId).empty());
+
+  vault::DocumentInput v2;
+  v2.title = "V2";
+  v2.body = "version two";
+  svc.update("a.md", v2);
+
+  const auto afterFirstUpdate = snapshots.list(*rowId);
+  REQUIRE(afterFirstUpdate.size() == 1);
+  // The snapshot holds the PRE-edit (v1) content, not v2 -- serialized
+  // front matter + body, so checking for the body text is enough
+  // without depending on exact YAML formatting.
+  const auto content = snapshots.getContent(*rowId, afterFirstUpdate[0].id);
+  REQUIRE(content.has_value());
+  REQUIRE(content->find("version one") != std::string::npos);
+  REQUIRE(content->find("version two") == std::string::npos);
+
+  vault::DocumentInput v3;
+  v3.title = "V3";
+  v3.body = "version three";
+  svc.update("a.md", v3);
+
+  // Two edits after the initial create -> two snapshots, newest first.
+  const auto afterSecondUpdate = snapshots.list(*rowId);
+  REQUIRE(afterSecondUpdate.size() == 2);
+  const auto newest = snapshots.getContent(*rowId, afterSecondUpdate[0].id);
+  REQUIRE(newest->find("version two") != std::string::npos);
+}
+
 TEST_CASE("DocumentService update falls back to visibility=private for "
           "anything other than exactly 'public'",
           "[DocumentService]") {
@@ -121,8 +174,9 @@ TEST_CASE("DocumentService update falls back to visibility=private for "
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
-  vault::DocumentService svc(repo, indexUpdater);
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
 
   vault::DocumentInput input;
   input.visibility = "PUBLIC";  // wrong case — must not slip through
@@ -138,8 +192,9 @@ TEST_CASE("DocumentService softDelete moves the file (and assets folder) to "
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
-  vault::DocumentService svc(repo, indexUpdater);
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
 
   vault::DocumentInput input;
   input.body = "x";

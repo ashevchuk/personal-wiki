@@ -107,6 +107,10 @@
         pages.renderEdit(content, path.slice("/edit/".length), session);
         return;
       }
+      if (path.indexOf("/history/") === 0) {
+        pages.renderHistory(content, path.slice("/history/".length), session);
+        return;
+      }
 
       content.textContent = "Not found.";
     });

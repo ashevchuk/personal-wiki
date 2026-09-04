@@ -1,6 +1,7 @@
 #include "index/Database.h"
 #include "index/IndexBuilder.h"
 #include "index/IndexUpdater.h"
+#include "index/SnapshotStore.h"
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
 
@@ -49,9 +50,10 @@ TEST_CASE("FolderService move relocates a whole subtree and reindexes every "
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
   index::IndexBuilder indexBuilder(repo, indexUpdater);
-  vault::DocumentService docSvc(repo, indexUpdater);
+  vault::DocumentService docSvc(repo, indexUpdater, snapshots);
   vault::FolderService folderSvc(repo, indexUpdater, indexBuilder);
 
   vault::DocumentInput input;
@@ -93,9 +95,10 @@ TEST_CASE("FolderService move rejects missing source, occupied destination, "
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
   index::IndexBuilder indexBuilder(repo, indexUpdater);
-  vault::DocumentService docSvc(repo, indexUpdater);
+  vault::DocumentService docSvc(repo, indexUpdater, snapshots);
   vault::FolderService folderSvc(repo, indexUpdater, indexBuilder);
 
   REQUIRE_THROWS_AS(folderSvc.move("does-not-exist", "elsewhere"),
@@ -118,9 +121,10 @@ TEST_CASE("FolderService remove requires an existing, empty directory",
   index::Database db(env.dbPath());
   db.migrate();
   index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
   vault::VaultRepository repo(env.vaultRoot());
   index::IndexBuilder indexBuilder(repo, indexUpdater);
-  vault::DocumentService docSvc(repo, indexUpdater);
+  vault::DocumentService docSvc(repo, indexUpdater, snapshots);
   vault::FolderService folderSvc(repo, indexUpdater, indexBuilder);
 
   REQUIRE_THROWS_AS(folderSvc.remove("nope"), vault::FolderNotFoundError);

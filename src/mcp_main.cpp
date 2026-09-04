@@ -19,6 +19,7 @@
 #include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
 #include "index/NavQueries.h"
+#include "index/SnapshotStore.h"
 #include "mcp/McpServer.h"
 #include "vault/DocumentService.h"
 #include "vault/VaultRepository.h"
@@ -40,7 +41,12 @@ int main() {
 
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
   wikicore::index::IndexUpdater indexUpdater(db);
-  wikicore::vault::DocumentService documents(vault, indexUpdater);
+  // MCP tools are read-only (see this file's own top comment) — this
+  // DocumentService instance only ever has .get() called on it, which
+  // never touches snapshots_, but the constructor still needs a real
+  // reference to wire through.
+  wikicore::index::SnapshotStore snapshotStore(db);
+  wikicore::vault::DocumentService documents(vault, indexUpdater, snapshotStore);
   wikicore::index::FtsSearch search(db);
   wikicore::index::NavQueries nav(db);
 
