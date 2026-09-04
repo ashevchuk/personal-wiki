@@ -3,31 +3,45 @@
 <head>
 <meta charset="utf-8">
 <script>
-// This file is served BYTE-IDENTICAL for every route (see PageRoutes.cpp)
-// and carries no per-request server templating at all — so unlike the
-// old server-rendered pages, it can't have a reverse-proxy subpath (e.g.
-// "/wiki") baked into its own resource links by the backend. Fixed here
-// instead, as the very first thing in <head>, before the parser reaches
-// any <link>/<script src> below: infer the mount prefix from the
-// CURRENT URL by matching it against the same route shapes
-// PageRoutes.cpp registers, and set a <base> so every RELATIVE href/src
-// in this document (deliberately none of them start with "/") resolves
-// correctly regardless of how deep the current route is or what prefix
-// (if any) this app is mounted under. window.__WIKI_BASE_PATH__ is also
-// exposed for common.js's basePath() to reuse for its own absolute
-// (basePath-prefixed) API/page URLs.
+// This file is served for every route (see PageRoutes.cpp) with the same
+// body regardless of the specific path — so unlike the old server-rendered
+// pages, it can't have a reverse-proxy subpath (e.g. "/wiki") baked into
+// its own resource links from request data. Fixed here instead, as the
+// very first thing in <head>, before the parser reaches any
+// <link>/<script src> below: infer the mount prefix from the CURRENT URL
+// by matching it against the same route shapes PageRoutes.cpp registers
+// (unless PageRoutes.cpp already injected an authoritative
+// window.__WIKI_KNOWN_BASE_PATH__ just above this tag — see below), and
+// set a <base> so every RELATIVE href/src in this document (deliberately
+// none of them start with "/") resolves correctly regardless of how deep
+// the current route is or what prefix (if any) this app is mounted under.
+// window.__WIKI_BASE_PATH__ is also exposed for common.js's basePath() to
+// reuse for its own absolute (basePath-prefixed) API/page URLs.
 (function () {
   "use strict";
   var path = location.pathname;
-  var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/history\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/, /\/account\/?$/];
   var prefix = "";
   var matched = false;
-  for (var i = 0; i < patterns.length; i++) {
-    var m = path.match(patterns[i]);
-    if (m) {
-      prefix = path.slice(0, m.index);
-      matched = true;
-      break;
+  // window.__WIKI_KNOWN_BASE_PATH__ is injected by PageRoutes.cpp itself,
+  // BEFORE this script tag, only when [server].base_path is set in
+  // config.toml (optional — see AppConfig.h's comment on why it exists:
+  // a genuinely unmatched path, e.g. a stale [[wiki-link]] served by
+  // main.cpp's setDefaultHandler, on a browser with nothing yet cached in
+  // localStorage, is a case pattern-matching below can NEVER recover a
+  // prefix for — there's no signal left client-side at all in that exact
+  // combination). Authoritative when present: skip guessing entirely.
+  if (typeof window.__WIKI_KNOWN_BASE_PATH__ === "string") {
+    prefix = window.__WIKI_KNOWN_BASE_PATH__;
+    matched = true;
+  } else {
+    var patterns = [/\/d\/.*$/, /\/edit\/.*$/, /\/history\/.*$/, /\/folder(\/.*)?$/, /\/search\/?$/, /\/login\/?$/, /\/account\/?$/];
+    for (var i = 0; i < patterns.length; i++) {
+      var m = path.match(patterns[i]);
+      if (m) {
+        prefix = path.slice(0, m.index);
+        matched = true;
+        break;
+      }
     }
   }
   // Bare "/" or exactly this deployment's own mount root (e.g. visiting
@@ -48,12 +62,11 @@
   // separate count too.
   var CACHE_KEY = "wiki.lastKnownBasePath";
   if (matched) {
-    // A real route matched, so `prefix` is now known-good — remember it
-    // for the branch below, the only source of truth this script has
-    // access to (there is deliberately no server-side base_path setting
-    // to just read instead — see config/AppConfig.h's own comment on
-    // why — this file is served BYTE-IDENTICAL regardless of mount
-    // point, so nothing server-side can bake the prefix in here).
+    // A route matched (server-confirmed via __WIKI_KNOWN_BASE_PATH__, or
+    // inferred from a recognized path shape) — `prefix` is now known-good,
+    // cache it for the branch below to fall back on the one time it can't
+    // determine this itself: an unrecognized path with __WIKI_KNOWN_BASE_PATH__
+    // absent (base_path not configured) and nothing cached yet either.
     try {
       localStorage.setItem(CACHE_KEY, prefix);
     } catch (e) {

@@ -249,22 +249,31 @@ int main(int argc, char** argv) {
   // attacker a free CVE-lookup hint for zero benefit to a real client.
   drogon::app().enableServerHeader(false);
 
+  // registerPageRoutes() also builds and caches the rendered shell body
+  // (base_path injection included, see PageRoutes.cpp) that BOTH its own
+  // routes AND the setDefaultHandler right below reuse via shellResponse()
+  // — called here, ahead of setDefaultHandler, so that cache is populated
+  // before anything could possibly request it.
+  wikicore::controllers::registerPageRoutes(drogon::app(), cfg);
+
   // A path that matches NEITHER a registered route NOR a real static
   // file (e.g. a typo'd URL, or the OLD pre-fix shape of a [[wiki-link]]
   // href — see WikiLinks.cpp's own commit history) used to fall through
   // to Drogon's own bare default 404 page, which is where "drogon/1.9.13"
   // was actually leaking from — not the Server header alone, the BODY of
-  // that stock error page names it too. Serving the same shell.html every
-  // registered page route gets, with a real 404 STATUS CODE preserved (so
-  // curl/search engines/anything automated still sees a genuine 404, only
-  // the HTML body differs), means router.js's own client-side fallback
-  // renders instead — the exact same "nothing here" experience as any
-  // other not-found case in this app, and nothing Drogon-specific ever
+  // that stock error page names it too. Serving the exact same shell body
+  // every registered page route gets (shellResponse(), NOT a fresh
+  // newFileResponse() — this is the one case base_path injection actually
+  // matters for, see AppConfig.h), with a real 404 STATUS CODE preserved
+  // (so curl/search engines/anything automated still sees a genuine 404,
+  // only the HTML body differs), means router.js's own client-side
+  // fallback renders instead — the exact same "nothing here" experience as
+  // any other not-found case in this app, and nothing Drogon-specific ever
   // reaches the client.
   drogon::app().setDefaultHandler(
       [](const drogon::HttpRequestPtr&,
          std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
-        auto resp = drogon::HttpResponse::newFileResponse("static/shell.html");
+        auto resp = wikicore::controllers::shellResponse();
         resp->setStatusCode(drogon::k404NotFound);
         callback(resp);
       });
@@ -305,7 +314,6 @@ int main(int argc, char** argv) {
       },
       {drogon::Get});
 
-  wikicore::controllers::registerPageRoutes(drogon::app());
   wikicore::controllers::registerAuthRoutes(drogon::app());
   wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
                                                  attachmentService, navQueries);

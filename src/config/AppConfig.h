@@ -13,14 +13,30 @@ struct AppConfig {
   uint16_t port = 8080;
   size_t threads = 2;
   // Reverse-proxying under a subpath (e.g. "/wiki") needs NO server-side
-  // configuration — there used to be a base_path setting here for
-  // exactly that, but a fully client-rendered frontend (static SPA shell
-  // + JSON API, see docs/architecture.md) makes it unnecessary: the
-  // shell's own inline bootstrap script infers the mount prefix from
-  // location.pathname at load time (see static/shell.html and
-  // common.js's basePath()), correct for a plain prefix-stripping nginx
-  // `location /wiki/ { proxy_pass ...; }` (or any other subpath)
-  // automatically, with nothing server-side needing to know or care.
+  // configuration for the common case — there used to be a base_path
+  // setting here for exactly that, removed once the frontend became a
+  // fully client-rendered SPA shell + JSON API (see docs/architecture.md):
+  // shell.html's own inline bootstrap script infers the mount prefix from
+  // location.pathname at load time for every KNOWN route (/d/..., /search,
+  // ...), correct automatically with nothing server-side needing to know
+  // or care.
+  //
+  // Brought back here, OPTIONAL, empty by default, after a real deployment
+  // hit the one case that client-side pattern-matching cannot ever close:
+  // a request whose path matches NO known route (a typo, a stale
+  // [[wiki-link]], someone's old bookmark) served by main.cpp's
+  // setDefaultHandler, on a browser with nothing yet cached in
+  // localStorage — no page load has happened yet to record a known-good
+  // prefix, so there is no signal left ANYWHERE client-side to recover
+  // it from; the earlier "cache the last known-good prefix" fallback
+  // degrades gracefully but stays visibly broken on that first hit.
+  // Setting this closes that gap completely: PageRoutes.cpp bakes it into
+  // EVERY served shell.html as an authoritative
+  // `window.__WIKI_KNOWN_BASE_PATH__`, which the bootstrap script uses
+  // instead of guessing, matched route or not. Leave unset for a
+  // deployment on its own (sub)domain — pattern-matching already covers
+  // that case perfectly, nothing to gain by setting it.
+  std::string basePath;
 
   // [vault]
   std::string vaultPath = "./vault_data";

@@ -28,6 +28,18 @@ AppConfig AppConfig::load(const std::string& path) {
         (*server)["port"].value_or(static_cast<int64_t>(cfg.port)));
     cfg.threads = static_cast<size_t>(
         (*server)["threads"].value_or(static_cast<int64_t>(cfg.threads)));
+    cfg.basePath = (*server)["base_path"].value_or(cfg.basePath);
+    // Normalize away a trailing slash ("/wiki/" -> "/wiki") — PageRoutes.cpp
+    // always appends its own "/" when building the <base href>, so a
+    // trailing one here would double up. A bare "/" collapses to "" (same
+    // meaning: no prefix), since shell.html's own logic already treats an
+    // empty prefix as "not mounted under a subpath".
+    while (cfg.basePath.size() > 1 && cfg.basePath.back() == '/') {
+      cfg.basePath.pop_back();
+    }
+    if (cfg.basePath == "/") {
+      cfg.basePath.clear();
+    }
   }
   if (auto* vault = root["vault"].as_table()) {
     cfg.vaultPath = (*vault)["path"].value_or(cfg.vaultPath);

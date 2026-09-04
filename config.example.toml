@@ -15,12 +15,24 @@
 listen_addr = "127.0.0.1"   # put behind a reverse proxy for TLS/public exposure
 port = 8080
 threads = 2
-# No setting needed here for reverse-proxying under a subpath (e.g.
-# "/wiki") — the frontend is a static SPA shell + client-side JS (see
-# docs/architecture.md); shell.html's own inline bootstrap script infers
-# the mount prefix from the browser's current URL at load time. A plain
-# prefix-stripping `location /wiki/ { proxy_pass ...; }` just works, no
-# config here.
+# Reverse-proxying under a subpath (e.g. "/wiki") needs NO setting here
+# for the common case — the frontend is a static SPA shell + client-side
+# JS (see docs/architecture.md); shell.html's own inline bootstrap script
+# infers the mount prefix from the browser's current URL at load time. A
+# plain prefix-stripping `location /wiki/ { proxy_pass ...; }` just works.
+#
+# base_path = "/wiki"
+#
+# Set the line above (restart after changing it) ONLY to close one
+# specific residual gap that URL-pattern-matching alone can never solve:
+# a request whose path matches none of this app's known routes (a typo,
+# a stale [[wiki-link]]) on a browser that hasn't loaded any page from
+# this site yet either — no signal is left client-side to recover the
+# prefix from in that exact combination. Setting this bakes the prefix
+# into every page server-side instead, closing the gap completely. Not
+# needed for a deployment on its own (sub)domain, and not needed if you
+# don't mind that one edge case staying unstyled (never crashes, just
+# looks broken) on a visitor's very first hit.
 
 [vault]
 # Root directory of the markdown vault (source of truth for all content).

@@ -3,6 +3,7 @@ find_package(Catch2 3 CONFIG REQUIRED)
 add_executable(unit_tests
   unit/PathGuardTest.cpp
   unit/FrontMatterTest.cpp
+  unit/AppConfigTest.cpp
   unit/PasswordHasherTest.cpp
   unit/RateLimiterTest.cpp
   unit/DocumentServiceTest.cpp
