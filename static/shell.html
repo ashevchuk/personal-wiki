@@ -41,15 +41,58 @@
   // directly, no "/wiki/" in front) legitimately produces prefix === ""
   // from a route matching right at the start of the path, and "" is
   // falsy in JS. Testing `!prefix` there is indistinguishable from "the
-  // loop found nothing at all", so it fell through to this fallback and
-  // overwrote the correct empty prefix with the ENTIRE current path
-  // (e.g. "/login" instead of ""), sending <base href> to "/login/" and
-  // 404ing every single relative resource on the page — plain "/login"
-  // rendered as an unstyled, un-scripted, stuck-on-"Loading…" page. A
-  // subpath deployment (prefix comes out non-empty, e.g. "/wiki") never
-  // hit this, which is exactly why it went uncaught through every prior
-  // curl-based check against the live "/wiki/"-mounted production site.
-  if (!matched && path !== "/") prefix = path.replace(/\/+$/, "");
+  // loop found nothing at all", so it fell through to a since-removed
+  // fallback that overwrote the correct empty prefix with the ENTIRE
+  // current path — see the CACHE_KEY block below for the actual
+  // fallback logic and why "whole path = prefix" was wrong on a second,
+  // separate count too.
+  var CACHE_KEY = "wiki.lastKnownBasePath";
+  if (matched) {
+    // A real route matched, so `prefix` is now known-good — remember it
+    // for the branch below, the only source of truth this script has
+    // access to (there is deliberately no server-side base_path setting
+    // to just read instead — see config/AppConfig.h's own comment on
+    // why — this file is served BYTE-IDENTICAL regardless of mount
+    // point, so nothing server-side can bake the prefix in here).
+    try {
+      localStorage.setItem(CACHE_KEY, prefix);
+    } catch (e) {
+      // Blocked/unavailable localStorage — the fallback below just
+      // won't have anything cached to reuse; nothing else breaks.
+    }
+  } else if (path !== "/") {
+    // No known route matched, and this isn't the bare mount root either
+    // — e.g. Drogon's own default handler (main.cpp) serving this same
+    // shell.html for a genuinely unmatched path (a typo, an old/broken
+    // link) with a 404 status. "Assume the entire path is the prefix"
+    // was the original fallback here, and it was WRONG in exactly this
+    // case: caught live testing a real broken [[wiki-link]] href through
+    // a real nginx reverse-proxy under "/wiki/" — <base> ended up
+    // pointing AT the broken path itself, so every CSS/JS request 404'd
+    // through the SAME broken base, rendering a permanently stuck,
+    // unstyled "Loading…" page instead of a real not-found message.
+    // There is no way to reliably tell "prefix + garbage tail" apart
+    // from "no prefix + different garbage tail" from an unrecognized
+    // path alone — this file has no way to know, for instance, whether
+    // "wiki" in the path is this deployment's actual mount prefix or
+    // just a directory a author happened to name that. Reusing whatever
+    // prefix the MOST RECENT successful page load already proved
+    // correct is the closest thing to a right answer available: the
+    // realistic way a reader reaches a broken link is by clicking one
+    // FROM an already-loaded page on this same site, which means the
+    // cache is already warm by the time this branch ever runs. Falls
+    // back to empty (matching the bare "/" case) only on a genuinely
+    // cold start — no page on this site loaded successfully yet in this
+    // browser at all — which stays wrong for a subpath deployment on
+    // that one first visit, same residual gap "/" itself always had.
+    try {
+      var cached = localStorage.getItem(CACHE_KEY);
+      if (cached !== null) prefix = cached;
+    } catch (e) {
+      // Blocked/unavailable localStorage — falls through with prefix
+      // still "", the same safe default as a cold start.
+    }
+  }
   window.__WIKI_BASE_PATH__ = prefix;
   var base = document.createElement("base");
   base.href = prefix + "/";

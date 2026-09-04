@@ -244,6 +244,31 @@ int main(int argc, char** argv) {
   drogon::app().setDocumentRoot("static");
   drogon::app().setClientMaxBodySize(30 * 1024 * 1024);  // headroom over the 25 MiB attachment cap
 
+  // Don't advertise the exact framework+version in every response —
+  // `Server: drogon/1.9.13` by default, no reason to hand a would-be
+  // attacker a free CVE-lookup hint for zero benefit to a real client.
+  drogon::app().enableServerHeader(false);
+
+  // A path that matches NEITHER a registered route NOR a real static
+  // file (e.g. a typo'd URL, or the OLD pre-fix shape of a [[wiki-link]]
+  // href — see WikiLinks.cpp's own commit history) used to fall through
+  // to Drogon's own bare default 404 page, which is where "drogon/1.9.13"
+  // was actually leaking from — not the Server header alone, the BODY of
+  // that stock error page names it too. Serving the same shell.html every
+  // registered page route gets, with a real 404 STATUS CODE preserved (so
+  // curl/search engines/anything automated still sees a genuine 404, only
+  // the HTML body differs), means router.js's own client-side fallback
+  // renders instead — the exact same "nothing here" experience as any
+  // other not-found case in this app, and nothing Drogon-specific ever
+  // reaches the client.
+  drogon::app().setDefaultHandler(
+      [](const drogon::HttpRequestPtr&,
+         std::function<void(const drogon::HttpResponsePtr&)>&& callback) {
+        auto resp = drogon::HttpResponse::newFileResponse("static/shell.html");
+        resp->setStatusCode(drogon::k404NotFound);
+        callback(resp);
+      });
+
   // Drogon buffers large multipart request bodies to disk under its own
   // upload path (default: "./uploads" relative to CWD) BEFORE any handler
   // sees them — independent of AttachmentService's own storage. Left at

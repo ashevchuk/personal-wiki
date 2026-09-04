@@ -112,7 +112,20 @@
         return;
       }
 
-      content.textContent = "Not found.";
+      // Reached for a path that matches none of the routes above — the
+      // server's own default handler (main.cpp) serves this exact same
+      // shell.html for that case too (with a real 404 status code, not a
+      // 200), specifically so this client-side branch is what actually
+      // renders instead of Drogon's own bare error page. innerHTML, not
+      // textContent, and the same h1+paragraph shape every other page
+      // here uses — a plain text node looked jarringly different from
+      // every real page, including this app's own styled "Document not
+      // found" case (view.js) for a KNOWN route with a missing document.
+      document.getElementById("page-title").textContent = "Not found — wiki";
+      content.innerHTML =
+        "<h1>Not Found</h1><p>Nothing here. Try <a href=\"" +
+        basePath() +
+        "/search\">Search</a> or <kbd>Ctrl/Cmd+K</kbd>.</p>";
     });
   });
 })();
