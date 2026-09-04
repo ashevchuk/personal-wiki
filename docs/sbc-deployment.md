@@ -199,8 +199,7 @@ Edit `config.toml` as needed — the fields that actually matter for a real depl
 listen_addr = "127.0.0.1"   # keep on loopback; a reverse proxy handles TLS/public exposure
 port = 8080
 threads = 2
-# No base_path setting here — the app needs none, subpath or not. See
-# "Under a subpath of an existing site" below for how it actually works.
+# base_path = "/wiki"       # OPTIONAL — see "Under a subpath of an existing site" below
 
 [vault]
 path = "./vault_data"       # relative to the working directory (WorkingDirectory= in the unit)
@@ -287,14 +286,13 @@ server {
 
 ### Under a subpath of an existing site (e.g. `/wiki`)
 
-**No `config.toml` setting needed — there is no `[server].base_path` key.** The
-frontend is a client-rendered static shell (`static/shell.html`, served
-byte-identical no matter what path it's requested from — see
-`docs/architecture.md`), so nothing server-side can bake a prefix into it anyway.
-Instead `shell.html`'s own inline bootstrap script infers the mount prefix itself
-on load, by matching `location.pathname` against this app's known route shapes
-(`/d/...`, `/edit/...`, `/search`, ...) and setting a `<base href>` from whatever
-came before that match — works correctly under any subpath, or none, automatically:
+**No `config.toml` setting needed for the common case.** The frontend is a
+client-rendered static shell (`static/shell.html`, served with the same body no
+matter what path it's requested from — see `docs/architecture.md`); its own inline
+bootstrap script infers the mount prefix itself on load, by matching
+`location.pathname` against this app's known route shapes (`/d/...`, `/edit/...`,
+`/search`, ...) and setting a `<base href>` from whatever came before that match —
+works correctly under any subpath, or none, automatically:
 
 ```nginx
 location = /wiki {
@@ -310,18 +308,27 @@ location /wiki/ {
 }
 ```
 
-No `sub_filter`, no `proxy_redirect`, no response-rewriting of any kind needed, and no
-app-side config either — that whole class of hack was only ever necessary back when
-the backend still templated pages server-side; the current client-rendered shell
-removes the need for all of it permanently.
+No `sub_filter`, no `proxy_redirect`, no response-rewriting of any kind needed on the
+nginx side — that whole class of hack was only ever necessary back when the backend
+still templated pages server-side; the current client-rendered shell removes the need
+for all of it permanently, regardless of whether `base_path` below is set.
 
-The one gap this inference can't close by pattern-matching alone: a path matching NO
-known route (a typo, a stale `[[wiki-link]]`) falls back to the prefix the most recent
-successful page load already proved correct, cached in `localStorage`
-(`wiki.lastKnownBasePath`) — covers the realistic case (a broken link clicked from an
-already-loaded page) completely, and only degrades — gracefully, no crash, just an
-unstyled fallback — on a genuinely cold start with zero prior page loads in that
-browser. Full reasoning in `shell.html`'s own inline script comment.
+**One gap this inference can never close by pattern-matching alone**: a path matching
+NO known route (a typo, a stale `[[wiki-link]]`) on a browser with nothing yet cached
+in `localStorage` either — no signal survives client-side for that exact combination.
+The `localStorage`-cached last-known-good prefix (`wiki.lastKnownBasePath`) covers the
+realistic case (a broken link clicked from an already-loaded page) completely, but a
+genuinely cold start — landing directly on a stale link, nothing cached yet — still
+degrades to an unstyled (never crashing) page. Caught live: a real user's first-ever
+visit to a real deployment landed exactly there.
+
+**`[server].base_path = "/wiki"` in `config.toml` closes this completely, optionally**
+(restart the service after setting it) — `PageRoutes.cpp` then bakes that prefix into
+every served `shell.html`, matched route or not, as an authoritative
+`window.__WIKI_KNOWN_BASE_PATH__` the bootstrap script trusts over its own guessing.
+Skip it for a deployment on its own (sub)domain, or if that one cold-start edge case is
+acceptable to leave unstyled. Full reasoning in `shell.html`'s own inline script
+comment and `src/config/AppConfig.h`'s comment on `basePath`.
 
 ## Backup
 
@@ -372,12 +379,12 @@ For a cross-compiled deployment, "install" means: rebuild `build-arm`, re-verify
   redirects bare `/` to `/search`). Confirm `/healthz` and `/search` both return `200`
   before suspecting anything is actually broken.
 - **CSS/JS 404 or the login form posts to the wrong path when reverse-proxied under a
-  subpath** — check that the request actually matches one of `shell.html`'s known route
-  patterns (see "Under a subpath of an existing site" above); an unmatched path falls
-  back to the last known-good prefix cached in `localStorage`, which is empty on a
-  genuinely cold start in that browser (first-ever visit landing directly on a
-  subpath'd URL with nothing cached yet) — load `/search` (or any known route) first to
-  warm the cache, then retry.
+  subpath** — set `[server].base_path` (see "Under a subpath of an existing site"
+  above) and restart; that closes this permanently. Without it, an unmatched path
+  falls back to the last known-good prefix cached in `localStorage`, empty on a
+  genuinely cold start (first-ever visit in that browser landing directly on a
+  subpath'd URL with nothing cached yet) — load `/search` (or any known route) first
+  to warm the cache as a one-off workaround if setting `base_path` isn't an option.
 - **A static cross-compiled link crashes with `code=139`** — see "Known issues" above;
   almost certainly the `-Xlinker --dependency-file=...` / `CMAKE_LINK_DEPENDS_USE_LINKER`
   issue if the toolchain file has drifted from `cross/arm-musl/toolchain.cmake`.
