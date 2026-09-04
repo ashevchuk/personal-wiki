@@ -265,11 +265,174 @@ handler, don't rely on "the filter's already attached".
   still-current distinction between the two (don't conflate them back together just
   because this line got fixed).
 
-## Later addition: sidebar tag namespace grouping + filter
+## Later additions past M5
 
-Well past M5, once the vault had accumulated enough tags for the sidebar's flat `<ul>`
-of every tag in use to become genuinely unwieldy on screen — the same problem the
-document tree already had, and already had a fix for.
+Everything below landed after the M0–M5 milestone plan was complete, in later
+sessions — `docs/mcp.md` and `docs/deployment.md` got updated incrementally as each one
+shipped, this file didn't, until now. Same reasoning-first style as M0–M5: what was
+decided, why, and what broke along the way that a plan wouldn't have predicted.
+
+### Cmd-K quick-open
+
+A global `Ctrl/Cmd+K` overlay (`static/js/quick-open.js`), filtering the same flat
+`/api/nav/tree` list the sidebar's document tree already builds from — fetched once,
+lazily, cached for the page's lifetime, not re-fetched per keystroke. The one thing
+worth writing down: it explicitly steps aside whenever focus is already inside Toast UI
+Editor's own contenteditable surface (WYSIWYG or Markdown mode), rather than assuming
+no conflict. `Ctrl/Cmd+K` is a common "insert link" binding in that class of editor —
+untested assumption either way risked either eating the editor's own shortcut or
+double-handling the keypress, so the fix is to just not intercept at all near the
+editor, full stop, rather than try to detect and coordinate the two.
+
+### `[[wiki-links]]` + backlinks
+
+Obsidian/MediaWiki-style `[[target]]` / `[[target|label]]` syntax, layered on top of
+md4c rather than as a parser extension — a hand-rolled scanner
+(`util/WikiLinks.cpp`, deliberately no `std::regex`, matching every other string-parsing
+file in this codebase) rewrites it to a plain CommonMark `[label](target)` link BEFORE
+`renderMarkdownToHtml` ever runs; md4c has no idea the syntax exists. Targets are
+normalized once (`normalizeTarget`: trim, strip a leading `/`, append `.md` if missing)
+so `[[notes/foo]]` and `[[notes/foo.md]]` mean the same document on both the write side
+(`document_links` table, populated via `IndexUpdater`) and the read side
+(`NavQueries::backlinks`) — no further munging needed at either end for them to compare
+equal. `target_path` in `document_links` is plain TEXT, not a foreign key: a link to a
+document that doesn't exist YET is still recorded as a "red link", and starts resolving
+correctly the moment a document actually lands at that path, with no re-edit of the
+document that linked to it required.
+
+### Document versioning (snapshot / diff / restore)
+
+`document_snapshots` was in the schema from the very start (per the original plan) but
+unused until this. `DocumentService::update` snapshots a document's PRE-edit raw
+content before every overwrite — `create` snapshots nothing (there's no "before" state
+for a brand-new document). `SnapshotStore::getContent` deliberately checks BOTH
+`documentRowId` and `snapshotId` together, never `snapshotId` alone — an IDOR-shaped bug
+class (fetch someone else's/some other document's snapshot by guessing an id) guarded
+against by construction, not by a permissions check bolted on after the fact. Restoring
+a version itself snapshots the pre-restore state first, so a restore is exactly as
+undoable as any other edit — there's no special "point of no return" version of a
+write anywhere in this feature. The diff view (`static/js/diff.js`) is a small
+hand-rolled LCS line diff, not a vendored library — the app already avoids adding a
+frontend dependency for something this contained.
+
+### MCP write access (Phase 2, local stdio — `create_document`/`update_document`)
+
+Gated behind `[mcp].write_access` in `config.toml`, default **off** — a client gaining
+write access to the vault is a conscious opt-in on rebuild/reconfigure, never a silent
+capability bump. Every call, success or failure, is recorded in `mcp_audit_log`
+(`index::McpAuditLog`) regardless of this setting's own history, specifically so "was
+anything ever written by an MCP client, and did it succeed" stays answerable after the
+fact even for a deployment that's since turned write access back off. `get_document`'s
+own visibility check is re-verified at the handler level even though `includePrivate`
+already gated the call that resolved the document — the identical discipline M2's
+postmortem (above) established for the HTTP layer, applied here before an equivalent
+bug could happen a second time in a different transport, not after.
+
+### Remote MCP transport (HTTP)
+
+A SEPARATE admin-toggleable `POST /mcp` route (`RemoteMcpRoutes.cpp`) letting an MCP
+client reach the same tools over HTTPS instead of only a local stdio spawn — independent
+of the stdio server above; turning one on touches nothing about the other.
+
+- **Deliberately hand-built rather than using vendored cpp-mcp's own HTTP+SSE server.**
+  Reading `mcp_server.cpp` directly turned up that its `set_auth_handler()` is set but
+  never actually invoked anywhere in that library's request path — an unpatched,
+  dead-code auth hook. Trusting it for a public endpoint would have shipped something
+  that *looks* token-protected and isn't; this route reuses only the underlying
+  `wikicore` services the stdio server also calls, gated by this app's own real, tested
+  machinery instead (bearer token, hash-only in the DB — same discipline as session
+  cookies — shown raw exactly once at generation; a dedicated `RateLimiter` instance,
+  never sharing state/lockout budget with `/login`'s own; an optional CIDR allowlist,
+  empty meaning no restriction — the token is the actual gate, the allowlist an
+  optional extra layer on top).
+- **A real, self-caught bug: `auth::ClientIp` originally trusted `X-Forwarded-For`'s
+  FIRST entry.** Cross-referencing the actual deployed nginx config
+  (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — APPENDS, never
+  overwrites) showed the first entry is exactly what a client can freely spoof
+  (`curl -H "X-Forwarded-For: <an-allowlisted-ip>"` would walk straight past an
+  allowlist checking that entry); the LAST entry is always nginx's own append, exactly
+  as trustworthy as `X-Real-IP` (which `proxy_set_header` always overwrites, never
+  appends to). Fixed to prefer `X-Real-IP`, fall back to XFF's LAST entry — verified
+  live against production with a direct spoofing simulation (a crafted header with an
+  attacker-claimed allowlisted IP first, the real blocked IP appended after it,
+  matching `$proxy_add_x_forwarded_for`'s exact shape) still correctly blocked.
+- **A `/-1` CIDR prefix bug caught before shipping** (`auth/CidrMatch.cpp`): a literal
+  `/-1` parsed successfully via `std::stoi` and was silently reinterpreted as "no prefix
+  given" (→ `/32`, an exact match) because both cases shared the same sentinel value.
+  Fixed by explicitly rejecting a negative parsed prefix rather than only checking the
+  upper bound.
+
+### Vault backup (Web UI button + opt-in systemd timer)
+
+`vault::createVaultBackup` (`src/vault/BackupService.cpp`) shells out to the system
+`tar` via `fork()`+`execlp()`, deliberately never `system()`/`popen()` — both of those
+run the command through `/bin/sh -c "..."`, turning any shell metacharacter the vault
+path happens to contain into a parsing hazard; `execlp()` takes an explicit argv with no
+shell involved at all, so the path's actual content is inert regardless of what's in
+it. Excludes `.uploads-tmp/` (Drogon's own transient multipart-upload staging buffer —
+256 pre-created sharded subdirectories, never real content; confirmed by testing a real
+backup and finding them cluttering the archive before adding the exclusion). The
+opt-in `systemd` timer path (`systemd/wiki-backup.sh`) deliberately reimplements the
+same tar invocation standalone rather than curling the admin HTTP endpoint above — a
+disaster-recovery backup that only works while `wiki-server` happens to be up and an
+admin session happens to exist defeats the entire point of one; it needs to keep
+working whether the server is healthy, crashed, or mid-restart.
+
+### `![youtube](url)` embeds
+
+`md4c` runs with raw HTML passthrough deliberately disabled (`MD_FLAG_NOHTMLBLOCKS`/
+`SPANS` — `MarkdownRenderer.cpp`'s own comment: that flag IS the sanitization, there's
+no separate pass in front of it), so there's no way to
+hand it a real `<iframe>` directly. Uses the exact same marker-then-substitute shape as
+FTS5's `snippet()` (M3, above), for the identical reason: `rewriteYouTubeEmbeds`
+(`util/YouTubeEmbed.h`, a markdown-level pre-pass) turns a recognized URL
+(`youtube.com/watch?v=`, `youtu.be/`, `/shorts/`, `/embed/` — `v=` found anywhere in the
+query string, not just first or alone) into `![](youtube-embed:ID)`, ordinary
+CommonMark image syntax md4c renders as an inert `<img src="youtube-embed:ID">`; only
+AFTER that HTML exists does `substituteYouTubeEmbeds` swap that exact tag for a real,
+narrowly-templated iframe. `ID` is validated to exactly 11 URL-safe characters at BOTH
+ends of this round trip, not once — the same double-check discipline as every other
+trust boundary in this codebase. A hand-typed `<img src="youtube-embed:...">` in a
+document body can't forge this: raw HTML text gets `&lt;`-escaped by md4c same as any
+other literal tag (confirmed directly against a compiled md4c test, not assumed), so the
+marker only ever appears unescaped when it came from the pre-pass itself. Unlike
+`[[wiki-links]]` above (an external pre-pass the CALLER chains in before
+`renderMarkdownToHtml`), this pre-pass is invoked FROM `renderMarkdownToHtml` itself —
+turning `<img>` into `<iframe>` requires touching md4c's own HTML output, which only
+`MarkdownRenderer.cpp` ever sees, so splitting the feature's two halves across two call
+sites would only invite them drifting out of sync.
+
+### Docker (multi-stage build)
+
+Not a replacement for the native/cross-compile deployment path — Docker itself needs a
+kernel/glibc too modern for the actual verified-on-real-hardware target (Debian 9
+stretch); this is for trying the app on a normal x86_64/arm64 machine. `vcpkg.json` is
+copied and installed BEFORE the rest of the source specifically so Docker's layer cache
+survives ordinary source edits — only touching `vcpkg.json` invalidates the expensive
+Drogon+OpenSSL+trantor-from-scratch layer. Runs as a fixed `uid:gid 1000:1000` rather
+than whatever `useradd --system` would assign on its own, because `/data` is meant to be
+a HOST bind mount and a bind mount's write permission is checked by raw uid — a username
+doesn't cross that boundary at all.
+
+**A real, currently-live bug caught while building this, unrelated to Docker
+specifically**: `git clone --depth 1` for vcpkg — used in EVERY documented build path in
+this repo at the time (README, this file, `docs/deployment.md`,
+`docs/sbc-deployment.md`) — can silently fail to contain `vcpkg.json`'s own pinned
+`builtin-baseline` commit. Manifest mode resolves every dependency's version via
+`git show <that commit>:versions/baseline.json` against vcpkg's OWN history; a shallow
+clone only has whatever commit happens to be vcpkg's current upstream tip, which drifts
+away from an old pin over time with nothing about the clone command itself changing.
+Confirmed live: a fresh `git clone --depth 1` of vcpkg on the day this was caught did
+NOT contain this project's pinned baseline commit; a full clone did. This wasn't
+Docker-specific at all — every documented build path had it, invisible locally only
+because this dev machine's own `vcpkg/` checkout predates when it broke. Fixed
+everywhere at once, `git clone` with no `--depth` flag from here on.
+
+### Sidebar tag namespace grouping + filter
+
+Once the vault had accumulated enough tags for the sidebar's flat `<ul>` of every tag
+in use to become genuinely unwieldy on screen — the same problem the document tree
+already had, and already had a fix for.
 
 - **Reused the document tree's own grouping convention rather than inventing a second
   one.** `nav.js::buildTree` already splits a document's `path` on `/` into a
