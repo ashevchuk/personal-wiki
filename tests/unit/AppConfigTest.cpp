@@ -69,3 +69,27 @@ TEST_CASE("AppConfig::load: a bare \"/\" collapses to empty — same meaning as 
   const AppConfig cfg = AppConfig::load(file.path().string());
   REQUIRE(cfg.basePath.empty());
 }
+
+TEST_CASE("AppConfig::load: theme defaults to empty when unset — the client "
+          "picks its own hardcoded fallback in that case",
+          "[AppConfig]") {
+  TempConfigFile file("[server]\nbase_path = \"/wiki\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.defaultTheme.empty());
+}
+
+TEST_CASE("AppConfig::load: theme is read verbatim, no allowlist check at "
+          "this layer — shell.html's bootstrap script validates it instead",
+          "[AppConfig]") {
+  TempConfigFile file("[server]\ntheme = \"classic\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.defaultTheme == "classic");
+}
+
+TEST_CASE("AppConfig::load: an unrecognized theme name is still read verbatim "
+          "— deliberately not this layer's job to reject it",
+          "[AppConfig]") {
+  TempConfigFile file("[server]\ntheme = \"nonexistent-theme\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.defaultTheme == "nonexistent-theme");
+}

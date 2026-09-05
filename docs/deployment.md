@@ -145,6 +145,9 @@ cd /opt/wiki
 sudo -u wiki cp config.example.toml config.toml
 # edit as needed: [server].port, [vault].path, [mcp].scope
 # [server].base_path is optional — see "Reverse-proxying under a subpath" below
+# [server].theme is optional too — which of classic/dark/green a fresh
+# browser (nothing picked yet) lands on; see config.example.toml's own
+# comment. Restart after changing either.
 
 # create the admin account (password entered interactively, echo disabled)
 sudo -u wiki ./bin/wiki-server --create-admin

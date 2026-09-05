@@ -593,6 +593,54 @@ dark) was the only site theme, wrong the moment a light one existed.
   screenshot's appearance, and separately by `ps aux` instead of trusting
   `pkill`'s own exit code.
 
+### Configurable default theme (`[server].theme`)
+
+Every theme so far was a per-browser choice only — `theme.js`'s picker,
+`localStorage`, nothing server-side. Once three real themes existed, "what does
+a brand-new visitor see before they've ever touched the picker" became a real
+question with no config-level answer: it was always green, unconditionally,
+baked into shell.html's own bootstrap script.
+
+- **Same injection mechanism `[server].base_path` already established** —
+  `PageRoutes.cpp`'s `buildShellHtml()` bakes the configured value into every
+  served `shell.html` as `window.__WIKI_DEFAULT_THEME__`, in the SAME
+  injected `<script>` tag `__WIKI_KNOWN_BASE_PATH__` already uses (one
+  `<head>`-marker replacement doing double duty now, not two separate ones).
+- **Deliberately unvalidated on the C++ side** — `AppConfig::defaultTheme` is
+  a plain pass-through string, the same treatment `mcpScope` already gets.
+  shell.html's own bootstrap script already validates ANY theme value
+  (whether from `localStorage` or this new global) against its `THEMES`
+  array before ever using it; duplicating that allowlist server-side would
+  just be the same check twice for no benefit. An unrecognized config value
+  falls through to the hardcoded `"green"` default exactly as if
+  `[server].theme` had never been set — confirmed live, not assumed.
+- **Priority order, confirmed live**: a reader's own saved choice in
+  `localStorage` always wins over this setting — it only ever decides what a
+  genuinely fresh browser (nothing saved yet) lands on. Verified with a
+  three-part live check: (1) a cookie-free headless Chromium against a
+  scratch server configured `theme = "classic"` actually renders classic
+  with an empty `localStorage`; (2) the same server reconfigured with a
+  nonsense theme name still renders green, proving the client-side allowlist
+  actually rejects garbage rather than that path just never being exercised;
+  (3) pre-seeding `localStorage` with `"dark"` against that same
+  nonsense-configured server still yields `dark`, proving the priority order
+  holds in the one case that could have silently inverted it.
+- **The one piece of this that couldn't be a lightweight `static/` push**:
+  this touches `AppConfig`/`PageRoutes.cpp`, both compiled into the actual
+  `wiki-server` binary — required the full cross-compile pipeline
+  (`docs/deployment.md`'s "Cross-compilation" section), not the
+  tar-and-atomic-swap `static/`-only ritual most of this session's other
+  fixes used. Verified before shipping: `qemu-arm-static` against the cross-
+  compiled `unit_tests` (all 126 cases, including three new ones for this
+  field) AND against the actual `wiki-server` binary itself (real startup,
+  real vault rescan, real config parse — not just "it compiled"), before
+  ever copying it to the real device. Binaries swapped atomically
+  (`wiki-server.old`/`wiki-mcp.old` alongside the new ones, never overwritten
+  in place), service restarted, confirmed exactly one live process
+  afterward, `__WIKI_KNOWN_BASE_PATH__`'s own injection re-verified
+  unaffected as a regression check on the shared code path both globals now
+  share.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

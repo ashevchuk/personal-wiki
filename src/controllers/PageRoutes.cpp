@@ -20,12 +20,13 @@ namespace {
 std::string g_shellHtml;
 bool g_shellHtmlReady = false;
 
-// Minimal JS string-literal escaping for the one value that ever lands
-// inside <script> text here: cfg.basePath, admin-supplied from
-// config.toml. Low risk (it's a trusted local file, not user input) but
-// escaped anyway rather than assumed clean — a stray `"` in a typo'd
-// base_path should produce a harmless wrong prefix, not a syntax error
-// that breaks the ENTIRE page for every visitor.
+// Minimal JS string-literal escaping for the values that land inside
+// <script> text here: cfg.basePath and cfg.defaultTheme, both
+// admin-supplied from config.toml. Low risk (it's a trusted local file,
+// not user input) but escaped anyway rather than assumed clean — a
+// stray `"` in a typo'd value should produce a harmless wrong
+// prefix/theme name, not a syntax error that breaks the ENTIRE page
+// for every visitor.
 std::string escapeForJsString(const std::string& s) {
   std::string out;
   out.reserve(s.size());
@@ -42,35 +43,45 @@ std::string escapeForJsString(const std::string& s) {
   return out;
 }
 
-void buildShellHtml(const std::string& basePath) {
+void buildShellHtml(const std::string& basePath, const std::string& defaultTheme) {
   std::ifstream file("static/shell.html", std::ios::binary);
   std::ostringstream buf;
   buf << file.rdbuf();
   g_shellHtml = buf.str();
 
-  if (!basePath.empty()) {
-    // Injected as the very first thing inside <head>, before shell.html's
-    // own inline bootstrap script — see that script's own comment for why
-    // an authoritative, server-confirmed prefix takes priority over its
-    // location.pathname pattern-matching (which can't ever recover a
-    // prefix for a path matching no known route, e.g. a stale
-    // [[wiki-link]], on a browser with nothing cached yet either — see
-    // AppConfig.h's own comment on why base_path was reintroduced).
+  if (!basePath.empty() || !defaultTheme.empty()) {
+    // Both land in the SAME injected <script>, first thing inside <head>,
+    // before shell.html's own inline bootstrap scripts — see those
+    // scripts' own comments for why each one takes priority over the
+    // client-side fallback it has for the same decision (basePath over
+    // location.pathname pattern-matching; defaultTheme over the
+    // hardcoded "green" — though defaultTheme is always second-priority
+    // to whatever the reader already picked via localStorage, unlike
+    // basePath which has no such per-reader override).
     const std::string marker = "<head>";
     const auto pos = g_shellHtml.find(marker);
     if (pos != std::string::npos) {
-      const std::string injected =
-          marker + "\n<script>window.__WIKI_KNOWN_BASE_PATH__=\"" +
-          escapeForJsString(basePath) + "\";</script>";
+      std::string injected = marker + "\n<script>";
+      if (!basePath.empty()) {
+        injected += "window.__WIKI_KNOWN_BASE_PATH__=\"" +
+                     escapeForJsString(basePath) + "\";";
+      }
+      if (!defaultTheme.empty()) {
+        injected += "window.__WIKI_DEFAULT_THEME__=\"" +
+                     escapeForJsString(defaultTheme) + "\";";
+      }
+      injected += "</script>";
       g_shellHtml.replace(pos, marker.size(), injected);
     } else {
       // static/shell.html got restructured without a literal "<head>" —
-      // fail loud rather than silently shipping every page without the
-      // configured base_path (which would look like this setting doing
-      // nothing, a much harder bug to track down than a startup log line).
-      LOG_ERROR << "base_path is configured but static/shell.html has no "
-                   "literal \"<head>\" to inject into — base_path will "
-                   "have no effect until this is fixed";
+      // fail loud rather than silently shipping every page without
+      // whichever of these settings is configured (which would look like
+      // the setting doing nothing, a much harder bug to track down than
+      // a startup log line).
+      LOG_ERROR << "base_path and/or theme is configured but "
+                   "static/shell.html has no literal \"<head>\" to inject "
+                   "into — that setting will have no effect until this is "
+                   "fixed";
     }
   }
   g_shellHtmlReady = true;
@@ -112,7 +123,7 @@ void registerShellRoutePrefix(HttpAppFramework& app, const std::string& regex) {
 }  // namespace
 
 void registerPageRoutes(HttpAppFramework& app, const wikicore::config::AppConfig& cfg) {
-  buildShellHtml(cfg.basePath);
+  buildShellHtml(cfg.basePath, cfg.defaultTheme);
 
   registerShellRoute(app, "/");
   registerShellRoute(app, "/login");

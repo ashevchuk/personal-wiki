@@ -136,13 +136,30 @@
   "use strict";
   var THEMES = ["classic", "dark", "green"];
   var THEME_KEY = "wiki.theme";
-  var theme = "green";
+  // window.__WIKI_DEFAULT_THEME__ is injected by PageRoutes.cpp itself
+  // (see AppConfig.h's own comment on [server].theme) only when that
+  // config key is set — same optional, does-nothing-unless-configured
+  // shape as __WIKI_KNOWN_BASE_PATH__ above. Validated against THEMES
+  // here, the same allowlist localStorage's own value already goes
+  // through — a typo'd or stale config value just falls through to the
+  // hardcoded "green" below, exactly as if [server].theme had never
+  // been set at all; PageRoutes.cpp deliberately doesn't duplicate this
+  // check server-side.
+  var theme =
+    typeof window.__WIKI_DEFAULT_THEME__ === "string" &&
+    THEMES.indexOf(window.__WIKI_DEFAULT_THEME__) !== -1
+      ? window.__WIKI_DEFAULT_THEME__
+      : "green";
   try {
+    // A reader's OWN saved choice always outranks the server's
+    // configured default — this only ever decides what a browser with
+    // nothing saved yet lands on.
     var stored = localStorage.getItem(THEME_KEY);
     if (stored && THEMES.indexOf(stored) !== -1) theme = stored;
   } catch (e) {
-    // Blocked/unavailable localStorage — falls through to the green
-    // default, same as this app's very first-ever load.
+    // Blocked/unavailable localStorage — falls through to whatever
+    // `theme` already resolved to above (the configured default, or
+    // green), same as this app's very first-ever load.
   }
   document.documentElement.setAttribute("data-theme", theme);
   var link = document.createElement("link");

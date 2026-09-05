@@ -38,6 +38,25 @@ struct AppConfig {
   // that case perfectly, nothing to gain by setting it.
   std::string basePath;
 
+  // Optional, empty by default (meaning "no server-side opinion — the
+  // client picks its own hardcoded fallback, currently green"). Set to
+  // "classic", "dark", or "green" to make a FRESH browser (no
+  // wiki.theme in localStorage yet) land on that theme instead. Same
+  // injection mechanism as basePath just above: PageRoutes.cpp bakes
+  // this into every served shell.html as
+  // `window.__WIKI_DEFAULT_THEME__`, which the bootstrap script's own
+  // fallback chain checks before its own hardcoded "green" — a reader
+  // who's already picked a theme via the sidebar picker always keeps
+  // that choice regardless of this setting; it only affects the very
+  // first, cold visit. Deliberately NOT validated here (same as
+  // mcpScope just below — a string passed through as-is, no allowlist
+  // at this layer): the bootstrap script already checks any value
+  // against its own THEMES array before using it, so a typo'd or
+  // stale theme name here just falls through to "green" client-side,
+  // exactly as if this had been left unset. No reason to duplicate
+  // that allowlist on the C++ side too.
+  std::string defaultTheme;
+
   // [vault]
   std::string vaultPath = "./vault_data";
 

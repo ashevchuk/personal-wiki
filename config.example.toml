@@ -33,6 +33,18 @@ threads = 2
 # needed for a deployment on its own (sub)domain, and not needed if you
 # don't mind that one edge case staying unstyled (never crashes, just
 # looks broken) on a visitor's very first hit.
+#
+# theme = "green"
+#
+# Which of the three site themes (classic / dark / green) a FRESH
+# browser — no wiki.theme saved in localStorage yet — lands on
+# (restart after changing it). Optional; leave unset for "green", the
+# same default this app has always had. Never overrides a reader's own
+# choice from the sidebar's theme picker, only what a first-time visitor
+# sees before making one. An unrecognized value here is treated exactly
+# like leaving this unset — no validation happens server-side, since
+# shell.html's own bootstrap script already checks this against its
+# real theme list before ever using it.
 
 [vault]
 # Root directory of the markdown vault (source of truth for all content).

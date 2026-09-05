@@ -40,6 +40,11 @@ AppConfig AppConfig::load(const std::string& path) {
     if (cfg.basePath == "/") {
       cfg.basePath.clear();
     }
+    // No allowlist check here — see AppConfig.h's own comment on why
+    // (same "pass the string through" treatment as mcpScope below;
+    // shell.html's bootstrap script is what actually validates this
+    // against its THEMES array before ever using it).
+    cfg.defaultTheme = (*server)["theme"].value_or(cfg.defaultTheme);
   }
   if (auto* vault = root["vault"].as_table()) {
     cfg.vaultPath = (*vault)["path"].value_or(cfg.vaultPath);
