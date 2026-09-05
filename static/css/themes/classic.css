@@ -94,7 +94,15 @@ h3 {
      longer than one screen, the sidebar's own box ended at one
      viewport, leaving blank space where nav/search/tags used to be for
      the rest of the scroll). Reset to static flow in the narrow/stacked
-     breakpoint below. */
+     breakpoint below.
+
+     NO overflow-y here — column flexbox instead, with the actual scroll
+     region moved to .sidebar-scroll below. See green.css's identical
+     rule for why: overflow-y here would silently compute overflow-x to
+     auto too, clipping the theme dropdown's menu at this box's own
+     right edge. */
+  display: flex;
+  flex-direction: column;
   position: sticky;
   top: 0;
   align-self: flex-start;
@@ -102,7 +110,19 @@ h3 {
   padding: 1rem;
   border-right: 1px solid var(--border);
   background: var(--panel-bg);
+}
+/* flex:1 + min-height:0 lets this shrink and actually scroll instead of
+   growing .sidebar (and the sticky box around it) past 100vh again —
+   see green.css's identical rule for the full mechanics, including why
+   overflow-x:hidden + overflow-wrap:anywhere are here too (an unbroken
+   long tag path with no space to wrap on was forcing an ugly horizontal
+   scrollbar, confirmed live). */
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
 }
 
 /* Drag handle sitting between .sidebar and .content (see shell.html) —

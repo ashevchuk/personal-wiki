@@ -253,8 +253,26 @@
     </span>
   </div>
   <span class="quick-open-hint">Ctrl+K to jump to a document</span>
-  <div class="sidebar-section"><h3>Documents</h3><div id="nav-tree"></div></div>
-  <div class="sidebar-section"><h3>Tags</h3><div id="nav-tags"></div></div>
+  <!-- Everything that can genuinely grow past one screen (a vault with
+       hundreds of documents/tags) lives in its OWN scrolling box,
+       separate from the row above (brand, Search/Browse/icons, the
+       theme dropdown). Real bug this fixes: `.sidebar` itself needs
+       `overflow-y: auto` for its sticky/height:100vh behavior (see that
+       rule's own comment) — but CSS quietly computes `overflow-x` to
+       `auto` too the moment `overflow-y` isn't `visible`, and that
+       clipped the theme dropdown's absolutely-positioned menu at the
+       sidebar's own right edge, the exact "clipped by a scrolling
+       ancestor" trap `quick-open-overlay` avoids elsewhere by being
+       `position: fixed` instead. Moving the scrolling behavior down
+       onto THIS wrapper instead of the whole `<nav>` means the row
+       above never sits inside anything with overflow != visible, so
+       the dropdown is never a clipped descendant of anything in the
+       first place — no JS-computed positioning needed to route around
+       it. -->
+  <div class="sidebar-scroll">
+    <div class="sidebar-section"><h3>Documents</h3><div id="nav-tree"></div></div>
+    <div class="sidebar-section"><h3>Tags</h3><div id="nav-tags"></div></div>
+  </div>
 </nav>
 <!-- Drag handle for sidebar-resize.js — a hair's-width strip between the
      sidebar and the content column, not part of either. Hidden on the

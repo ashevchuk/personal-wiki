@@ -100,16 +100,28 @@ h3 {
      scrolling further showed blank space where nav/search/tags used to
      be, not a crash, just gone. `position: sticky` pins it to the
      viewport as the page scrolls instead; `height: 100vh` (not
-     min-height) caps its OWN box at one screen so `overflow-y: auto`
-     actually engages for a tag list that's itself taller than that,
-     rather than the sidebar silently growing past the viewport it's
-     supposed to stick within. `align-self: flex-start` is the parent's
-     own default already, stated explicitly here because sticky
-     positioning depends on the element NOT being stretched by the flex
-     container for its offsets to mean what they say. Reset back to
-     normal static flow in the narrow/stacked breakpoint below — sticky
-     there would mean the sidebar catches and overlays the document
-     while scrolling a phone-width column, which is worse, not better. */
+     min-height) caps its OWN box at one screen. `align-self: flex-start`
+     is the parent's own default already, stated explicitly here because
+     sticky positioning depends on the element NOT being stretched by
+     the flex container for its offsets to mean what they say. Reset
+     back to normal static flow in the narrow/stacked breakpoint below —
+     sticky there would mean the sidebar catches and overlays the
+     document while scrolling a phone-width column, which is worse, not
+     better.
+
+     NO overflow-y here (deliberately, second real bug found right after
+     the first) — CSS quietly computes overflow-x to auto the moment
+     overflow-y isn't visible, and that clipped the theme dropdown's
+     menu (position:absolute, living in the row below) at THIS box's own
+     right edge, the exact "clipped by a scrolling ancestor" trap
+     quick-open-overlay avoids elsewhere by being position:fixed
+     instead. A column flexbox instead: the brand/links/dropdown row
+     stays a plain, unclipped flex child, and only .sidebar-scroll below
+     (wrapping the Documents/Tags sections, see shell.html) gets its own
+     overflow — the one thing here that can actually grow past a
+     screen. */
+  display: flex;
+  flex-direction: column;
   position: sticky;
   top: 0;
   align-self: flex-start;
@@ -117,7 +129,24 @@ h3 {
   padding: 1rem;
   border-right: 1px solid var(--border);
   background: var(--panel-bg);
+}
+/* flex:1 + min-height:0 is the actual trick — a flex child defaults to
+   never shrinking below its own content's height, which would just
+   grow .sidebar-scroll (and the sticky .sidebar around it) past 100vh
+   again, the exact thing height:100vh above is trying to prevent.
+   min-height:0 opts back into shrinking so overflow-y:auto has
+   something to actually do. overflow-x:hidden + overflow-wrap:anywhere
+   are the fix for the OTHER half of the same bug report: an unbroken
+   long tag path (e.g. "project/llm/wiki-app") has no space for the
+   browser's default word-wrap to break on, so without this it forced
+   the box wider and surfaced an ugly horizontal scrollbar instead of
+   just wrapping — confirmed live, not guessed. */
+.sidebar-scroll {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
+  overflow-wrap: anywhere;
 }
 
 /* Drag handle sitting between .sidebar and .content (see shell.html) —
