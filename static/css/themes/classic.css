@@ -185,6 +185,17 @@ body.sidebar-resizing {
 }
 .sidebar-links button:hover {
   background: none;
+  /* Explicit, not implied — leaving `color` undeclared here let it fall
+     through to the generic `button:hover { color: var(--bg); }` rule
+     further down (still higher-specificity-losing but the ONLY rule
+     touching `color` at all, so it won by default): white text on this
+     theme's white page, i.e. invisible. Confirmed live on +New/Log out/
+     the theme icon (all real <button>s in this row) — a hover state
+     that makes the control disappear is worse than no hover feedback at
+     all. Same color as the row's own resting state — hovering just adds
+     the underline below, exactly like every plain <a> in this app
+     already does. */
+  color: var(--link);
   text-decoration: underline;
 }
 
@@ -682,6 +693,12 @@ a.btn:focus {
 .theme-picker .theme-toggle-btn:hover,
 .theme-picker .theme-toggle-btn:focus {
   background: none;
+  /* Same fix, same reason, as .sidebar-links button:hover just above —
+     this rule already beats it on specificity for background/opacity,
+     but never actually declared `color` itself, so THAT one property
+     still fell through to the generic button:hover's var(--bg) (white
+     icon on this theme's white page — invisible, confirmed live). */
+  color: var(--link);
   text-decoration: none;
   opacity: 1;
 }
