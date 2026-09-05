@@ -1,7 +1,16 @@
-/* Site-wide green-on-black "terminal" theme, shared across every page
-   (login, document view, edit, search). Layered UNDER page-specific
-   stylesheets (edit.css) — this owns colors/layout/typography, the
-   page-specific sheets only own their own form/widget details. */
+/* Site-wide green-on-black "terminal" theme — ONE of three self-sufficient
+   theme stylesheets (see themes/dark.css, themes/classic.css), swapped by
+   theme.js via the <link id="theme-link"> shell.html creates at runtime.
+   Deliberately NOT a shared-base-plus-overrides split: each theme file
+   owns its own complete set of colors/layout/typography rules end to end,
+   so adding a fourth theme later is "drop in one new file", never "go
+   figure out which of three files a shared rule actually lives in".
+   Layered UNDER page-specific stylesheets (edit.css) — this owns
+   colors/layout/typography, the page-specific sheets only own their own
+   form/widget details. Toast UI Editor's own dark-mode gaps are fixed in
+   edit.css instead of here — the editor is hardcoded to theme:"dark"
+   regardless of which SITE theme is active (see pages/edit.js), so that
+   fix isn't this file's concern to duplicate three times over. */
 
 @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
 
@@ -15,10 +24,20 @@
   --fg-dim: #009900;
   --fg-bright: #ccffcc;
   --panel-bg: rgba(0, 20, 0, 0.55);
+  /* Secondary surface (inputs, dropdown menus, diff blocks) — one shade
+     off --bg, distinct from --panel-bg (the translucent sidebar) so both
+     can be tuned independently per theme. */
+  --panel-bg-2: #001a00;
   --border: rgba(0, 255, 0, 0.35);
   --glow: 0 0 6px rgba(0, 255, 0, 0.65);
+  /* Link color kept separate from --fg (body text) even though this
+     theme sets them identically — dark.css/classic.css don't, and a
+     future fourth theme shouldn't have to notice this file cheated. */
+  --link: #00ff00;
+  --select-bg: rgba(0, 255, 0, 0.12);
   --error: #ff5555;
   --ok: #55ff99;
+  color-scheme: dark;
 }
 
 html,
@@ -39,11 +58,15 @@ body {
 }
 
 a {
-  color: var(--fg);
+  color: var(--link);
   text-decoration: none;
 }
 a:hover,
 a:focus {
+  /* Deliberately pure #fff here, not --fg-bright (#ccffcc) — preserves
+     this theme's exact pre-existing hover look; --fg-bright is used
+     elsewhere (snippets, breadcrumb-current) for a dimmer bright-green,
+     a different role than "hovering over a link". */
   color: #fff;
   text-shadow: 0 0 10px rgba(0, 255, 0, 0.9);
 }
@@ -314,7 +337,7 @@ form p {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  background: #001a00;
+  background: var(--panel-bg-2);
   border: 1px solid var(--border);
   box-shadow: var(--glow);
   padding: 0.5rem;
@@ -389,7 +412,7 @@ textarea,
 select,
 button {
   font-family: inherit;
-  background: #001a00;
+  background: var(--panel-bg-2);
   color: var(--fg);
   border: 1px solid var(--border);
   padding: 0.4rem 0.5rem;
@@ -410,7 +433,7 @@ button {
 }
 button:hover {
   background: var(--fg);
-  color: #000;
+  color: var(--bg);
 }
 
 mark {
@@ -452,7 +475,7 @@ mark {
    text-decoration explicitly reset since `a` normally underlines. */
 a.btn {
   display: inline-block;
-  background: #001a00;
+  background: var(--panel-bg-2);
   color: var(--fg);
   border: 1px solid var(--border);
   padding: 0.4rem 0.5rem;
@@ -464,7 +487,7 @@ a.btn {
 a.btn:hover,
 a.btn:focus {
   background: var(--fg);
-  color: #000;
+  color: var(--bg);
   text-shadow: none;
 }
 .folder-list {
@@ -546,7 +569,7 @@ a.btn:focus {
   word-break: break-word;
   font-family: 'Courier New', monospace;
   font-size: 0.85rem;
-  background: #001a00;
+  background: var(--panel-bg-2);
   border: 1px solid var(--border);
   padding: 0.75rem;
   margin: 0;
@@ -608,47 +631,6 @@ a.btn:focus {
   }
 }
 
-/* Toast UI Editor dark-theme gaps, found by actually opening the editor
-   in a real browser and inspecting getComputedStyle live (not guessed
-   from reading the vendored CSS alone):
-
-   1. Toolbar icons vanishing on hover. Vendored toastui-editor.css's
-      base rule ".toastui-editor-defaultUI button { color: #333; }"
-      applies to every toolbar button regardless of theme — fine for the
-      WYSIWYG toolbar, whose buttons are icon SPRITES (background-image)
-      where text color is irrelevant, but the Markdown-mode toolbar's
-      buttons render their glyph via this SAME `color` property, no
-      sprite involved. toastui-editor-dark.css recolors the editor's
-      root container (".toastui-editor-dark.toastui-editor-defaultUI
-      { color: #eee; }") but never overrides `button` specifically, so
-      the light theme's #333 wins by explicit-match-beats-inheritance —
-      and on :hover, dark.css's own
-      ".toastui-editor-toolbar-icons:hover { background-color: #36383f; }"
-      sits right next to that #333 text: two near-identical dark grays,
-      the icon glyph effectively invisible on its own hover background.
-
-   2. Markdown-mode body text. ".toastui-editor-md-container" (the
-      Markdown-mode ProseMirror root) carries its own light-theme
-      "color: #222" — confirmed present even with a ".toastui-editor-dark"
-      ancestor in the DOM, on a "#121212" background: #222-on-#121212 is
-      the same near-invisible pairing as (1), just for ordinary paragraph
-      text instead of toolbar icons. (Heading text and the dimmed "#"/
-      "**" syntax-marker delimiters were already fine on inspection —
-      #55575f-on-#121212 for delimiters is a deliberately muted but
-      legible design choice, left alone here.)
-
-   Fixed here (not in the vendored files — they're re-fetched/
-   checksummed, see tools/build-editor-bundle/) with enough specificity
-   (2 classes + descendant) to beat toastui-editor.css's 1-class-1-element
-   rule regardless of <link> order; #eee matches the color the dark
-   theme already uses everywhere else it DOES override text (its own
-   root container, popups, etc.) rather than introducing a third,
-   unrelated shade. */
-.toastui-editor-defaultUI.toastui-editor-dark button,
-.toastui-editor-dark .toastui-editor-md-container {
-  color: #eee;
-}
-
 /* Cmd/Ctrl+K quick-open (quick-open.js). Overlay is toggled via the
    `hidden` DOM property — [hidden] gets an explicit override below for
    the exact same reason .ms-menu[hidden] and the print stylesheet's
@@ -676,7 +658,7 @@ a.btn:focus {
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  background: #001a00;
+  background: var(--panel-bg-2);
   border: 1px solid var(--border);
   box-shadow: var(--glow);
 }
@@ -702,7 +684,7 @@ a.btn:focus {
   font-size: 0.9rem;
 }
 .quick-open-item.selected {
-  background: rgba(0, 255, 0, 0.12);
+  background: var(--select-bg);
   color: #fff;
 }
 .quick-open-path {
@@ -722,6 +704,110 @@ a.btn:focus {
   color: var(--fg-dim);
   font-size: 0.75rem;
   margin: -0.5rem 0 0.75rem;
+}
+
+/* Theme picker (theme.js) — a plain icon that reveals a dropdown of the
+   3 theme choices. Sits INSIDE .sidebar-links now (see shell.html),
+   folded in among Search/Browse/+New/Log out rather than claiming its
+   own row — `display: inline-flex` keeps it sized to its own content so
+   it behaves like just one more item in that flex-wrap row; `position:
+   relative` is still needed as an anchor for the absolutely-positioned
+   menu below it, same relationship .ms-select has to its own .ms-menu.
+   No print rule needed — it's a descendant of .sidebar, already hidden
+   wholesale in the print block below. */
+.theme-picker {
+  position: relative;
+  display: inline-flex;
+}
+/* Icon only, no border/background/padding-box — a small, quiet
+   affordance rather than a labeled control competing with Search/
+   Browse/+New for attention. Half-opacity at rest, full on hover/focus
+   — the ONLY visual feedback this button gives before the dropdown
+   itself opens, so it can't rely on a visible box changing shape or
+   color the way a bordered button would. `appearance: none` on top of
+   background/border being reset — some browsers keep a faint native
+   control chrome (padding/rounding) on a bare <button> even after that,
+   and the whole point here is that NOTHING should read as "a button" by
+   sight.
+
+   Selector is `.theme-picker .theme-toggle-btn`, not the bare class —
+   this button now lives INSIDE .sidebar-links (see shell.html), and
+   `.sidebar-links button`/`:hover` a few rules up is MORE specific than
+   a lone `.theme-toggle-btn` class (class+element beats class alone),
+   which would otherwise win the cascade and leak that rule's hover glow
+   (`text-shadow`) and green link color onto what's supposed to be a
+   plain, undecorated icon. No font-size/line-height override here
+   either, deliberately — `.sidebar-links button`'s `font: inherit` sets
+   those, and letting the icon inherit the row's own 0.85rem is exactly
+   the "blend in, don't announce yourself" look asked for; fighting that
+   with a higher-specificity size here would be working against the
+   point. */
+.theme-picker .theme-toggle-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  /* Browser default focus outline is a hard blue rectangle — with no
+     border of our own to blend it into, it stood out exactly opposite
+     of "minimally noticeable" once actually clicked/tabbed to. The
+     opacity jump on :hover/:focus below IS this button's focus
+     indicator instead — subtle, but present, unlike outline:none alone
+     would be. */
+  outline: none;
+  opacity: 0.5;
+}
+.theme-picker .theme-toggle-btn:hover,
+.theme-picker .theme-toggle-btn:focus {
+  background: none;
+  text-shadow: none;
+  opacity: 1;
+}
+/* Decoupled from the trigger's own (now icon-sized) width — "Classic"/
+   "Dark"/"Green" need real room regardless of how small the button that
+   opens them is. */
+.theme-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+  padding: 0.5rem;
+  white-space: nowrap;
+}
+/* Same [hidden]-vs-author-rule specificity trap as .ms-menu[hidden]
+   above — see that rule's own comment, identical fix here. */
+.theme-menu[hidden] {
+  display: none;
+}
+.theme-menu button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.2rem 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.theme-menu button:hover {
+  background: none;
+  color: #fff;
+  text-shadow: 0 0 10px rgba(0, 255, 0, 0.9);
+}
+/* Marks whichever entry matches the CURRENTLY active theme (theme.js sets
+   this class on DOMContentLoaded by reading <html data-theme>) — a small
+   "✓ " prefix rather than a background highlight, so it reads correctly
+   even against each theme's own button:hover inversion above. */
+.theme-menu-current::before {
+  content: "✓ ";
 }
 
 /* Print / "Export PDF" (view.js's #doc-print-btn just calls window.print()

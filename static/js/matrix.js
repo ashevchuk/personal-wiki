@@ -1,7 +1,14 @@
 // Canvas "digital rain" background, purely decorative — matches the
-// green-on-black terminal theme (theme.css). Self-contained, no deps.
-// Skips entirely under prefers-reduced-motion (theme.css also hides the
-// canvas in that case, but avoid burning CPU on a hidden canvas too).
+// green-on-black terminal theme (css/themes/green.css). Self-contained,
+// no deps. Loaded unconditionally regardless of which theme is active
+// (see shell.html) — themes/dark.css and themes/classic.css both set
+// "#matrix-bg { display: none; }" instead of duplicating a
+// theme-name check here; the computed-style guard below is what makes
+// THIS file react to that without needing to know theme names at all,
+// the same guard that already covered prefers-reduced-motion (green.css
+// also hides the canvas there, same reasoning: avoid burning CPU on a
+// hidden canvas, not just avoid drawing something reduced-motion asked
+// not to see).
 (function () {
   "use strict";
 
@@ -11,6 +18,7 @@
   var reduceMotion =
     window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (reduceMotion) return;
+  if (window.getComputedStyle(canvas).display === "none") return;
 
   var ctx = canvas.getContext("2d");
   var fontSize = 16;

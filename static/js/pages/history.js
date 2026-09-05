@@ -17,7 +17,8 @@ window.WikiPages = window.WikiPages || {};
 
   // Renders a WikiDiff.diffLines() result as HTML — one line per <div>,
   // colored the same way this app already colors other pass/fail-shaped
-  // status text (--ok/--error, see theme.css's #f-status rules), so this
+  // status text (--ok/--error, defined by each css/themes/*.css file and
+  // consumed by edit.css's #f-status rules), so this
   // doesn't introduce a third color convention for "good"/"bad" text.
   function renderDiff(diffOps) {
     if (diffOps.length === 0) return '<p class="empty">No differences.</p>';

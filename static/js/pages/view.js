@@ -36,7 +36,7 @@ window.WikiPages = window.WikiPages || {};
         // rather than this app growing a server-side PDF renderer (would
         // be the first HTML-generation the C++ side ever did — see
         // CLAUDE.md's "pure JSON API" architecture rule). The @media
-        // print rules in theme.css do the actual work of making the
+        // print rules in each css/themes/*.css do the actual work of making the
         // output look like a print-out (white background, black text, no
         // neon glow) instead of a screenshot of the terminal theme.
         // Plain .doc-actions — no separate "no-print" marker needed, the
@@ -49,7 +49,7 @@ window.WikiPages = window.WikiPages || {};
         var chrome = "";
         if (session.authenticated) {
           // Both actions as same-look buttons in one flex row (see
-          // .doc-actions in theme.css) — Edit used to be a bare <a> next
+          // .doc-actions in each css/themes/*.css file) — Edit used to be a bare <a> next
           // to a boxed Delete <button>, split by a literal "|", which
           // read as two different UI languages sharing one line for no
           // reason. <a class="btn"> makes Edit LOOK like a button while

@@ -112,21 +112,47 @@
   document.head.appendChild(base);
 })();
 </script>
-<!-- Tells the browser this page IS dark on purpose (theme.css's --bg is a
-     hardcoded #000, no light variant exists at all) — without this,
-     Chrome's own "Force Dark Mode for websites" setting (chrome://flags,
-     confirmed present in this session's browser via --force-dark-mode)
-     doesn't know that and applies its OWN heuristic re-coloring on top
-     of ours, which was caught silently suppressing toolbar icon sprites
-     (background-image computing to "none" despite a verified-valid,
-     loadable data-URI in the CSS) — not a bug in this app's own CSS,
-     but worth neutralizing here since any visitor with that Chrome
-     setting on would hit the same thing. color-scheme is the documented
-     signal Chromium's forced-darkening explicitly checks before
-     deciding whether a page needs its help. -->
-<meta name="color-scheme" content="dark">
+<!-- Applies the reader's saved theme choice (see theme.js / the sidebar's
+     theme picker) BEFORE any stylesheet loads, so switching themes never
+     produces a flash of the wrong one on a page (re)load — this app
+     already does a full page reload on every navigation (router.js) and
+     theme.js reloads on every theme change too, so this runs on
+     essentially every single page view. Injects the <link> itself,
+     synchronously, rather than leaving a static <link href="css/themes/
+     green.css"> in the markup below for a later script to retarget —
+     the browser would start fetching (and briefly rendering under) the
+     WRONG theme first in that version, then swap: a visible flash on
+     every load, not an edge case. Also sets each theme's OWN
+     color-scheme via CSS (see each themes/*.css's :root) — no <meta
+     name="color-scheme"> here, since that tag can only ever express ONE
+     value and three themes need three different ones. Must run after
+     the base_path script above (relies on the <base> it just appended
+     so "css/themes/..." below resolves the same way every other
+     relative href/src in this file already does), which is also why
+     this is a SEPARATE script tag rather than folded into that one —
+     keeps each script's one job separate and independently readable. -->
+<script>
+(function () {
+  "use strict";
+  var THEMES = ["classic", "dark", "green"];
+  var THEME_KEY = "wiki.theme";
+  var theme = "green";
+  try {
+    var stored = localStorage.getItem(THEME_KEY);
+    if (stored && THEMES.indexOf(stored) !== -1) theme = stored;
+  } catch (e) {
+    // Blocked/unavailable localStorage — falls through to the green
+    // default, same as this app's very first-ever load.
+  }
+  document.documentElement.setAttribute("data-theme", theme);
+  var link = document.createElement("link");
+  link.id = "theme-link";
+  link.rel = "stylesheet";
+  link.href = "css/themes/" + theme + ".css";
+  document.head.appendChild(link);
+})();
+</script>
 <title id="page-title">wiki</title>
-<link rel="stylesheet" href="css/theme.css">
 <!-- Edit-page-specific layout (.field-row, .visibility-toggle, #f-status
      colors, .yt-embed-preview) — was a real, orphaned file for who knows
      how long before this link existed: edit.css was written, referenced
@@ -157,6 +183,23 @@
     <button type="button" id="sidebar-new-doc" hidden>+ New</button>
     <a id="sidebar-account" data-href="/account" href="#" hidden>Password</a>
     <button type="button" id="sidebar-logout" hidden>Log out</button>
+    <!-- theme.js wires this up: toggles .theme-menu's `hidden` property,
+         persists the choice to localStorage, and reloads the page (the
+         synchronous <script> up in <head> is what actually APPLIES a
+         saved choice on every load — this is only the picker UI). Sits
+         INSIDE .sidebar-links, not in its own row — a dedicated row
+         (even styled to look invisible at rest) still READS as a
+         distinct control claiming its own space; folded in among
+         Search/Browse/Log out it's just one more small icon in the
+         existing row, nothing declaring "I am a button" about it. -->
+    <span class="theme-picker">
+      <button type="button" id="theme-toggle-btn" class="theme-toggle-btn" aria-haspopup="true" aria-expanded="false" aria-label="Theme" title="Theme">🎨</button>
+      <div class="theme-menu" id="theme-menu" hidden>
+        <button type="button" data-theme="classic">Classic</button>
+        <button type="button" data-theme="dark">Dark</button>
+        <button type="button" data-theme="green">Green</button>
+      </div>
+    </span>
   </div>
   <span class="quick-open-hint">Ctrl+K to jump to a document</span>
   <div class="sidebar-section"><h3>Documents</h3><div id="nav-tree"></div></div>
@@ -164,7 +207,7 @@
 </nav>
 <!-- Drag handle for sidebar-resize.js — a hair's-width strip between the
      sidebar and the content column, not part of either. Hidden on the
-     narrow/stacked layout (see theme.css's max-width:720px block) where
+     narrow/stacked layout (see each css/themes/*.css file's max-width:720px block) where
      there's no side-by-side width to negotiate. -->
 <div class="sidebar-resizer" id="sidebar-resizer"></div>
 <main id="app-content" class="content">Loading&hellip;</main>
@@ -179,6 +222,7 @@
 <script src="js/common.js"></script>
 <script src="js/diff.js"></script>
 <script src="js/matrix.js"></script>
+<script src="js/theme.js"></script>
 <script src="js/sidebar-resize.js"></script>
 <script src="js/quick-open.js"></script>
 <script src="js/nav.js"></script>

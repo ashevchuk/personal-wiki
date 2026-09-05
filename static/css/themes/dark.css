@@ -1,0 +1,752 @@
+/* Site-wide neutral dark theme — ONE of three self-sufficient theme
+   stylesheets (see themes/green.css, themes/classic.css), swapped by
+   theme.js via the <link id="theme-link"> shell.html creates at runtime.
+   Deliberately NOT a shared-base-plus-overrides split: each theme file
+   owns its own complete set of colors/layout/typography rules end to end
+   — see themes/green.css's own header comment for why. Unlike green.css,
+   this is a plain modern dark UI: no neon glow, no shouting-caps buttons,
+   no digital-rain canvas, ordinary system font. Layered UNDER
+   page-specific stylesheets (edit.css) — this owns colors/layout/
+   typography, the page-specific sheets only own their own form/widget
+   details. Toast UI Editor's own dark-mode gaps are fixed in edit.css,
+   not here — the editor is hardcoded to theme:"dark" regardless of which
+   SITE theme is active (see pages/edit.js), so that fix belongs there,
+   not duplicated across all three site themes. */
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --bg: #14161a;
+  --fg: #e6e6e6;
+  --fg-dim: #9096a0;
+  --fg-bright: #ffffff;
+  --panel-bg: #1b1e24;
+  /* Secondary surface (inputs, dropdown menus, diff blocks) — one shade
+     off --bg, distinct from --panel-bg (the sidebar) so both can be
+     tuned independently. */
+  --panel-bg-2: #22262d;
+  --border: #2e323b;
+  /* A plain focus ring, not a text glow (see green.css's --glow, a real
+     neon effect there) — same box-shadow usage sites throughout this
+     file, just a tasteful accent-tinted ring instead. */
+  --glow: 0 0 0 2px rgba(110, 168, 254, 0.35);
+  --link: #6ea8fe;
+  --select-bg: rgba(110, 168, 254, 0.16);
+  --error: #ff6b6b;
+  --ok: #4cd97b;
+  color-scheme: dark;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* No digital-rain canvas in this theme — matrix.js still runs (it's
+   loaded unconditionally by shell.html for every theme) but bails out on
+   its own once it sees the canvas computes to display:none, same as its
+   existing prefers-reduced-motion check; no JS-side theme-awareness
+   needed for this. */
+#matrix-bg {
+  display: none;
+}
+
+a {
+  color: var(--link);
+  text-decoration: none;
+}
+a:hover,
+a:focus {
+  color: var(--fg-bright);
+}
+
+.layout {
+  display: flex;
+  align-items: flex-start;
+  min-height: 100vh;
+}
+
+.sidebar {
+  /* --sidebar-w is set by sidebar-resize.js (drag the handle, or read
+     back from localStorage on load) — the 260px here is only the
+     fallback for a first-ever visit/no-JS, not a value this rule itself
+     ever changes. */
+  width: var(--sidebar-w, 260px);
+  flex: 0 0 var(--sidebar-w, 260px);
+  min-height: 100vh;
+  padding: 1rem;
+  border-right: 1px solid var(--border);
+  background: var(--panel-bg);
+  overflow-y: auto;
+}
+
+/* Drag handle sitting between .sidebar and .content (see shell.html) —
+   deliberately a separate flex sibling rather than a border/pseudo-
+   element ON .sidebar, so its hit area (6px) can be wider than the
+   hairline border it visually sits on without the border itself having
+   to grow. */
+.sidebar-resizer {
+  flex: 0 0 6px;
+  align-self: stretch;
+  margin-left: -6px; /* overlaps the sidebar's own border-right, doesn't add extra width to .layout */
+  cursor: col-resize;
+  background: transparent;
+}
+.sidebar-resizer:hover {
+  background: var(--border);
+}
+/* Set on <body> for the duration of a drag (sidebar-resize.js) — without
+   this, fast mouse movement during a drag can outrun the resizer's own
+   6px hit box and the OS reverts to a text-selection cursor mid-drag,
+   plus the page's own text starts highlighting under the pointer. */
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.sidebar-brand {
+  display: block;
+  font-size: 1.3rem;
+  font-weight: 700;
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-links {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+/* The New/Log out actions are <button>s (need JS-wired clicks, not plain
+   navigation) sitting in the same row as the Search/Browse <a> links —
+   strip the default boxed button look so they read the same as the
+   links next to them. */
+.sidebar-links button {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--fg);
+  font: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+  cursor: pointer;
+}
+.sidebar-links button:hover {
+  background: none;
+  color: var(--fg-bright);
+}
+
+.sidebar-section h3 {
+  font-size: 0.75rem;
+  color: var(--fg-dim);
+  margin: 1rem 0 0.4rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.2rem;
+}
+
+.sidebar-section ul {
+  list-style: none;
+  margin: 0;
+  padding-left: 0.6rem;
+  font-size: 0.85rem;
+}
+/* Caps the tag box's own height so a vault with hundreds of tags doesn't
+   push everything below it an arbitrary distance down — see green.css's
+   identical rule for the full rationale, unchanged here. */
+.nav-tags-list > ul {
+  max-height: 220px;
+  overflow-y: auto;
+}
+.nav-tags-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.4rem;
+  padding: 0.2rem 0.4rem;
+  font-size: 0.8rem;
+}
+.nav-tag-group-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+  /* No global shouting-caps `button` rule in this theme to leak through
+     here (unlike green.css), but reset explicitly anyway rather than
+     relying on that fact staying true forever. */
+  text-transform: none;
+  letter-spacing: normal;
+}
+.nav-tag-group-btn:hover {
+  background: none;
+  color: var(--fg);
+}
+.sidebar-section li {
+  margin: 0.15rem 0;
+}
+.nav-folder-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+.nav-arrow-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+.nav-arrow-btn:hover {
+  background: none;
+  color: var(--fg);
+}
+.nav-arrow {
+  display: inline-block;
+  width: 0.9em;
+}
+.nav-folder-label {
+  color: var(--fg-dim);
+}
+.nav-folder-label:hover {
+  color: var(--fg);
+}
+.nav-children.collapsed {
+  display: none;
+}
+
+.breadcrumbs {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+  margin: 0 0 0.75rem;
+}
+.breadcrumbs a {
+  color: var(--fg-dim);
+}
+.breadcrumbs a:hover {
+  color: var(--fg);
+}
+.breadcrumbs .crumb-current {
+  color: var(--fg-bright);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  padding: 1.5rem 2rem 3rem;
+  max-width: 960px;
+}
+
+form p {
+  margin: 0.6rem 0;
+}
+.search-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+.search-form input[name="q"] {
+  flex: 1 1 240px;
+}
+
+/* Tag/type multiselect dropdowns (search.js's createMultiSelect). */
+.ms-select {
+  position: relative;
+  flex: 0 1 140px;
+}
+.ms-toggle {
+  width: 100%;
+  text-align: left;
+}
+.ms-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  min-width: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+  padding: 0.5rem;
+  white-space: nowrap;
+}
+/* [hidden]-vs-author-rule specificity trap — see green.css's identical
+   rule for the full explanation. Same fix, every theme needs it. */
+.ms-menu[hidden] {
+  display: none;
+}
+.ms-menu label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.ms-menu label:hover {
+  color: var(--fg-bright);
+}
+.ms-menu input[type="checkbox"] {
+  accent-color: var(--link);
+  width: auto;
+  padding: 0;
+}
+.ms-count {
+  color: var(--fg-dim);
+  font-size: 0.8em;
+}
+.ms-empty {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+  margin: 0;
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  font-size: 0.9rem;
+}
+
+.visibility-toggle {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+.visibility-toggle input[type="checkbox"] {
+  accent-color: var(--link);
+  width: auto;
+}
+
+input,
+textarea,
+select,
+button {
+  font-family: inherit;
+  background: var(--panel-bg-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.5rem;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--link);
+  box-shadow: var(--glow);
+}
+
+button {
+  cursor: pointer;
+  text-transform: none;
+  letter-spacing: normal;
+}
+button:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+mark {
+  background: rgba(110, 168, 254, 0.25);
+  color: var(--fg-bright);
+}
+
+.results {
+  list-style: none;
+  padding: 0;
+}
+.results li {
+  border-bottom: 1px solid var(--border);
+  padding: 0.6rem 0;
+}
+.results .tags {
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+.results .snippet {
+  color: var(--fg-bright);
+  font-size: 0.9rem;
+}
+
+.folder-actions,
+.doc-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.75rem 0 1.25rem;
+  flex-wrap: wrap;
+}
+
+/* An <a> styled to be visually indistinguishable from a real <button>. */
+a.btn {
+  display: inline-block;
+  background: var(--panel-bg-2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.5rem;
+  text-decoration: none;
+  text-transform: none;
+  letter-spacing: normal;
+}
+a.btn:hover,
+a.btn:focus {
+  background: var(--fg);
+  color: var(--bg);
+}
+.folder-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.25rem;
+}
+.folder-list li {
+  padding: 0.3rem 0;
+}
+.empty {
+  color: var(--fg-dim);
+}
+
+/* `![youtube](url)` embed (util/YouTubeEmbed.h + MarkdownRenderer.cpp). */
+.youtube-embed {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 16 / 9;
+  border: 0;
+}
+
+/* [[wiki-link]] backlinks section on the document view page (view.js). */
+.backlinks {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.backlinks h3 {
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  margin: 0 0 0.5rem;
+}
+.backlinks ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.backlinks li {
+  padding: 0.2rem 0;
+}
+
+/* History page (history.js) — snapshot list + diff view. */
+.history-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+}
+.history-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.history-timestamp {
+  color: var(--fg-dim);
+  font-size: 0.9rem;
+}
+.history-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.diff-view {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: 'Courier New', monospace;
+  font-size: 0.85rem;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  padding: 0.75rem;
+  margin: 0;
+}
+.diff-add {
+  color: var(--ok);
+}
+.diff-remove {
+  color: var(--error);
+}
+.diff-same {
+  color: var(--fg-dim);
+}
+
+/* Account page's Remote MCP section (account.js). */
+#mcp-remote-cidr-list,
+#mcp-remote-audit-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  font-size: 0.85rem;
+}
+#mcp-remote-cidr-list li,
+#mcp-remote-audit-list li {
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--border);
+}
+#mcp-remote-token-reveal {
+  margin: 0.5rem 0 1rem;
+}
+
+@media (max-width: 720px) {
+  .layout {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    flex-basis: auto;
+    min-height: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+  .content {
+    padding: 1rem;
+  }
+  .sidebar-resizer {
+    display: none;
+  }
+}
+
+/* Cmd/Ctrl+K quick-open (quick-open.js). */
+.quick-open-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.6);
+}
+.quick-open-overlay[hidden] {
+  display: none;
+}
+.quick-open-box {
+  width: min(560px, 90vw);
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+}
+.quick-open-input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  font-size: 1rem;
+  padding: 0.7rem 0.8rem;
+}
+.quick-open-input:focus {
+  outline: none;
+  box-shadow: none; /* the box itself already carries a ring; avoid a second, competing one on the input */
+}
+.quick-open-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.3rem 0;
+  overflow-y: auto;
+}
+.quick-open-item {
+  padding: 0.4rem 0.8rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+.quick-open-item.selected {
+  background: var(--select-bg);
+  color: var(--fg-bright);
+}
+.quick-open-path {
+  color: var(--fg-dim);
+  font-size: 0.8em;
+}
+.quick-open-empty {
+  padding: 0.6rem 0.8rem;
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+
+.quick-open-hint {
+  display: block;
+  color: var(--fg-dim);
+  font-size: 0.75rem;
+  margin: -0.5rem 0 0.75rem;
+}
+
+/* Theme picker (theme.js) — see green.css's identical rule for the full
+   layout rationale, unchanged here beyond color values. Sits INSIDE
+   .sidebar-links now (see shell.html), not in its own row. */
+.theme-picker {
+  position: relative;
+  display: inline-flex;
+}
+/* Icon only, no border/background/padding-box, selector qualified as
+   `.theme-picker .theme-toggle-btn` — see green.css's identical rule
+   for the full rationale (that file's version explains the
+   `.sidebar-links button` specificity trap this qualifier avoids). */
+.theme-picker .theme-toggle-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  /* See green.css's identical rule for why outline is suppressed here
+     — the opacity jump on :hover/:focus below is this button's ONLY
+     focus indicator. */
+  outline: none;
+  opacity: 0.5;
+}
+.theme-picker .theme-toggle-btn:hover,
+.theme-picker .theme-toggle-btn:focus {
+  background: none;
+  opacity: 1;
+}
+/* Decoupled from the trigger's own (now icon-sized) width — see
+   green.css's identical rule for why. */
+.theme-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+  padding: 0.5rem;
+  white-space: nowrap;
+}
+.theme-menu[hidden] {
+  display: none;
+}
+.theme-menu button {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.2rem 0;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.theme-menu button:hover {
+  background: none;
+  color: var(--fg-bright);
+}
+.theme-menu-current::before {
+  content: "✓ ";
+}
+
+/* Print / "Export PDF" — identical across all three themes, deliberately:
+   a printed page should always come out readable on paper regardless of
+   which screen theme was active when the reader clicked print. See
+   green.css's own comment on why this whole block exists and why
+   `!important` is scoped to just the display:none list. */
+@media print {
+  #matrix-bg,
+  .sidebar,
+  .sidebar-resizer,
+  .quick-open-overlay,
+  .doc-actions,
+  .folder-actions,
+  .breadcrumbs {
+    display: none !important;
+  }
+
+  .layout {
+    display: block;
+    min-height: 0;
+  }
+
+  .content {
+    max-width: none;
+    padding: 0;
+  }
+
+  html,
+  body {
+    background: #fff;
+    color: #000;
+    font-family: Georgia, 'Times New Roman', serif;
+    min-height: 0;
+  }
+
+  h1,
+  h2,
+  h3 {
+    color: #000;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  a,
+  a:hover,
+  a:focus {
+    color: #000;
+    text-decoration: underline;
+  }
+
+  mark {
+    background: #ffff88;
+    color: #000;
+  }
+
+  pre,
+  code {
+    font-family: 'Courier New', monospace;
+    background: #f4f4f4;
+    color: #000;
+  }
+
+  pre {
+    border: 1px solid #ccc;
+    padding: 0.6rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  blockquote {
+    border-left: 3px solid #999;
+    margin: 0.6rem 0;
+    padding: 0.2rem 0.8rem;
+    color: #333;
+  }
+
+  img {
+    max-width: 100%;
+  }
+
+  table {
+    border-collapse: collapse;
+    width: 100%;
+  }
+  th,
+  td {
+    border: 1px solid #999;
+    padding: 0.3rem 0.5rem;
+  }
+}

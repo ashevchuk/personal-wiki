@@ -146,7 +146,7 @@ window.WikiPages = window.WikiPages || {};
       height: "500px",
       initialEditType: "wysiwyg",
       previewStyle: "tab",
-      // Matches the rest of the app's theme (see theme.css) instead of
+      // Matches the rest of the app's theme (see the active css/themes/*.css file) instead of
       // Toast UI's stock light UI — see the <link> for
       // toastui-editor-dark.css in shell.html.
       theme: "dark",

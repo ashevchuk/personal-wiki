@@ -1,5 +1,53 @@
-/* Edit-page-specific layout only — colors/fonts/sidebar come from the
-   shared theme.css, loaded before this file. */
+/* Edit-page-specific layout only — colors/fonts/sidebar come from
+   whichever theme file is currently active (see css/themes/), loaded
+   before this file. */
+
+/* Toast UI Editor dark-theme gaps, found by actually opening the editor
+   in a real browser and inspecting getComputedStyle live (not guessed
+   from reading the vendored CSS alone). Lives HERE, not in any of the
+   three site theme files: pages/edit.js hardcodes the editor's OWN
+   `theme: "dark"`, independent of which site theme is active, so this
+   fix applies identically no matter which theme file is currently
+   loaded — duplicating it three times over in css/themes/ would just be
+   the same fix copy-pasted for no reason.
+
+   1. Toolbar icons vanishing on hover. Vendored toastui-editor.css's
+      base rule ".toastui-editor-defaultUI button { color: #333; }"
+      applies to every toolbar button regardless of theme — fine for the
+      WYSIWYG toolbar, whose buttons are icon SPRITES (background-image)
+      where text color is irrelevant, but the Markdown-mode toolbar's
+      buttons render their glyph via this SAME `color` property, no
+      sprite involved. toastui-editor-dark.css recolors the editor's
+      root container (".toastui-editor-dark.toastui-editor-defaultUI
+      { color: #eee; }") but never overrides `button` specifically, so
+      the light theme's #333 wins by explicit-match-beats-inheritance —
+      and on :hover, dark.css's own
+      ".toastui-editor-toolbar-icons:hover { background-color: #36383f; }"
+      sits right next to that #333 text: two near-identical dark grays,
+      the icon glyph effectively invisible on its own hover background.
+
+   2. Markdown-mode body text. ".toastui-editor-md-container" (the
+      Markdown-mode ProseMirror root) carries its own light-theme
+      "color: #222" — confirmed present even with a ".toastui-editor-dark"
+      ancestor in the DOM, on a "#121212" background: #222-on-#121212 is
+      the same near-invisible pairing as (1), just for ordinary paragraph
+      text instead of toolbar icons. (Heading text and the dimmed "#"/
+      "**" syntax-marker delimiters were already fine on inspection —
+      #55575f-on-#121212 for delimiters is a deliberately muted but
+      legible design choice, left alone here.)
+
+   Fixed here (not in the vendored files — they're re-fetched/
+   checksummed, see tools/build-editor-bundle/) with enough specificity
+   (2 classes + descendant) to beat toastui-editor.css's 1-class-1-element
+   rule regardless of <link> order; #eee matches the color the dark
+   theme already uses everywhere else it DOES override text (its own
+   root container, popups, etc.) rather than introducing a third,
+   unrelated shade. */
+.toastui-editor-defaultUI.toastui-editor-dark button,
+.toastui-editor-dark .toastui-editor-md-container {
+  color: #eee;
+}
+
 .field-row {
   display: flex;
   gap: 1rem;

@@ -1,6 +1,6 @@
 // Drag-to-resize the sidebar via #sidebar-resizer (see shell.html) —
 // width lives in the --sidebar-w custom property on :root, which
-// .sidebar's own width/flex-basis (theme.css) read from. Persisted to
+// .sidebar's own width/flex-basis (each css/themes/*.css file) read from. Persisted to
 // localStorage purely as a per-browser convenience (remembers the last
 // width on this device); never sent anywhere, never trusted for
 // anything server-side.
@@ -10,7 +10,7 @@
   var STORAGE_KEY = "wiki.sidebarWidth";
   var MIN_WIDTH = 160;
   var MAX_WIDTH = 600;
-  var DEFAULT_WIDTH = 260; // matches theme.css's un-resized .sidebar width
+  var DEFAULT_WIDTH = 260; // matches each theme file's un-resized .sidebar width
 
   function clamp(w) {
     return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, w));
@@ -30,7 +30,7 @@
       var saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
       if (!isNaN(saved)) applyWidth(clamp(saved));
     } catch (e) {
-      // ignore — default width from theme.css applies as-is
+      // ignore — default width from the active theme file applies as-is
     }
   })();
 
@@ -66,8 +66,8 @@
     resizer.addEventListener("mousedown", function (evt) {
       dragging = true;
       // Suppresses text selection/cursor flicker across the rest of the
-      // page while dragging — see the .sidebar-resizing rule in
-      // theme.css.
+      // page while dragging — see the .sidebar-resizing rule in each
+      // css/themes/*.css file.
       document.body.classList.add("sidebar-resizing");
       evt.preventDefault();
     });

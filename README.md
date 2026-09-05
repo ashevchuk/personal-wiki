@@ -55,6 +55,10 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
   MCP client reach the same tools over HTTPS from anywhere. Read tools always on;
   write tools (`create_document`/`update_document`) are an explicit opt-in, every call
   audit-logged regardless of outcome.
+- **Three switchable visual themes** — green-on-black terminal, a plain neutral dark
+  UI, and a classic MediaWiki-style light theme — picked from a small icon in the
+  sidebar, remembered per browser. Each is a fully independent CSS file, not a shared
+  palette with variables swapped underneath.
 - **Built for a Raspberry Pi.** One static, cross-compiled binary — verified running
   natively on real armv7 hardware, not just in theory.
 

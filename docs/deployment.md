@@ -239,6 +239,80 @@ sudo cmake --install build --prefix /opt/wiki
 sudo systemctl restart wiki.service
 ```
 
+## Static-assets-only redeploy (frontend change, no rebuild needed)
+
+When the only thing that changed is under `static/` (CSS, JS, `shell.html`) — no
+`src/` touched, nothing to recompile or cross-compile — the full "Update" flow above is
+overkill. From a dev machine that isn't the target itself (the normal case for this
+project: cross-compiled ARM binaries built on x86_64, see "Cross-compilation" below),
+push just the `static/` tree over SSH instead:
+
+```sh
+# 1. tar the WHOLE static/ tree, not just the files you believe changed —
+#    see the warning below for why "just scp the changed ones" is a real,
+#    previously-shipped bug and not paranoia.
+tar -czf static-deploy.tar.gz -C static .
+scp static-deploy.tar.gz root@<target>:/tmp/static-deploy.tar.gz
+
+# 2. on the target: extract to a STAGING directory first, never straight
+#    over the live one — a tar that dies mid-extract must not leave a
+#    half-written static/ tree where the running server can see it.
+ssh root@<target> '
+  set -e
+  rm -rf /tmp/static-new && mkdir -p /tmp/static-new
+  tar -xzf /tmp/static-deploy.tar.gz -C /tmp/static-new
+  chown -R wiki:wiki /tmp/static-new
+  cd /opt/wiki
+  rm -rf static.old
+  mv static static.old && mv /tmp/static-new static
+  systemctl restart wiki.service
+  rm -rf static.old /tmp/static-deploy.tar.gz
+'
+```
+
+**Never selectively `scp` "the files I changed"** — this is exactly how
+`nav.js`/`common.js`/`theme.css` went stale on this project's own production instance
+for a stretch: a prior deploy shipped the files someone was CONFIDENT had changed,
+missed one that also had, and nothing about the running site looked broken (no error,
+no missing feature that anyone had reason to go check) until a later session went
+looking for something that "should" already have been live. Tar and swap the entire
+directory, every time — the cost difference at this project's size is a couple of
+seconds, and it makes "did I actually ship everything" not a question you have to get
+right by memory.
+
+**A restart is mandatory, not optional, even though it's "just static files."**
+Most of `static/` is served fresh from disk on every request (Drogon's own static-file
+handler), so in principle those would pick up the moment the swap lands. `shell.html`
+is the one exception: `PageRoutes.cpp` reads it ONCE at process startup and caches the
+built HTML in memory (`buildShellHtml`/`g_shellHtml`) — swapping the file on disk
+without restarting the process means every request keeps getting the OLD cached
+`shell.html` indefinitely, silently. If `shell.html` is part of the change, skipping
+the restart step doesn't fail loudly; it just serves stale HTML forever.
+
+**Verify by md5-summing every single file after, not the ones you think changed:**
+
+```sh
+find static -type f -exec md5sum {} \; | sed 's|static/||' | sort > /tmp/local.md5
+ssh root@<target> 'cd /opt/wiki/static && find . -type f -exec md5sum {} \;' \
+  | sed 's|  \./|  |' | sort > /tmp/remote.md5
+diff /tmp/local.md5 /tmp/remote.md5 && echo "identical" || echo "MISMATCH"
+```
+
+A diff here that shows every path with only a `./` prefix difference (not a real hash
+mismatch) means the `sed` pattern anchored wrong (`^\./` matches the START of the
+line — where `md5sum`'s own hash column sits, not the path — so it silently matches
+nothing); `s|  \./|  |` targets the two-space separator `md5sum` actually emits instead.
+
+**When testing a redeploy against a local throwaway instance first**, kill the OLD
+process by an exact, verified PID (`ps aux | grep wiki-server`, then `kill -9 <pid>`),
+not by `pkill -f wiki-server` and trusting its exit code alone — a stale process that
+survives the kill will make the NEXT `wiki-server` launch fail to bind and exit
+immediately (check its log for `FATAL Address already in use`), while the surviving old
+process keeps confidently serving whatever it had cached, including a `shell.html` from
+before the change being tested. This produced a real, hours-long false lead in this
+project once: a CSS change looked like it was being ignored due to some specificity
+issue, when the actual cause was a dead test server nobody had verified was dead.
+
 ## Cross-compilation (armv7, musl, static) — for an old/weak target
 
 When a native build on the device itself is impractical (an old distro with no modern

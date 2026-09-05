@@ -482,6 +482,77 @@ already had, and already had a fix for.
   `localStorage`, confirmed live (expand `lang/`, filter for something else, clear the
   filter, `lang/` is still the only one open).
 
+### Visual theme picker (classic / dark / green)
+
+The single hardcoded green-on-black terminal look (`theme.css`) became three
+swappable, independent stylesheets, picked from a small icon in the sidebar.
+
+- **Three fully self-sufficient CSS files, not one file plus shared `:root`
+  overrides.** `theme.css` was renamed to `css/themes/green.css` more or less
+  unchanged; `dark.css` (a plain neutral dark UI) and `classic.css` (white
+  background, MediaWiki-style blue links, serif headings) are new files that
+  duplicate green.css's full selector list with different values, rather than
+  factoring colors out into a shared base stylesheet. Deliberate: this project
+  has no build step and no CSS preprocessor, so "shared base + three small
+  diffs" would mean understanding two files to know what a given selector
+  actually renders as; three complete files mean a fourth theme later is
+  "write one new file," never "figure out which of several files a rule
+  lives in." The genuinely theme-SPECIFIC pieces (green's Orbitron import,
+  neon glow via `text-shadow`, shouting-caps buttons; the `#matrix-bg`
+  digital-rain canvas) simply don't exist in `dark.css`/`classic.css` at all,
+  rather than being toggled off by a variable.
+- **Applied via a synchronously-injected `<link>`, not a static one with a
+  later `href` swap.** `shell.html`'s bootstrap script (the very first thing
+  in `<head>`, run before the base_path-inference script even finishes)
+  reads `localStorage['wiki.theme']`, sets `<html data-theme="...">`, and
+  `document.head.appendChild()`s a fresh `<link id="theme-link" href="css/
+  themes/<theme>.css">` right there. A static `<link href="css/themes/
+  green.css">` retargeted afterward by a second script would start fetching
+  (and briefly render under) the wrong theme first — this app already does a
+  full page reload on every single navigation (see `router.js`'s own
+  no-History-API rationale), so that flash would happen on EVERY page view,
+  not just first load.
+- **`matrix.js` reacts to computed visibility, not a theme name.** Rather
+  than teaching the canvas script about three theme names (two of which
+  don't want it at all), `dark.css`/`classic.css` each just set
+  `#matrix-bg { display: none; }`, and `matrix.js` bails out via
+  `getComputedStyle(canvas).display === "none"` — the exact same guard shape
+  it already used for `prefers-reduced-motion`. No JS-side coordination
+  between the theme files and the canvas script is needed at all.
+- **Theme changes reload the page rather than live-swapping anything.**
+  `theme.js` writes the choice to `localStorage` and calls `location.reload()`
+  — consistent with this app's existing full-reload-per-navigation
+  architecture, and it sidesteps having to tear down/reinit `matrix.js`'s
+  running `setInterval` or reconcile any other page state that assumed one
+  theme was active.
+- **Toast UI Editor's own dark-mode CSS gap-fix moved to `edit.css`, out of
+  the theme files entirely.** `pages/edit.js` hardcodes the editor's own
+  `theme: "dark"` regardless of which SITE theme is active, so that fix
+  applies identically no matter what — it used to live in (the file now
+  called) `green.css` purely because that was the only theme file that
+  existed yet; duplicating it into `dark.css`/`classic.css` too would have
+  been the same fix copy-pasted for no reason.
+- **A real, shipped bug, not a hypothetical one: the toggle button was
+  missing its own `class` attribute.** `shell.html`'s button had
+  `id="theme-toggle-btn"` (needed by `theme.js`'s `getElementById`) but never
+  `class="theme-toggle-btn"` — the class every CSS override in every
+  `css/themes/*.css` file actually targeted. Across two separate rounds of
+  "make this icon less visible" edits, none of that CSS ever matched
+  anything; the button rendered off whatever the generic `button`/
+  `.sidebar-links button` fallback rules produced, which is why removing its
+  border/background/padding visibly changed nothing. A second, unrelated bug
+  compounded the confusion while chasing the first: a local test
+  `wiki-server` survived a `pkill -f wiki-server` (the compound shell call's
+  exit code looked like a successful kill; it had matched something else),
+  so the next attempt to relaunch it failed immediately with a silent
+  `FATAL Address already in use`, and the OLD process kept serving the
+  stale, pre-fix `shell.html` the whole time — turning a missing HTML
+  attribute into what looked, for a while, like an unsolvable CSS
+  specificity puzzle. Root-caused only by checking `getComputedStyle()` /
+  `element.matches(':hover')` in a real, live browser instead of trusting a
+  screenshot's appearance, and separately by `ps aux` instead of trusting
+  `pkill`'s own exit code.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
