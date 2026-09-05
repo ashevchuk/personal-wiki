@@ -5,11 +5,16 @@
 /* Toast UI Editor dark-theme gaps, found by actually opening the editor
    in a real browser and inspecting getComputedStyle live (not guessed
    from reading the vendored CSS alone). Lives HERE, not in any of the
-   three site theme files: pages/edit.js hardcodes the editor's OWN
-   `theme: "dark"`, independent of which site theme is active, so this
-   fix applies identically no matter which theme file is currently
-   loaded — duplicating it three times over in css/themes/ would just be
-   the same fix copy-pasted for no reason.
+   three site theme files, because it's about the EDITOR's OWN `theme`
+   option (pages/edit.js), not the site theme directly — green/dark site
+   themes pick the editor's dark theme, classic picks the editor's light
+   one (see pages/edit.js's own comment on why), and this fix only ever
+   matters for the dark case: its selectors are scoped under
+   `.toastui-editor-dark`, a class the library only adds when its OWN
+   theme option is "dark", so the rule below is simply inert (matches
+   nothing) whenever the editor is in its light mode. Keeping it here
+   rather than duplicating it into green.css/dark.css avoids two copies
+   of the same fix for what's really one condition, not three.
 
    1. Toolbar icons vanishing on hover. Vendored toastui-editor.css's
       base rule ".toastui-editor-defaultUI button { color: #333; }"
@@ -89,7 +94,8 @@
 /* ![youtube](url) thumbnail shown inside Toast UI Editor's WYSIWYG
    canvas / markdown-preview tab only -- see youtube-embed-preview.js.
    Never appears on a saved document's real view (that's a genuine
-   <iframe> by then, styled by .youtube-embed in theme.css). A single
+   <iframe> by then, styled by .youtube-embed in the active theme file).
+   A single
    plain <img> -- deliberately not a wrapper + overlay badge, see that
    file's own comment on why ProseMirror's WYSIWYG canvas can't render
    one; `alt`/`title` carry the "plays after saving" explanation instead.

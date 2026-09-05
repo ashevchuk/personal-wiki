@@ -141,15 +141,30 @@ window.WikiPages = window.WikiPages || {};
       });
     }
 
+    // Toast UI's own `theme` option ("light"/"dark") is separate from and
+    // NOT auto-derived from this app's own CSS — shell.html unconditionally
+    // loads both toastui-editor.css and toastui-editor-dark.css (the option
+    // just toggles a `.toastui-editor-dark` class the library adds itself),
+    // so nothing stops picking either one per site theme. This used to be
+    // hardcoded to "dark" — harmless back when the only site theme WAS a
+    // dark one (green.css), genuinely wrong once classic.css (a light
+    // theme) existed: a solid black editor panel sitting in the middle of
+    // an otherwise white page. `<html data-theme="...">` is set
+    // synchronously by shell.html's own bootstrap script before this file
+    // ever runs, so it's already there to read — green/dark both want the
+    // editor's dark theme (both have dark page backgrounds), only classic
+    // wants Toast UI's own light one ("light" is the library's actual
+    // documented/default value, confirmed in the vendored
+    // toastui-editor.min.js itself — not "default").
+    var siteTheme = document.documentElement.getAttribute("data-theme");
+    var editorTheme = siteTheme === "classic" ? "light" : "dark";
+
     var editor = new toastui.Editor({
       el: document.getElementById("editor"),
       height: "500px",
       initialEditType: "wysiwyg",
       previewStyle: "tab",
-      // Matches the rest of the app's theme (see the active css/themes/*.css file) instead of
-      // Toast UI's stock light UI — see the <link> for
-      // toastui-editor-dark.css in shell.html.
-      theme: "dark",
+      theme: editorTheme,
       initialValue: data.body || "",
       // Fires on paste/drag-drop of an image straight into the editor.
       // Toast UI's default with no hook is to inline the image as a
