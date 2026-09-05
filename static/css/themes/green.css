@@ -765,6 +765,19 @@ a.btn:focus {
   text-shadow: none;
   opacity: 1;
 }
+/* Sized/aligned relative to the surrounding row text (em units, not a
+   fixed px) so it scales the same way the text around it would; the
+   negative vertical-align nudges it down from the default text-baseline
+   alignment (an SVG's own baseline sits at its bottom edge) to roughly
+   center it against the row's lowercase letters, checked by eye against
+   a real render rather than computed. No color here at all — the icon
+   is `stroke/fill="currentColor"` in the markup, so it already renders
+   in whatever color .sidebar-links button resolves to per theme. */
+.theme-icon {
+  width: 0.95em;
+  height: 0.95em;
+  vertical-align: -0.15em;
+}
 /* Decoupled from the trigger's own (now icon-sized) width — "Classic"/
    "Dark"/"Green" need real room regardless of how small the button that
    opens them is. */

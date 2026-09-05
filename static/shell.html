@@ -202,7 +202,25 @@
          Search/Browse/Log out it's just one more small icon in the
          existing row, nothing declaring "I am a button" about it. -->
     <span class="theme-picker">
-      <button type="button" id="theme-toggle-btn" class="theme-toggle-btn" aria-haspopup="true" aria-expanded="false" aria-label="Theme" title="Theme">🎨</button>
+      <!-- Inline SVG, not the 🎨 emoji this used to be — an emoji glyph
+           renders in its own fixed, full-color artwork regardless of site
+           theme (a colorful palette icon sitting in an otherwise
+           monochrome green/gray/black-and-white row), and no CSS
+           property can recolor it. `fill="currentColor"` on plain paths
+           means this icon has NO color of its own at all — it inherits
+           whatever `color` the button already resolves to per theme (see
+           .sidebar-links button in each css/themes/*.css file), the same
+           way the surrounding text does, and the button's own opacity
+           fade (rest/hover) still applies to it exactly as it did to the
+           emoji. -->
+      <button type="button" id="theme-toggle-btn" class="theme-toggle-btn" aria-haspopup="true" aria-expanded="false" aria-label="Theme" title="Theme">
+        <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.4-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8H17a3 3 0 0 0 3-3c0-5.5-3.6-10-8-10Z"/>
+          <circle cx="7.5" cy="10.5" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="10.5" cy="7" r="1.2" fill="currentColor" stroke="none"/>
+          <circle cx="15" cy="7.5" r="1.2" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
       <div class="theme-menu" id="theme-menu" hidden>
         <button type="button" data-theme="classic">Classic</button>
         <button type="button" data-theme="dark">Dark</button>
