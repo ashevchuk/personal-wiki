@@ -190,13 +190,11 @@ body.sidebar-resizing {
   padding-left: 0.6rem;
   font-size: 0.85rem;
 }
-/* Caps the tag box's own height so a vault with hundreds of tags doesn't
-   push everything below it an arbitrary distance down — see green.css's
-   identical rule for the full rationale, unchanged here. */
-.nav-tags-list > ul {
-  max-height: 220px;
-  overflow-y: auto;
-}
+/* Used to cap the tag box's own height (a nested scrollbar inside
+   .sidebar's own) — removed now that .sidebar-scroll gives the whole
+   Documents+Tags block a real outer scroll of its own, making a second
+   nested one redundant. See green.css's identical removal for the full
+   rationale. */
 .nav-tags-filter {
   width: 100%;
   box-sizing: border-box;

@@ -228,21 +228,19 @@ body.sidebar-resizing {
   padding-left: 0.6rem;
   font-size: 0.85rem;
 }
-/* A vault that's accumulated a few hundred tags would otherwise render
-   one giant list here, pushing everything below it (originally the
-   Documents section; now nothing, Tags moved last — see shell.html) an
-   arbitrary distance down and making the WHOLE sidebar one long scroll
-   to reach it. Capping just this box's own height keeps that overflow
-   local: the tag list becomes its own small scroll pocket instead of
-   dominating the sidebar. Not a hard limit on tag count anywhere —
-   nav.js still fetches and groups every one of them (namespaced tags
-   collapse into a tree, see buildTags's own comment) and the filter
-   input above this box narrows a long list further; this is purely
-   about the box never growing past a fixed height on screen. */
-.nav-tags-list > ul {
-  max-height: 220px;
-  overflow-y: auto;
-}
+/* Used to cap this box at 220px with its own overflow-y:auto — a
+   nested scrollbar-inside-a-scrollbar, back when .sidebar itself had no
+   real scroll boundary of its own (min-height:100vh never actually
+   capped anything, so this was the ONLY thing keeping a huge tag list
+   from pushing everything else an arbitrary distance down). Removed now
+   that .sidebar-scroll (see shell.html/its own rule above) gives the
+   whole Documents+Tags block a real, working outer scroll — a second,
+   separately-scrolling box nested inside it was redundant clutter once
+   that existed, not a second problem still needing its own fix. Not a
+   hard limit on tag count anywhere regardless — nav.js still fetches
+   and groups every one of them (namespaced tags collapse into a tree,
+   see buildTags's own comment) and the filter input above this box
+   narrows a long list further. */
 .nav-tags-filter {
   width: 100%;
   box-sizing: border-box;
