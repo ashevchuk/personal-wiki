@@ -21,6 +21,18 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
 | ![Search](docs/screenshots/search.png) **Full-text search** — FTS5 with prefix matching, `bm25()` ranking, tag/type filters | ![Editor](docs/screenshots/editor.png) **WYSIWYG editor** — Toast UI Editor, undo/redo, syntax-highlighted code blocks |
 | ![Browse](docs/screenshots/browse.png) **Folder browser** — every document and folder, one click away | ![Account page](docs/screenshots/account-mcp.png) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
 
+### Themes
+
+Pick from a small 🎨 icon in the sidebar — the choice sticks per browser via
+`localStorage`, no server round-trip. Each theme is a complete, independent
+stylesheet (`static/css/themes/*.css`), not one palette with variables swapped
+underneath, so a fourth theme later is just a new file, not a refactor.
+
+| Green (default) | Dark | Classic |
+|---|---|---|
+| ![Green theme](docs/screenshots/theme-green.png) | ![Dark theme](docs/screenshots/theme-dark.png) | ![Classic theme](docs/screenshots/theme-classic.png) |
+| glowing terminal look, digital-rain canvas background | plain neutral dark UI, no glow, no caps | white background, MediaWiki-style blue links, serif headings |
+
 ## Features
 
 - **Markdown on disk is the only source of truth.** Every document is a plain `.md`
