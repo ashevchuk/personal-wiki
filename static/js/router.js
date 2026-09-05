@@ -29,7 +29,16 @@
     var newDocBtn = document.getElementById("sidebar-new-doc");
     var accountLink = document.getElementById("sidebar-account");
     var logoutBtn = document.getElementById("sidebar-logout");
-    if (!session.authenticated) return;
+    var loginLink = document.getElementById("sidebar-login");
+
+    if (!session.authenticated) {
+      // The inverse of every other branch below: this is the ONLY sidebar
+      // chrome element meant for an ANONYMOUS visitor, so it's the one
+      // link revealed on the early-return path rather than the
+      // authenticated one.
+      if (loginLink) loginLink.hidden = false;
+      return;
+    }
 
     if (accountLink) accountLink.hidden = false;
 

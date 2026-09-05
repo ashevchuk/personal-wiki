@@ -183,6 +183,15 @@
     <button type="button" id="sidebar-new-doc" hidden>+ New</button>
     <a id="sidebar-account" data-href="/account" href="#" hidden>Admin</a>
     <button type="button" id="sidebar-logout" hidden>Log out</button>
+    <!-- The counterpart nobody added: every OTHER auth-state link/button in
+         this row (+ New, Admin, Log out) is hidden by default and revealed
+         by router.js once session.authenticated is confirmed true — but
+         nothing showed the opposite case. An anonymous visitor had no
+         visible path to /login at all, not even a hidden one waiting to be
+         un-hidden; the only way in was typing the URL from memory. Same
+         hidden-by-default convention as its siblings, just inverted:
+         router.js reveals THIS one when session.authenticated is false. -->
+    <a id="sidebar-login" data-href="/login" href="#" hidden>Log in</a>
     <!-- theme.js wires this up: toggles .theme-menu's `hidden` property,
          persists the choice to localStorage, and reloads the page (the
          synchronous <script> up in <head> is what actually APPLIES a
