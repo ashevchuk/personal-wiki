@@ -773,7 +773,7 @@ a.btn:focus {
    a real render rather than computed. No color here at all — the icon
    is `stroke/fill="currentColor"` in the markup, so it already renders
    in whatever color .sidebar-links button resolves to per theme. */
-.theme-icon {
+.nav-icon {
   width: 0.95em;
   height: 0.95em;
   vertical-align: -0.15em;

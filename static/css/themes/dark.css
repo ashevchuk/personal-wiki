@@ -627,7 +627,7 @@ a.btn:focus {
 /* Sized/aligned to the row's own text, no color set — see green.css's
    identical rule for the full rationale (the icon is
    stroke/fill="currentColor" in the markup itself). */
-.theme-icon {
+.nav-icon {
   width: 0.95em;
   height: 0.95em;
   vertical-align: -0.15em;

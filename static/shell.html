@@ -181,8 +181,26 @@
     <a data-href="/search" href="#">Search</a>
     <a data-href="/folder" href="#">Browse</a>
     <button type="button" id="sidebar-new-doc" hidden>+ New</button>
-    <a id="sidebar-account" data-href="/account" href="#" hidden>Admin</a>
-    <button type="button" id="sidebar-logout" hidden>Log out</button>
+    <!-- Admin/Log out/Log in are icon-only (aria-label/title carry the
+         name text lost from view — a bare glyph means nothing to a
+         screen reader on its own, and a sighted visitor gets the same
+         answer from the browser's native title tooltip on hover). Same
+         currentColor-SVG treatment as the theme picker's icon just above
+         in this file: no color of its own, inherits whatever the row's
+         link/button color already resolves to per theme. -->
+    <a id="sidebar-account" data-href="/account" href="#" hidden aria-label="Admin" title="Admin">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3.2"/>
+        <path d="M12 2v3M12 19v3M22 12h-3M5 12H2M19.07 4.93l-2.12 2.12M7.05 16.95l-2.12 2.12M19.07 19.07l-2.12-2.12M7.05 7.05 4.93 4.93"/>
+      </svg>
+    </a>
+    <button type="button" id="sidebar-logout" hidden aria-label="Log out" title="Log out">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <path d="M16 17l5-5-5-5"/>
+        <path d="M21 12H9"/>
+      </svg>
+    </button>
     <!-- The counterpart nobody added: every OTHER auth-state link/button in
          this row (+ New, Admin, Log out) is hidden by default and revealed
          by router.js once session.authenticated is confirmed true — but
@@ -191,7 +209,13 @@
          un-hidden; the only way in was typing the URL from memory. Same
          hidden-by-default convention as its siblings, just inverted:
          router.js reveals THIS one when session.authenticated is false. -->
-    <a id="sidebar-login" data-href="/login" href="#" hidden>Log in</a>
+    <a id="sidebar-login" data-href="/login" href="#" hidden aria-label="Log in" title="Log in">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
+        <path d="M10 17l5-5-5-5"/>
+        <path d="M15 12H3"/>
+      </svg>
+    </a>
     <!-- theme.js wires this up: toggles .theme-menu's `hidden` property,
          persists the choice to localStorage, and reloads the page (the
          synchronous <script> up in <head> is what actually APPLIES a
@@ -214,7 +238,7 @@
            fade (rest/hover) still applies to it exactly as it did to the
            emoji. -->
       <button type="button" id="theme-toggle-btn" class="theme-toggle-btn" aria-haspopup="true" aria-expanded="false" aria-label="Theme" title="Theme">
-        <svg class="theme-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.4-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8H17a3 3 0 0 0 3-3c0-5.5-3.6-10-8-10Z"/>
           <circle cx="7.5" cy="10.5" r="1.2" fill="currentColor" stroke="none"/>
           <circle cx="10.5" cy="7" r="1.2" fill="currentColor" stroke="none"/>
