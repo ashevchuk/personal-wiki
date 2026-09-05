@@ -89,7 +89,16 @@ h3 {
      ever changes. */
   width: var(--sidebar-w, 260px);
   flex: 0 0 var(--sidebar-w, 260px);
-  min-height: 100vh;
+  /* Sticky, not just min-height:100vh — see green.css's identical rule
+     for the full rationale (a real, user-reported bug: on a document
+     longer than one screen, the sidebar's own box ended at one
+     viewport, leaving blank space where nav/search/tags used to be for
+     the rest of the scroll). Reset to static flow in the narrow/stacked
+     breakpoint below. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
   padding: 1rem;
   border-right: 1px solid var(--border);
   background: var(--panel-bg);
@@ -102,8 +111,12 @@ h3 {
    hairline border it visually sits on without the border itself having
    to grow. */
 .sidebar-resizer {
+  /* Sticky + height:100vh, matching .sidebar exactly — see green.css's
+     identical rule for why. */
   flex: 0 0 6px;
-  align-self: stretch;
+  position: sticky;
+  top: 0;
+  height: 100vh;
   margin-left: -6px; /* overlaps the sidebar's own border-right, doesn't add extra width to .layout */
   cursor: col-resize;
   background: transparent;
@@ -539,9 +552,12 @@ a.btn:focus {
     flex-direction: column;
   }
   .sidebar {
+    /* Undoes the desktop sticky/height:100vh rule above — see green.css's
+       identical override for why. */
+    position: static;
     width: 100%;
     flex-basis: auto;
-    min-height: 0;
+    height: auto;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }

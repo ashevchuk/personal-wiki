@@ -91,7 +91,29 @@ h3 {
      ever changes. */
   width: var(--sidebar-w, 260px);
   flex: 0 0 var(--sidebar-w, 260px);
-  min-height: 100vh;
+  /* Sticky, not just min-height:100vh — a real, user-reported bug on a
+     long document: .layout is "align-items: flex-start", so its row
+     height matches the TALLEST child (.content, for anything longer
+     than one screen), but .sidebar itself was never stretched to fill
+     that height, only guaranteed a MINIMUM of one viewport. Past the
+     first screenful, the sidebar's own box had simply already ended —
+     scrolling further showed blank space where nav/search/tags used to
+     be, not a crash, just gone. `position: sticky` pins it to the
+     viewport as the page scrolls instead; `height: 100vh` (not
+     min-height) caps its OWN box at one screen so `overflow-y: auto`
+     actually engages for a tag list that's itself taller than that,
+     rather than the sidebar silently growing past the viewport it's
+     supposed to stick within. `align-self: flex-start` is the parent's
+     own default already, stated explicitly here because sticky
+     positioning depends on the element NOT being stretched by the flex
+     container for its offsets to mean what they say. Reset back to
+     normal static flow in the narrow/stacked breakpoint below — sticky
+     there would mean the sidebar catches and overlays the document
+     while scrolling a phone-width column, which is worse, not better. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
   padding: 1rem;
   border-right: 1px solid var(--border);
   background: var(--panel-bg);
@@ -102,18 +124,16 @@ h3 {
    deliberately a separate flex sibling rather than a border/pseudo-
    element ON .sidebar, so its hit area (6px) can be wider than the
    hairline border it visually sits on without the border itself having
-   to grow. */
+   to grow. Sticky + height:100vh, matching .sidebar exactly — with the
+   sidebar itself now pinned to one viewport-tall box (see its own
+   comment above), a resizer still sized to the OLD full-row height (the
+   tall .content column) would dangle far below the sidebar's actual
+   visible bottom edge instead of tracking it. */
 .sidebar-resizer {
   flex: 0 0 6px;
-  /* .layout uses "align-items: flex-start" — flex items size to their
-     OWN content height under that, not the row's height, and this is an
-     empty <div> with none. Confirmed live: without this, the resizer's
-     real getBoundingClientRect() height was exactly 0, making it
-     physically unclickable outside its single top pixel. align-self:
-     stretch opts just this one item back into filling the row's full
-     height, same as .sidebar/.content already do implicitly via their
-     own explicit min-height:100vh. */
-  align-self: stretch;
+  position: sticky;
+  top: 0;
+  height: 100vh;
   margin-left: -6px; /* overlaps the sidebar's own border-right, doesn't add extra width to .layout */
   cursor: col-resize;
   background: transparent;
@@ -608,9 +628,14 @@ a.btn:focus {
     flex-direction: column;
   }
   .sidebar {
+    /* Undoes the desktop sticky/height:100vh rule above — stacked layout
+       has the document BELOW the sidebar, not beside it, and a sticky
+       sidebar there would catch on scroll and sit pinned over the
+       content instead of scrolling normally out of the way. */
+    position: static;
     width: 100%;
     flex-basis: auto;
-    min-height: 0;
+    height: auto;
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
