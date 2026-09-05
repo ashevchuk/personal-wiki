@@ -526,12 +526,52 @@ swappable, independent stylesheets, picked from a small icon in the sidebar.
   running `setInterval` or reconcile any other page state that assumed one
   theme was active.
 - **Toast UI Editor's own dark-mode CSS gap-fix moved to `edit.css`, out of
-  the theme files entirely.** `pages/edit.js` hardcodes the editor's own
-  `theme: "dark"` regardless of which SITE theme is active, so that fix
-  applies identically no matter what — it used to live in (the file now
-  called) `green.css` purely because that was the only theme file that
-  existed yet; duplicating it into `dark.css`/`classic.css` too would have
-  been the same fix copy-pasted for no reason.
+  the theme files entirely.** At the time this fix was written, `pages/
+  edit.js` hardcoded the editor's own `theme: "dark"` regardless of which
+  SITE theme was active, so it applied identically no matter what — this
+  was later corrected (see the "Editor theme follows the site theme"
+  entry below) to actually vary per site theme, but the fix's own CSS
+  selectors were already scoped under `.toastui-editor-dark`, so they stay
+  correctly inert whenever the editor picks its light mode; only the
+  comment explaining WHY the fix lives in `edit.css` needed updating once
+  the hardcoding it originally described stopped being true. It used to
+  live in (the file now called) `green.css` purely because that was the
+  only theme file that existed yet; duplicating it into `dark.css`/
+  `classic.css` too would have been the same fix copy-pasted for no
+  reason.
+
+### Editor theme follows the site theme
+
+Found live, right after shipping the theme picker above: switching to `classic`
+(a light theme) left the Toast UI Editor rendering as a solid black WYSIWYG
+panel in the middle of an otherwise white page — `pages/edit.js` had hardcoded
+the editor's own `theme` option to `"dark"`, harmless while green.css (also
+dark) was the only site theme, wrong the moment a light one existed.
+
+- **Reads `<html data-theme="...">` at editor-construction time**, set
+  synchronously by `shell.html`'s own bootstrap script before `pages/edit.js`
+  ever runs — no new plumbing needed, the signal already existed for exactly
+  this kind of theme-aware decision. `classic` → Toast UI's own `"light"`
+  theme; `green`/`dark` → `"dark"` (both have dark page backgrounds).
+- **`"light"`, not `"default"`** — confirmed by grepping the vendored
+  `toastui-editor.min.js` itself for its own built-in default value, rather
+  than guessing from the "dark" counterpart's name. Passing an unsupported
+  string would likely have been harmless in practice (it only ever changes
+  a `toastui-editor-<value>` class name, and no CSS targets a `-default`
+  variant), but there was no reason to rely on that rather than the value
+  the library actually documents.
+- **No live re-theming while the editor is open** — a theme change already
+  triggers a full page reload (`theme.js`), same as every other navigation
+  in this app, so the editor is always freshly constructed with the
+  now-current theme rather than needing to react to a change mid-session.
+- Verified live against the real production instance via an already-
+  authenticated admin session (no credentials entered by the assistant at
+  any point — see this session's own back-and-forth on why that boundary
+  holds even for a disposable local test account): `classic` now shows
+  the light editor, `green` still shows the dark one with the existing
+  `#eee` text-contrast fix intact. The `editor.png` README screenshot had
+  been captured BEFORE this fix and was unintentionally documenting the
+  bug itself; replaced.
 - **A real, shipped bug, not a hypothetical one: the toggle button was
   missing its own `class` attribute.** `shell.html`'s button had
   `id="theme-toggle-btn"` (needed by `theme.js`'s `getElementById`) but never
