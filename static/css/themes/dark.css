@@ -165,7 +165,17 @@ body.sidebar-resizing {
   background: none;
   border: none;
   padding: 0;
-  color: var(--fg);
+  /* var(--link), not var(--fg) — a real, user-reported color mismatch:
+     Search/Browse/Admin/Log in are <a> elements (color:var(--link),
+     the blue accent), but +New/Log out are <button>s that had been
+     given var(--fg) (plain light gray) instead — two different colors
+     in what reads as one uniform row of nav actions. Invisible in
+     green.css only because --fg and --link happen to be the identical
+     value there; classic.css already made this exact match
+     deliberately. Hover stays var(--fg-bright) below, unchanged — that
+     already matches a:hover's own white-on-hover transition, so only
+     the resting color needed fixing. */
+  color: var(--link);
   font: inherit;
   text-transform: none;
   letter-spacing: normal;
