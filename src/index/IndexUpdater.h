@@ -3,6 +3,7 @@
 #include "index/Database.h"
 
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -63,6 +64,28 @@ class IndexUpdater {
 
  private:
   Database& db_;
+
+  // Guards upsertOne/removeOne's BEGIN IMMEDIATE...COMMIT/ROLLBACK
+  // sequence. `db_` is a single sqlite3* connection shared by reference
+  // across every Drogon request-handling thread (see main.cpp — the SAME
+  // reasoning that already gave VaultWatcher its own separate connection,
+  // documented right there: "two threads racing a BEGIN on the SAME
+  // connection handle is a 'cannot start a transaction within a
+  // transaction' error, not a safely-serialized one"). SQLite's own
+  // serialized threading mode makes each INDIVIDUAL C API call thread-
+  // safe, but does NOT make a multi-statement application-level
+  // transaction atomic against another thread's calls interleaving on
+  // that same connection between BEGIN and COMMIT — confirmed live by
+  // tests/integration/stress_concurrency.py's same-document-path check,
+  // which reproduced exactly this as a real 500
+  // ({"error":"statement failed: not an error"} — SQLite's error text at
+  // the point our code reads it, already stomped by another thread's
+  // subsequent call on the shared connection) under concurrent writes,
+  // not a hypothetical. read-only queries (allIndexedPaths,
+  // rowIdForPath, findPathByUuid) stay unguarded: each is a single
+  // prepare/step/destroy, not a multi-statement transaction, so there's
+  // no BEGIN/COMMIT window for another thread to land inside.
+  std::mutex mutex_;
 };
 
 }  // namespace wikicore::index

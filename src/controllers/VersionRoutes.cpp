@@ -2,9 +2,11 @@
 
 #include "auth/RequireAdmin.h"
 #include "vault/FrontMatter.h"
+#include "vault/PathGuard.h"
 
 #include <drogon/HttpResponse.h>
 
+#include <filesystem>
 #include <optional>
 
 using namespace drogon;
@@ -155,6 +157,19 @@ void registerVersionRoutes(HttpAppFramework& app, IndexUpdater& indexUpdater,
           callback(HttpResponse::newHttpJsonResponse(body));
         } catch (const DocumentNotFoundError&) {
           callback(jsonError(k404NotFound, "document not found"));
+        } catch (const PathTraversalError&) {
+          // Same reasoning as DocumentRoutes.cpp's PUT /api/documents
+          // handler this proxies into via documentService.update() --
+          // this route was missing the catch entirely, which meant a
+          // PathTraversalError fell through to the generic catch below
+          // and came back as a 500 instead of the 400 every OTHER
+          // mutating route gives for the same condition.
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          // Same reasoning as DocumentRoutes.cpp -- an absolute vault
+          // path must never reach the client via e.what() on the
+          // generic catch below.
+          callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const std::exception& e) {
           callback(jsonError(k500InternalServerError, e.what()));
         }

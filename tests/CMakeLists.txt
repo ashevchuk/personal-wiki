@@ -51,4 +51,27 @@ if(TARGET wiki-server)
             $<TARGET_FILE:wiki-server>
   )
   set_tests_properties(security_e2e PROPERTIES TIMEOUT 60)
+
+  # Stress tests: concurrency races and resource-exhaustion behavior, NOT
+  # logical correctness (that's security_e2e.py above) — see
+  # tests/integration/_stress_common.py's module docstring. Slower and
+  # partly informational (some of what they print is a measured, accepted
+  # gap rather than a hard failure), so they carry a "stress" LABEL and
+  # are excluded from the label-filtered default sweep a CI job would
+  # normally run (`ctest -LE stress` for the fast path; plain `ctest` or
+  # `ctest -L stress` to include them). Same wiki-server dependency gate
+  # as security_e2e.py.
+  add_test(
+    NAME stress_concurrency
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/stress_concurrency.py
+            $<TARGET_FILE:wiki-server>
+  )
+  set_tests_properties(stress_concurrency PROPERTIES TIMEOUT 120 LABELS stress)
+
+  add_test(
+    NAME stress_resources
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/stress_resources.py
+            $<TARGET_FILE:wiki-server>
+  )
+  set_tests_properties(stress_resources PROPERTIES TIMEOUT 180 LABELS stress)
 endif()

@@ -213,6 +213,19 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
           callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const DocumentAlreadyExistsError&) {
           callback(jsonError(k409Conflict, "a document already exists at that path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          // A syntactically-fine path PathGuard let through (it only
+          // checks traversal/absoluteness/symlinks/NUL, not per-segment
+          // length) that the filesystem itself then rejects — e.g. a
+          // single path segment over NAME_MAX. Same "invalid path" shape
+          // as PathTraversalError, deliberately NOT the generic
+          // std::exception catch below: filesystem_error::what() embeds
+          // the full absolute on-disk vault path, which must never reach
+          // a client — see the read-route handler above, which already
+          // folds this same exception into a clean response instead of
+          // leaking it (there: 404; here: 400, since unlike a read this
+          // is the caller's own malformed input, not a lookup miss).
+          callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const std::exception& e) {
           callback(jsonError(k500InternalServerError, e.what()));
         }
@@ -242,6 +255,10 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
           callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const DocumentNotFoundError&) {
           callback(jsonError(k404NotFound, "document not found"));
+        } catch (const std::filesystem::filesystem_error&) {
+          // See the POST /api/documents handler above for why this can't
+          // fall through to the generic catch below (path-disclosure risk).
+          callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const std::exception& e) {
           callback(jsonError(k500InternalServerError, e.what()));
         }
@@ -265,6 +282,10 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
           callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const DocumentNotFoundError&) {
           callback(jsonError(k404NotFound, "document not found"));
+        } catch (const std::filesystem::filesystem_error&) {
+          // See the POST /api/documents handler above for why this can't
+          // fall through to the generic catch below (path-disclosure risk).
+          callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const std::exception& e) {
           callback(jsonError(k500InternalServerError, e.what()));
         }
@@ -307,6 +328,10 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         } catch (const AttachmentRejectedError& e) {
           callback(jsonError(k400BadRequest, e.what()));
         } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          // See the POST /api/documents handler above for why this can't
+          // fall through to the generic catch below (path-disclosure risk).
           callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const std::exception& e) {
           callback(jsonError(k500InternalServerError, e.what()));

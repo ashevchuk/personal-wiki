@@ -1,6 +1,8 @@
 # build artifacts
 build/
 build-arm/
+build-fuzz/
+build-asan/
 out/
 
 # vcpkg (bootstrapped locally, not vendored in git — see docs/architecture.md)
@@ -30,6 +32,11 @@ config.local.toml
 .idea/
 *.swp
 .DS_Store
+
+# Python bytecode cache (tests/integration/_stress_common.py etc. get
+# imported by the stress scripts, not just run standalone)
+__pycache__/
+*.pyc
 
 # Claude Code session-local state (scheduled-task locks, etc.) — not
 # project content

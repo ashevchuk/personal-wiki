@@ -4,6 +4,8 @@
 
 #include <drogon/HttpResponse.h>
 
+#include <filesystem>
+
 using namespace drogon;
 using namespace wikicore::auth;
 using namespace wikicore::vault;
@@ -54,6 +56,14 @@ void registerFolderRoutes(HttpAppFramework& app, FolderService& folderService) {
           callback(jsonError(k404NotFound, e.what()));
         } catch (const FolderAlreadyExistsError& e) {
           callback(jsonError(k409Conflict, e.what()));
+        } catch (const std::filesystem::filesystem_error&) {
+          // FolderService::move constructs its own filesystem_error with
+          // BOTH absolute vault paths embedded (see FolderService.cpp,
+          // the fs::rename failure path) -- worse than a single-path leak
+          // if it fell through to the generic e.what() catch below, same
+          // "internal server path must never reach a client" reasoning
+          // as DocumentRoutes.cpp's equivalent catches.
+          callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const std::exception& e) {
           callback(jsonError(k500InternalServerError, e.what()));
         }
@@ -80,6 +90,11 @@ void registerFolderRoutes(HttpAppFramework& app, FolderService& folderService) {
           callback(jsonError(k404NotFound, e.what()));
         } catch (const FolderNotEmptyError& e) {
           callback(jsonError(k409Conflict, e.what()));
+        } catch (const std::filesystem::filesystem_error&) {
+          // Same reasoning as the /api/folders/move handler above --
+          // FolderService::remove's own filesystem_error embeds an
+          // absolute vault path.
+          callback(jsonError(k400BadRequest, "invalid path"));
         } catch (const std::exception& e) {
           callback(jsonError(k500InternalServerError, e.what()));
         }

@@ -641,6 +641,122 @@ baked into shell.html's own bootstrap script.
   unaffected as a regression check on the shared code path both globals now
   share.
 
+### Stress testing (concurrency + resource exhaustion) — two real bugs found and fixed
+
+Distinct from `security_e2e.py` (sequential logical correctness — auth, CSRF,
+traversal, visibility). Two new `ctest` targets under a `stress` LABEL (excluded
+from the default `-LE stress` sweep, run with plain `ctest` or `ctest -L stress`):
+`stress_concurrency.py` fires check-then-act and shared-connection paths from many
+threads at once; `stress_resources.py` hammers upload caps, concurrent search load
+vs. `/healthz`, and pathological path lengths. See `tests/integration/_stress_common.py`
+for the shared harness (own dynamically-picked port per script, deliberately NOT
+shared with `security_e2e.py` so nothing here can destabilize the release gate).
+Also added: coverage-guided libFuzzer harnesses (`tests/fuzz/`, off by default —
+`WIKI_ENABLE_FUZZING`, Clang-only, not part of `ctest`) for `PathGuard::resolve()`
+and `parseFrontMatter()`, the two parsers that take raw untrusted bytes directly.
+
+Two real, previously-unknown bugs surfaced live and were fixed the same day
+(2026-09-10):
+
+1. **Absolute vault-path disclosure via generic exception handlers.** A `path`
+   segment over the filesystem's NAME_MAX (255 bytes on ext4) throws
+   `std::filesystem::filesystem_error` — its `.what()` embeds the full absolute
+   on-disk path (BOTH paths, for `FolderService::move`'s own explicitly-constructed
+   `filesystem_error`). Every mutating route's generic
+   `catch (const std::exception& e) { ...jsonError(500, e.what())... }` was
+   returning that straight to the caller instead of a clean `400` — found first in
+   `DocumentRoutes.cpp` (`stress_resources.py`'s pathological-path check), then the
+   identical pattern confirmed and fixed across `FolderRoutes.cpp` (both handlers),
+   `VersionRoutes.cpp`'s `document-restore` handler (which was ALSO entirely missing
+   a `PathTraversalError` catch — an independent second bug in the same handler,
+   falling through to the same generic 500 for a condition every other mutating
+   route already gave a clean 400 for), and `RemoteMcpRoutes.cpp`'s
+   `create_document`/`update_document` — the highest-stakes copy of the four, since
+   that's the public-HTTP remote MCP transport (see "Remote MCP transport (HTTP)"
+   above). Fix: an explicit `catch (const std::filesystem::filesystem_error&)`
+   before the generic catch in each handler, mirroring the read-route pattern that
+   already existed one section up in `DocumentRoutes.cpp` (`filesystem_error` →
+   clean `404`, no message leak) — `RemoteMcpRoutes.cpp` keeps the full `e.what()`
+   in `mcp_audit_log` (admin-only, DB-stored, exactly the forensic detail that table
+   exists for) while returning only `"invalid path"` to the calling MCP client.
+   Verified live against each fixed route: manual curl repro with an 8000-byte path
+   segment (both directly and, for the remote transport, over a real bearer-token
+   `tools/call` JSON-RPC request with write access enabled) — clean `400`/tool-error,
+   no path in the response body, audit log still shows the full detail.
+
+2. **Real race condition in `IndexUpdater`, not a test artifact.** `upsertOne`/
+   `removeOne` each wrap a `BEGIN IMMEDIATE...COMMIT/ROLLBACK` sequence as several
+   separate SQLite C API calls against `db_` — one `sqlite3*` connection shared BY
+   REFERENCE across every Drogon request-handling thread (`main.cpp`'s single live
+   `IndexUpdater indexUpdater(db)`), with no mutex protecting that sequence.
+   `main.cpp` already documents this EXACT failure mode ("two threads racing a BEGIN
+   on the SAME connection handle is a 'cannot start a transaction within a
+   transaction' error, not a safely-serialized one") — it's the reasoning
+   `VaultWatcher` was given its own separate connection FOR — but that reasoning was
+   never extended to request threads racing EACH OTHER on the connection they all
+   share. `stress_concurrency.py`'s same-document-path check (12 concurrent PUTs to
+   one path) reproduced this live as an actual `500`
+   (`{"error":"statement failed: not an error"}` — SQLite's own error string, read
+   after another thread's call on the shared connection had already overwritten it)
+   on roughly 1 run in 8. Fixed with a `std::mutex` member on `IndexUpdater` (the
+   same `std::mutex` + `std::lock_guard` shape `RateLimiter` already uses) guarding
+   the whole transaction in both `upsertOne` and `removeOne`; the three read-only
+   queries (`allIndexedPaths`, `rowIdForPath`, `findPathByUuid`) stay unguarded on
+   purpose — each is a single prepare/step/destroy, no BEGIN/COMMIT window for
+   another thread to land inside. Re-verified post-fix with 30×12 (360) concurrent
+   same-path writes: zero bad results, where the pre-fix version needed under 96
+   requests to reproduce.
+
+### Memory-safety pass: ASan/UBSan across the whole binary (2026-09-10)
+
+The `tests/fuzz/` libFuzzer harnesses only exercise two functions in isolation
+(`PathGuard::resolve`, `parseFrontMatter`) for a short smoke run each — real
+buffer-overflow/UB coverage of the actual `wiki-server`/`wiki-mcp` binaries needed a
+separate pass. Built a throwaway `build-asan/` (GCC, `-fsanitize=address,undefined
+-fno-sanitize-recover=all`, `wiki-server`/`wiki-mcp`/`unit_tests` all instrumented,
+never committed — same disposable-verification-directory treatment as `build-fuzz/`)
+and ran the FULL suite against it: `unit_tests`, `security_e2e`, and both stress
+scripts, all 4/4 passing with zero ASan/UBSan reports anywhere in the output —
+meaningfully wider coverage than the fuzz harnesses alone, since this exercises JSON
+parsing, multipart upload handling, md4c markdown rendering, yaml-cpp front-matter
+parsing, and FTS5 snippet extraction, not just the two fuzzed functions.
+
+Followed with a dedicated adversarial battery (10 payloads, written directly to the
+vault to bypass API validation and hit `parseFrontMatter`/`renderMarkdownToHtml` as
+directly as possible): a bounded YAML anchor/alias expansion ("billion laughs"
+style), 2000-deep YAML flow-sequence nesting, an unterminated front-matter block,
+invalid/overlong UTF-8 bytes, 3000-deep markdown blockquote/list nesting, embedded
+NUL/control characters, a single 500,000-byte markdown "word" with no whitespace,
+tab-indented YAML, and astral-plane emoji mixed with malformed `[[wiki-link]]`
+syntax. Server (same PID throughout, confirmed via `ps`, never restarted) survived
+every one — `/healthz` stayed `200` after each, `server.log` stayed clean, no
+sanitizer report. A manual pass over the codebase's own raw-pointer/buffer spots
+(`grep` for `memcpy`/`reinterpret_cast`/manual index arithmetic) turned up nothing
+of concern either: SQLite's `sqlite3_column_text` adapters are the usual
+NUL-terminated-string case, `VaultWatcher`'s inotify-event loop is the textbook
+kernel-API read pattern (not attacker-reachable over HTTP — requires local
+filesystem write access to the vault, the same trust boundary as everything else in
+`vault/`), `Uuid.cpp`'s `snprintf` target buffer is correctly sized, and
+`YouTubeEmbed.cpp`'s marker-substitution bounds-checks every index before using it.
+No buffer overflow, no use-after-free, no UB — clean, but this was a substantially
+wider net than the fuzz harnesses alone, and worth being precise about what each
+actually covers rather than treating "we fuzzed two functions" as "we checked for
+buffer overflows."
+
+One unrelated, non-memory-safety finding from the same adversarial pass: the
+`substituteYouTubeEmbeds` doc comment in `MarkdownRenderer.cpp` claims a hand-typed
+`<img src="youtube-embed:ID">` "can't be forged from a document's own text" — true
+for literal HTML (md4c HTML-escapes it, confirmed), but incomplete: legitimate
+CommonMark image syntax typed directly (`![](youtube-embed:ID)`) is NOT raw HTML,
+isn't blocked by `MD_FLAG_NOHTMLSPANS`, and DOES get substituted into a real
+`<iframe>` — bypassing `rewriteYouTubeEmbeds`' URL-recognition step entirely.
+Confirmed live. Not a capability escalation in practice (the single admin who can
+create documents can already embed any YouTube video ID by pasting a real URL, so
+typing the marker syntax directly grants nothing new), so left as a documentation
+precision gap rather than an urgent fix — flagged here so the comment's claim isn't
+taken at face value if this codebase's trust model ever changes (e.g. multiple
+editors with different privilege levels).
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

@@ -5,6 +5,7 @@
 
 #include <drogon/HttpResponse.h>
 
+#include <filesystem>
 #include <string_view>
 
 using namespace drogon;
@@ -367,6 +368,17 @@ Json::Value handleCreateDocument(DocumentService& documents, McpAuditLog& auditL
   } catch (const PathTraversalError&) {
     auditLog.record("remote:create_document", path, false, "path traversal rejected");
     return toolTextResult("invalid path", true);
+  } catch (const std::filesystem::filesystem_error& e) {
+    // The audit log keeps the full detail (it's admin-only, DB-stored,
+    // recorded for exactly this kind of forensic value) -- but the value
+    // handed back to the calling MCP client over the open-internet remote
+    // transport must not carry the absolute on-disk vault path embedded in
+    // filesystem_error::what(). Same "internal path never reaches the
+    // caller" rule as every route in DocumentRoutes.cpp/FolderRoutes.cpp/
+    // VersionRoutes.cpp, arguably higher stakes here: this IS the public
+    // HTTP surface (docs/architecture.md's "Remote (HTTP) transport").
+    auditLog.record("remote:create_document", path, false, e.what());
+    return toolTextResult("invalid path", true);
   } catch (const std::exception& e) {
     auditLog.record("remote:create_document", path, false, e.what());
     return toolTextResult(e.what(), true);
@@ -404,6 +416,11 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
     return toolTextResult("document not found: " + path, true);
   } catch (const PathTraversalError&) {
     auditLog.record("remote:update_document", path, false, "path traversal rejected");
+    return toolTextResult("invalid path", true);
+  } catch (const std::filesystem::filesystem_error& e) {
+    // See handleCreateDocument's identical catch above for why this can't
+    // fall through to the generic e.what() catch below.
+    auditLog.record("remote:update_document", path, false, e.what());
     return toolTextResult("invalid path", true);
   } catch (const std::exception& e) {
     auditLog.record("remote:update_document", path, false, e.what());

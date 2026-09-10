@@ -167,5 +167,12 @@ install(PROGRAMS systemd/wiki-backup.sh DESTINATION bin)
 install(FILES systemd/wiki-backup.service systemd/wiki-backup.timer
               systemd/wiki-backup.env.example DESTINATION share/wiki/systemd)
 
+option(WIKI_ENABLE_FUZZING
+       "Build libFuzzer targets under tests/fuzz/ (requires Clang; see that dir's CMakeLists.txt)"
+       OFF)
+
 enable_testing()
 add_subdirectory(tests)
+if(WIKI_ENABLE_FUZZING)
+  add_subdirectory(tests/fuzz)
+endif()

@@ -92,6 +92,12 @@ void replaceFtsEntry(Database& db, int64_t documentRowId,
 }  // namespace
 
 int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
+  // See mutex_'s doc comment in IndexUpdater.h -- this whole
+  // BEGIN...COMMIT/ROLLBACK sequence must run as one unit against `db_`,
+  // never interleaved with another thread's own BEGIN on the same
+  // connection.
+  std::lock_guard<std::mutex> lock(mutex_);
+
   Statement begin(db_.handle(), "BEGIN IMMEDIATE;");
   begin.run();
 
@@ -172,6 +178,9 @@ std::optional<std::string> IndexUpdater::findPathByUuid(const std::string& uuid)
 }
 
 void IndexUpdater::removeOne(const std::string& path) {
+  // See mutex_'s doc comment in IndexUpdater.h.
+  std::lock_guard<std::mutex> lock(mutex_);
+
   Statement begin(db_.handle(), "BEGIN IMMEDIATE;");
   begin.run();
   try {

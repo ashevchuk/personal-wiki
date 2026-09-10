@@ -19,21 +19,38 @@ bool isYouTubeIdChar(char c) {
          c == '_' || c == '-';
 }
 
-// Swaps every `<img src="youtube-embed:ID" alt="">` md4c produced (from
-// the `![](youtube-embed:ID)` marker YouTubeEmbed::rewriteYouTubeEmbeds
-// writes — the ONLY place that exact marker string can originate; a raw
-// `<img ...>` typed by hand in a document body gets HTML-escaped to
-// `&lt;img ...&gt;` by md4c same as any other literal HTML, since
-// MD_FLAG_NOHTMLSPANS is on below, so this substitution can't be forged
-// from a document's own text) for a real, narrowly-templated `<iframe>`.
+// Swaps every `<img src="youtube-embed:ID" alt="">` md4c produced for a
+// real, narrowly-templated `<iframe>`. That exact HTML shape normally
+// comes from the `![](youtube-embed:ID)` marker YouTubeEmbed::
+// rewriteYouTubeEmbeds writes after recognizing a real youtube.com/
+// youtu.be URL — but it is NOT the only way to reach it: a raw
+// `<img src="youtube-embed:ID">` typed by hand as literal HTML DOES get
+// escaped to `&lt;img ...&gt;` by md4c (MD_FLAG_NOHTMLSPANS is on below,
+// confirmed live), but plain CommonMark image syntax typed directly —
+// `![](youtube-embed:ID)` — is NOT raw HTML, isn't blocked by that flag,
+// and produces the identical `<img src="youtube-embed:ID" alt="">` md4c
+// would have produced from a real rewrite, which this function then
+// substitutes exactly the same way. Confirmed live (2026-09-10 ASan
+// adversarial pass, docs/architecture.md). This is harmless under the
+// CURRENT trust model — the same single admin who can type either form
+// can already embed any YouTube video ID by pasting a real URL, so typing
+// the marker syntax directly grants no new capability — but it means this
+// substitution is NOT gated on "came from a real URL rewrite" the way an
+// earlier version of this comment claimed; it only checks the resulting
+// HTML shape, regardless of provenance. Re-check this reasoning if this
+// codebase ever adds multiple editors with different trust levels.
 // This is the one and only place in this whole renderer where a
 // URL-derived value reaches raw HTML output — `ID` has already been
 // validated to exactly 11 URL-safe characters by rewriteYouTubeEmbeds
-// before this function ever runs, and is re-validated by the character
-// scan right here regardless, the same "re-check even though it's
-// supposed to already be safe" discipline this codebase applies at every
-// other trust boundary (e.g. every MCP tool re-checking a resolved
-// document's own visibility regardless of the caller's scope).
+// before this function ever runs (when reached via that path), and is
+// re-validated by the character scan right here regardless, the same
+// "re-check even though it's supposed to already be safe" discipline
+// this codebase applies at every other trust boundary (e.g. every MCP
+// tool re-checking a resolved document's own visibility regardless of
+// the caller's scope) — which is exactly what keeps this substitution
+// safe even when reached via the direct-markdown-syntax path above:
+// `ID` still can't be anything other than 11 URL-safe characters either
+// way.
 std::string substituteYouTubeEmbeds(std::string html) {
   constexpr std::string_view kMarkerOpen = "<img src=\"youtube-embed:";
   constexpr std::string_view kMarkerClose = "\" alt=\"\">";
