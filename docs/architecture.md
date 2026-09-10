@@ -717,9 +717,25 @@ separate pass. Built a throwaway `build-asan/` (GCC, `-fsanitize=address,undefin
 never committed — same disposable-verification-directory treatment as `build-fuzz/`)
 and ran the FULL suite against it: `unit_tests`, `security_e2e`, and both stress
 scripts, all 4/4 passing with zero ASan/UBSan reports anywhere in the output —
-meaningfully wider coverage than the fuzz harnesses alone, since this exercises JSON
-parsing, multipart upload handling, md4c markdown rendering, yaml-cpp front-matter
-parsing, and FTS5 snippet extraction, not just the two fuzzed functions.
+wider coverage than the fuzz harnesses alone, since this exercises JSON parsing,
+multipart upload handling, and FTS5 snippet extraction, not just the two fuzzed
+functions.
+
+**Correction (2026-09-10, same day, caught while investigating the md4c finding
+below): this pass did NOT actually instrument md4c or yaml-cpp.** `CMAKE_CXX_FLAGS`
+only applies to this project's OWN targets (`wikicore`, `wiki-server`, `wiki-mcp`,
+`unit_tests`) — vcpkg builds each dependency through its own port build scripts in a
+separate CMake invocation that does not inherit the top-level project's ambient
+`CMAKE_CXX_FLAGS`/`CXXFLAGS`. So "zero ASan/UBSan reports" above is real but narrower
+than originally stated: it covers this project's own code exercising md4c/yaml-cpp
+through their public APIs, not the sanitizer actually watching memory accesses
+*inside* those libraries' own compiled code. A real heap-buffer-overflow inside
+md4c itself (see below) was sitting the entire time this pass ran clean, precisely
+because the instrumentation never reached the code where it lived. If this kind of
+pass is redone, getting real coverage of a vcpkg dependency's own code requires
+either compiling that one dependency out-of-vcpkg with sanitizer flags directly
+(as the md4c investigation below ended up doing anyway, for an unrelated reason),
+or a custom vcpkg triplet that injects sanitizer flags into the port build itself.
 
 Followed with a dedicated adversarial battery (10 payloads, written directly to the
 vault to bypass API validation and hit `parseFrontMatter`/`renderMarkdownToHtml` as
@@ -759,8 +775,8 @@ editors with different privilege levels).
 
 ### Three follow-up hardening items (2026-09-10)
 
-Prompted by a direct "what else for security" ask after the stress-testing/ASan pass
-above — these are real fixes, not speculative additions, each verified live:
+A follow-up security review after the stress-testing/ASan pass above surfaced three
+more real fixes, not speculative additions, each verified live:
 
 1. **Constant-time comparison for the remote MCP bearer token.**
    `McpRemoteConfig::verifyToken` compared the presented token's hash against the
@@ -864,6 +880,107 @@ above — these are real fixes, not speculative additions, each verified live:
    a syscall-level allowlist, and confirmed not implicated in the crash: a
    native-arch binary on native-arch hardware has nothing for this directive to
    reject in the first place).
+
+### vcpkg dependency CVE scanning — investigated thoroughly, patched one real finding (2026-09-10)
+
+Investigated whether automated CVE scanning of this project's vcpkg C/C++
+dependencies is possible at all, empirically rather than from documentation alone,
+and ended up finding and patching a real vulnerability along the way.
+
+**What does NOT work, each verified live, not assumed:**
+- `OSV-Scanner` (v2.5.1): has no extractor for `vcpkg.json` at all
+  (`could not determine extractor`), and vcpkg's OWN generated SPDX SBOMs use a
+  `pkg:vcpkg/<port>@...` PURL that isn't a registered package-url type — OSV-Scanner
+  reports "No issues found" against them, which means zero packages were actually
+  checked, not that zero vulnerabilities exist. The exact silent-wrong-answer shape
+  `~/.claude/CLAUDE.md` warns about generally, hit here concretely.
+- `Trivy` (v0.73.0): has no vcpkg/C-library extractor either; a filesystem scan of
+  this repo (with `vcpkg/` cloned locally) found vulnerabilities only in npm/pip
+  dependencies belonging to vcpkg's OWN tooling/docs scripts (e.g. nlohmann-json's
+  mkdocs site, vcpkg's own azure-pipelines helper) — zero relevance to what actually
+  ships in `wiki-server`/`wiki-mcp`.
+- GitHub's Dependency Graph: the OFFICIAL supported-ecosystems table (fetched and
+  quoted verbatim, not recalled from training data) lists Cargo/Composer/Deno/Go
+  modules/Gradle/Maven/npm/pnpm/pip/Poetry/RubyGems/Swift PM/Bazel/Yarn and, for
+  C/C++ specifically, only NuGet (`.vcxproj`/`.nuspec` — the MSBuild/Windows
+  dependency model, unrelated to how this project consumes C++ libraries). vcpkg is
+  absent from this list entirely.
+- `microsoft/component-detection` (Microsoft's own tool, DOES have a real Vcpkg
+  detector — verified by downloading the actual `linux-x64` release binary and
+  running it against this repo's `build/vcpkg_installed/`): correctly identifies
+  real upstream repo+version for every dependency (`openssl/openssl@openssl-3.6.4`,
+  `drogonframework/drogon@v1.9.13`, etc.) — genuinely better output than the two
+  tools above. But GitHub's own Dependency Submission API docs state, verbatim:
+  "You will only get Dependabot alerts for dependencies that are from one of the
+  supported ecosystems for the GitHub Advisory Database" — the same unsupported-list
+  as the Dependency Graph itself. Detection working perfectly doesn't help if the
+  downstream alerting system was never going to match on it.
+
+**What DOES work, found by testing rather than by more documentation-reading:**
+OSV.dev's query API accepts a **git commit hash directly** (`POST
+https://api.osv.dev/v1/query {"commit": "<sha>"}`) instead of a package+ecosystem+
+version triple — exactly the mechanism this ecosystem actually needs, since OSS-Fuzz
+(which feeds a large fraction of OSV's own database) already tracks vulnerabilities
+by affected git-commit-ranges in the upstream repo, independent of any package
+manager. Resolved the real pinned commit for each of this project's vcpkg
+dependencies (`git ls-remote --tags <repo>` against the exact tag each vcpkg port
+pins) and queried each — six came back clean, one did not:
+
+**`md4c` (`release-0.5.3`, `472c417005c2c71b8617de4f7b8d6b30411d78f4`) — `OSV-2022-126`,
+a heap-buffer-overflow READ in `md_analyze_table_alignment()`, MEDIUM severity,
+found by OSS-Fuzz.** The OSV record has an `introduced` commit but no `fixed` one,
+and lists `release-0.5.3` explicitly among affected versions — this project's
+currently-pinned version. Confirmed by reading the actual vulnerable code
+(`src/md4c.c`): `while(CH(off) != '-') off++;` scanning a table's alignment/
+delimiter row (`| :--- | ---: |`) with no bound at all, unlike the very next loop
+in the same function which does check `off < end`. Found the fix upstream by
+querying OSV against md4c's current HEAD (came back empty — meaning HEAD is NOT
+in the affected range) and then diffing `release-0.5.3..HEAD`: commit `ecbb091`
+("md_analyze_table_alignment: Bound the dash scan by the row end", merged
+2026-06-17, matches the exact code and exact missing bound) — real, on `main`,
+just never cut into a tagged release.
+
+Attempted a live crash reproduction before patching (chosen deliberately over
+patching blind): compiled md4c's `release-0.5.3` sources standalone with
+`-fsanitize=address,undefined`, tried six hand-constructed malformed-table inputs
+(none crashed — the exact OSS-Fuzz input wasn't guessable by hand), then built a
+dedicated libFuzzer harness around `md_html()` at that same tag and ran it
+~2 million iterations across two rounds (~4 minutes total) — still no crash. Not
+a contradiction: OSS-Fuzz found this via a continuous, distributed, long-running
+campaign, not a coincidence a short local session was likely to reproduce. Judged
+the combination of (a) an authoritative OSV record sourced from `google/oss-fuzz-vulns`
+naming this exact version, (b) personally reading and understanding the vulnerable
+code, and (c) locating and reading the exact matching upstream fix as sufficient
+evidence to act on without an independent local crash — that's a different, and
+here acceptable, bar than "shipped this without reading the code at all."
+
+**Fix**: `overlay-ports/md4c/` — a local vcpkg overlay port (wired in via the new
+`vcpkg-configuration.json`'s `overlay-ports`), copying the real upstream vcpkg
+port's files and adding one more patch,
+`0001-md_analyze_table_alignment-fix-oob-read-OSV-2022-126.patch` (a clean
+`git format-patch` of `ecbb091`, applies against `release-0.5.3` unmodified,
+verified), plus `"port-version": 1` in the overlay's `vcpkg.json` so vcpkg's own
+package hash correctly distinguishes it from the unpatched upstream port and
+triggers a rebuild instead of reusing a stale binary cache entry. Verified the
+overlay actually took effect by diffing vcpkg's OWN buildtree checkout before/after
+(the patched line, `off < end && CH(off) != '-'`, present in the rebuilt source);
+full `ctest` 4/4 clean afterward; and a real GFM table with all three alignment
+types (`:---`, `:---:`, `---:`) rendered through the live server with correct
+`align="left"/"center"/"right"` output — the fix only adds a bound, it doesn't
+change any normal-input behavior, and this confirms that held. Drop this overlay
+port (and `vcpkg-configuration.json` if nothing else ever needs it) once
+`vcpkg.json`'s `builtin-baseline` advances to a commit where md4c's own pinned
+version already contains this fix in a tagged release.
+
+**Conclusion for future dependency-vulnerability work on this project**: there is no
+drop-in automated solution for the vcpkg dependencies as a whole (verified, not
+assumed) — the commit-based OSV.dev query is a real, working, MANUAL technique for
+spot-checking a specific pinned dependency when there's a reason to suspect
+something (as here), not a CI-automatable blanket scan, since it requires first
+resolving each dependency's actual pinned commit by hand. GitHub's Dependabot alerts
+now cover the GitHub Actions ecosystem in `.github/workflows/ci.yml` (enabled the
+same day, see the `vulnerability-alerts` API) — genuinely useful, but for a
+completely different, non-overlapping set of dependencies than vcpkg's C/C++ ones.
 
 ## Two-binary layout
 

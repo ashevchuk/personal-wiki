@@ -86,6 +86,11 @@ git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
+# vcpkg-configuration.json (committed) points vcpkg at overlay-ports/md4c/ --
+# a locally-patched md4c port backporting an unreleased upstream fix for
+# OSV-2022-126 (heap-buffer-overflow in table parsing); see
+# overlay-ports/md4c/portfile.cmake and docs/architecture.md for why. No
+# extra flags needed, vcpkg picks this up on its own.
 cmake -S . -B build -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo

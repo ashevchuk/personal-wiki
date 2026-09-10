@@ -1,0 +1,29 @@
+From ecbb091b5c94211b51f04e0418e38ecb6d786e6f Mon Sep 17 00:00:00 2001
+From: Ilia Alshanetsky <ilia@ilia.ws>
+Date: Wed, 17 Jun 2026 08:42:17 -0400
+Subject: [PATCH] md_analyze_table_alignment: Bound the dash scan by the row
+ end
+
+The first inner loop scanned for '-' without bounding off against end,
+unlike the sibling loop directly below it. Add the missing guard to
+remove the latent out-of-bounds read.
+---
+ src/md4c.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/md4c.c b/src/md4c.c
+index 061a4d1..bdde4c2 100644
+--- a/src/md4c.c
++++ b/src/md4c.c
+@@ -5125,7 +5125,7 @@ md_analyze_table_alignment(MD_CTX* ctx, OFF beg, OFF end, MD_ALIGN* align, int n
+     while(n_align > 0) {
+         int index = 0;  /* index into align_map[] */
+ 
+-        while(CH(off) != _T('-'))
++        while(off < end  &&  CH(off) != _T('-'))
+             off++;
+         if(off > beg  &&  CH(off-1) == _T(':'))
+             index |= 1;
+-- 
+2.55.0
+
