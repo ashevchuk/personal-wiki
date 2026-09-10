@@ -25,6 +25,7 @@ add_executable(unit_tests
   # into the test binary rather than standing up a whole second library.
   unit/CidrMatchTest.cpp
   unit/McpRemoteConfigTest.cpp
+  unit/CryptoTest.cpp
   ${CMAKE_SOURCE_DIR}/src/auth/PasswordHasher.cpp
   ${CMAKE_SOURCE_DIR}/src/auth/RateLimiter.cpp
   ${CMAKE_SOURCE_DIR}/src/auth/CidrMatch.cpp

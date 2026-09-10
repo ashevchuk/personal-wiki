@@ -1,5 +1,6 @@
 #include "auth/Crypto.h"
 
+#include <openssl/crypto.h>
 #include <openssl/evp.h>
 #include <sys/random.h>
 
@@ -42,6 +43,13 @@ std::string sha256Hex(const std::string& input) {
     throw std::runtime_error("EVP_Q_digest(SHA256) failed");
   }
   return toHex(digest, digestLen);
+}
+
+bool constantTimeEquals(const std::string& a, const std::string& b) {
+  if (a.size() != b.size()) return false;
+  if (a.empty()) return true;  // CRYPTO_memcmp(_, _, 0) is well-defined but
+                                // nothing to compare either way
+  return CRYPTO_memcmp(a.data(), b.data(), a.size()) == 0;
 }
 
 }  // namespace wikicore::auth

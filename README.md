@@ -98,6 +98,12 @@ cp config.example.toml config.toml
 ./build/wiki-server                  # listens on 127.0.0.1:8080 — GET /healthz
 ```
 
+The username prompted for isn't fixed to `admin` — it's whatever you type, stored
+as-is (there's still only ever ONE admin account; `--create-admin` overwrites
+username+password together, which is also how you change either one later — no
+config.toml option for it, since that would just be a second, potentially
+conflicting source of truth for a value SQLite already owns).
+
 Deploying somewhere real (systemd unit, reverse proxy for TLS, native vs. cross-
 compiled build for a weak/old SBC, backup timer): [`docs/deployment.md`](docs/deployment.md)
 and the self-contained [`docs/sbc-deployment.md`](docs/sbc-deployment.md) runbook.

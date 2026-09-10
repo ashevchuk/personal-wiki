@@ -95,7 +95,14 @@ bool McpRemoteConfig::verifyToken(const std::string& rawToken) const {
   if (sqlite3_step(stmt) == SQLITE_ROW) {
     const auto* stored = sqlite3_column_text(stmt, 0);
     if (stored != nullptr) {
-      matches = hash == reinterpret_cast<const char*>(stored);
+      // Constant-time compare, not `==` — this gates authentication for
+      // an anonymous caller on the public-internet remote MCP transport
+      // (see docs/architecture.md, "Remote MCP transport (HTTP)"), the
+      // highest-stakes credential check in this codebase. A plain `==`
+      // short-circuits on the first mismatched byte, an exploitable
+      // timing side-channel for exactly this kind of check.
+      matches = constantTimeEquals(
+          hash, reinterpret_cast<const char*>(stored));
     }
   }
   sqlite3_finalize(stmt);

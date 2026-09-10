@@ -24,4 +24,20 @@ std::string randomHexToken();
 // SHA-256, hex-encoded.
 std::string sha256Hex(const std::string& input);
 
+// Constant-time equality — use this instead of `==`/`std::string::compare`
+// for anything comparing a caller-supplied credential (or its hash)
+// against a stored one. `==` on std::string short-circuits at the first
+// mismatched byte, which leaks how many leading bytes matched through
+// response timing — a real, exploitable side channel for a comparison
+// that gates authentication. Backed by OpenSSL's CRYPTO_memcmp rather
+// than a hand-rolled XOR-accumulator loop specifically because a
+// hand-rolled one is exactly the kind of thing an optimizing compiler
+// can legally transform back into an early-exit `memcmp` — CRYPTO_memcmp
+// is OpenSSL's own timing-safe primitive, not reinventing it here.
+// Returns false immediately on a length mismatch WITHOUT calling
+// CRYPTO_memcmp — safe, since every caller compares fixed-length hex
+// digests, so length was never the secret being protected; only which
+// byte differs is.
+bool constantTimeEquals(const std::string& a, const std::string& b);
+
 }  // namespace wikicore::auth

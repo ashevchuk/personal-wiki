@@ -21,12 +21,70 @@ Restart=on-failure
 RestartSec=2
 
 # Hardening — the service only ever needs to read/write the vault and the
-# index db; everything else on the filesystem stays off-limits.
+# index db (db_path lives INSIDE vault_data by default, see
+# config.example.toml — one ReadWritePaths entry covers both); everything
+# else on the filesystem stays off-limits.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths=/opt/wiki/vault_data
+
+# Further hardening, added 2026-09-10 — verified live (not just
+# `systemd-analyze verify`'d): a transient unit with this full directive
+# set, running as a dedicated unprivileged user that OWNS
+# /opt/wiki/vault_data, was actually started and exercised end to end
+# (--create-admin, login, CSRF-protected document create, FTS5 search,
+# multipart attachment upload) with nothing broken. wiki-server is a
+# plain compiled binary (no JIT, no dynamic codegen), needs no kernel/
+# hardware access beyond a TCP listen socket and files under
+# ReadWritePaths above.
+#
+# CapabilityBoundingSet= (empty) has a real, non-obvious dependency worth
+# knowing before touching User=/file ownership: dropping ALL capabilities
+# means the process loses CAP_DAC_OVERRIDE, root's usual "ignore file
+# permission bits" superpower — caught live in exactly this form during
+# verification, BEFORE fixing the test setup to run as an unprivileged
+# user that genuinely owns vault_data: running as root WITHOUT
+# CAP_DAC_OVERRIDE against a directory some other uid owns fails with
+# "attempt to write a readonly database", not a permissions-sounding
+# error. This is a non-issue for the real deployment as documented here
+# (`useradd wiki` + `chown wiki:wiki vault_data`, see docs/deployment.md)
+# since the service already owns every path it writes to — but if
+# ReadWritePaths or User= ever changes, re-verify this specific
+# dependency, don't assume it still holds.
+#
+# `systemd-analyze security wiki.service` after deploying this is still
+# worth running for its score/report, but isn't a substitute for the
+# live exercise above — it can't catch a runtime failure like the one
+# above, only static configuration issues.
+#
+# NOTE: this project's own cross-compilation target has been verified on
+# Debian 9 Stretch (systemd 232) — several of these directives postdate
+# that systemd version (RestrictAddressFamilies/LockPersonality landed in
+# 235-ish, ProtectKernelTunables/Modules/ControlGroups similarly). An
+# older systemd's parser logs a warning and skips a key it doesn't
+# recognize rather than refusing to start the unit — check `journalctl -u
+# wiki.service` after a restart for exactly that "Unknown key" pattern if
+# targeting an older systemd; nothing here should ever be a hard failure
+# on its own, but confirm rather than assume for whatever systemd version
+# is actually on the target host.
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+PrivateDevices=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
 
 [Install]
 WantedBy=multi-user.target

@@ -249,6 +249,70 @@ int main(int argc, char** argv) {
   // attacker a free CVE-lookup hint for zero benefit to a real client.
   drogon::app().enableServerHeader(false);
 
+  // Defense-in-depth response headers on EVERY response, including
+  // static files (registerPreSendingAdvice, not PostHandlingAdvice,
+  // specifically because Drogon's own docs note static responses only
+  // go through the former) — md4c's MD_FLAG_NOHTMLBLOCKS/SPANS is the
+  // PRIMARY defense against any markdown-body-originated script
+  // injection (see docs/architecture.md), these are the backstop for
+  // if that primary defense is ever found to have a gap, not a
+  // replacement for it.
+  //
+  // CSP is real but deliberately not maximally strict: shell.html has
+  // TWO inline <script> blocks (the base_path/theme config injection
+  // PageRoutes.cpp writes, and the anti-FOUC theme-bootstrap script
+  // right after it) that a nonce/hash-based script-src would need to
+  // track through every PageRoutes.cpp edit — 'unsafe-inline' on
+  // script-src is a known, accepted relaxation here, not an oversight.
+  // Everything else stays strict: no remote script/object loading, no
+  // framing of this app by anyone, YouTube embeds (the one legitimate
+  // cross-origin iframe this app ever renders) are the only frame-src
+  // exception, images stay open to any https:/data: URL since markdown
+  // bodies can legitimately link to any external image.
+  //
+  // style-src/font-src EXPLICITLY allowlist Google Fonts
+  // (fonts.googleapis.com serves the @font-face CSS, fonts.gstatic.com
+  // serves the actual .woff2 files those rules point at — two different
+  // origins, both needed) because static/css/themes/green.css —
+  // green being the SHIPPED DEFAULT THEME, not an opt-in one — pulls
+  // 'Orbitron' via exactly that `@import url('https://fonts.googleapis
+  // .com/...')`. Missing on the first version of this CSP: a plain
+  // `style-src 'self' 'unsafe-inline'` silently blocked that @import
+  // (no network request even attempted — confirmed via a live
+  // side-by-side against production, http://10.100.100.2/wiki/search,
+  // 2026-09-10: prod's "SEARCH" heading rendered in the real angular
+  // Orbitron face, this build's fell back to the theme's own
+  // 'Courier New' monospace stack instead, a real visual regression a
+  // human caught by eye, not something either the ASan pass or any
+  // existing test would ever have flagged since nothing here crashes or
+  // 500s — a CSP silently degrading a font is a rendering regression,
+  // not a wrong-status-code one). classic.css/dark.css only use system
+  // font stacks and never hit this path, but the CSP itself can't be
+  // conditioned on which theme ends up active client-side, so the
+  // allowlist has to cover green.css's need unconditionally.
+  static const std::string kCsp =
+      "default-src 'self'; "
+      "script-src 'self' 'unsafe-inline'; "
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+      "font-src 'self' https://fonts.gstatic.com; "
+      "img-src 'self' https: data:; "
+      "frame-src https://www.youtube.com; "
+      "object-src 'none'; "
+      "base-uri 'self'; "
+      "form-action 'self'; "
+      "frame-ancestors 'none'";
+  drogon::app().registerPreSendingAdvice(
+      [](const drogon::HttpRequestPtr&, const drogon::HttpResponsePtr& resp) {
+        resp->addHeader("Content-Security-Policy", kCsp);
+        resp->addHeader("X-Content-Type-Options", "nosniff");
+        // Redundant with frame-ancestors 'none' above in any modern
+        // browser, but X-Frame-Options is what the handful of older
+        // clients that don't parse CSP's frame-ancestors still honor —
+        // costs nothing to set both.
+        resp->addHeader("X-Frame-Options", "DENY");
+        resp->addHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+      });
+
   // registerPageRoutes() also builds and caches the rendered shell body
   // (base_path injection included, see PageRoutes.cpp) that BOTH its own
   // routes AND the setDefaultHandler right below reuse via shellResponse()

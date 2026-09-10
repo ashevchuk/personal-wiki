@@ -149,7 +149,13 @@ sudo -u wiki cp config.example.toml config.toml
 # browser (nothing picked yet) lands on; see config.example.toml's own
 # comment. Restart after changing either.
 
-# create the admin account (password entered interactively, echo disabled)
+# create the admin account (username AND password entered interactively,
+# password echo disabled) -- the username isn't fixed to "admin", it's
+# whatever gets typed here; re-running --create-admin later overwrites
+# BOTH username and password together, which is also the (only) way to
+# change either one -- there's no config.toml knob for this, since
+# SQLite's users table (id=1, the single enforced admin row) already IS
+# the one source of truth for it.
 sudo -u wiki ./bin/wiki-server --create-admin
 ```
 
@@ -163,11 +169,21 @@ sudo systemctl status wiki.service
 ```
 
 The unit already ships with hardening (`ProtectSystem=strict`, `NoNewPrivileges=yes`,
-`ReadWritePaths=/opt/wiki/vault_data` — the only place the service actually writes).
-`EnvironmentFile=-/etc/wiki/wiki.env` is optional — right now no environment variable
-is read by the app at all (admin credentials live in SQLite, sessions are random
-tokens with no secret-based signature); the file stays as a documented hook for the
-future (e.g. a bearer token for a remote MCP transport in Phase 2).
+`ReadWritePaths=/opt/wiki/vault_data` — the only place the service actually writes —
+plus a further round added 2026-09-10: `CapabilityBoundingSet=` empty,
+`RestrictAddressFamilies`, `SystemCallFilter=@system-service`,
+`MemoryDenyWriteExecute`, and the various `Protect*`/`Restrict*` kernel/namespace
+directives — see `systemd/wiki.service`'s own comment for what each covers and the
+live verification behind them, including a real "root loses CAP_DAC_OVERRIDE"
+gotcha caught while testing). Run `systemd-analyze security wiki.service` after
+deploying to see its score; more importantly, exercise the app once after any change
+to this unit's hardening (login, create a document, search, upload an attachment) —
+a hardening regression here fails at RUNTIME (a specific route breaks), not at
+`daemon-reload` time. `EnvironmentFile=-/etc/wiki/wiki.env` is optional — right now no
+environment variable is read by the app at all (admin credentials live in SQLite,
+sessions are random tokens with no secret-based signature); the file stays as a
+documented hook for the future (e.g. a bearer token for a remote MCP transport in
+Phase 2).
 
 ## TLS / public internet access
 

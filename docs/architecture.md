@@ -757,6 +757,70 @@ precision gap rather than an urgent fix — flagged here so the comment's claim 
 taken at face value if this codebase's trust model ever changes (e.g. multiple
 editors with different privilege levels).
 
+### Three follow-up hardening items (2026-09-10)
+
+Prompted by a direct "what else for security" ask after the stress-testing/ASan pass
+above — these are real fixes, not speculative additions, each verified live:
+
+1. **Constant-time comparison for the remote MCP bearer token.**
+   `McpRemoteConfig::verifyToken` compared the presented token's hash against the
+   stored one with plain `==` — unlike `CsrfFilter`'s comparison (which has an
+   explicit comment justifying why timing safety doesn't matter there, an
+   already-authenticated session), this one gates AUTHENTICATION ITSELF for an
+   anonymous caller on the public-internet remote MCP transport, the highest-stakes
+   credential check in the codebase. Added `auth::constantTimeEquals` (wraps
+   OpenSSL's `CRYPTO_memcmp`, next to the existing `sha256Hex`/`randomHexToken` in
+   `Crypto.h`/`.cpp`) and switched `verifyToken` to it. New `CryptoTest.cpp` covers
+   equal/unequal/different-length/empty cases plus a real `sha256Hex` round-trip.
+2. **Security response headers**, added via `drogon::app().registerPreSendingAdvice`
+   in `main.cpp` (not `registerPostHandlingAdvice` — Drogon's own docs note static
+   file responses only go through the former, and this needed to cover
+   `static/`-served JS/CSS too, not just JSON API responses): `Content-Security-
+   Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+   `Referrer-Policy: strict-origin-when-cross-origin`. Defense-in-depth backstop
+   behind md4c's `MD_FLAG_NOHTMLBLOCKS/SPANS` (the actual primary defense), not a
+   replacement for it. The CSP is deliberately not maximally strict:
+   `script-src 'self' 'unsafe-inline'` because `shell.html` has two inline
+   `<script>` blocks (the `PageRoutes.cpp` config-injection one and the anti-FOUC
+   theme bootstrap right after it) that a nonce/hash-based policy would need
+   updating on every `PageRoutes.cpp` edit — a known, accepted relaxation, not an
+   oversight. Everything else stays strict: `object-src 'none'`, `frame-ancestors
+   'none'`, `frame-src https://www.youtube.com` as the one legitimate cross-origin
+   iframe exception, `img-src 'self' https: data:` since markdown bodies can
+   legitimately link any external image. Verified live in a real browser: login,
+   Toast UI Editor (create/edit a document, all vendored JS/CSS loads), and a real
+   YouTube embed (an actual `<iframe>` to `youtube.com` that loaded real YouTube
+   content, confirming `frame-src` isn't blocking it) — zero CSP violations in the
+   console across all of it (the only console entries were unrelated Chrome
+   extension noise).
+3. **`systemd/wiki.service` hardening**, extended well past the original
+   `ProtectSystem=strict`/`NoNewPrivileges`/`ProtectHome`/`PrivateTmp`/
+   `ReadWritePaths` set: `CapabilityBoundingSet=` (empty), `RestrictAddressFamilies`,
+   `RestrictNamespaces`, `RestrictSUIDSGID`, `RestrictRealtime`, `LockPersonality`,
+   `MemoryDenyWriteExecute`, the `Protect{KernelTunables,KernelModules,KernelLogs,
+   ControlGroups,Clock,Hostname}` family, `PrivateDevices`, and
+   `SystemCallFilter=@system-service`. Verified with an actual transient systemd
+   unit (`systemd-run`, real root sudo on the dev machine, not just
+   `systemd-analyze verify`) running the real `wiki-server` binary with this full
+   directive set — caught two real test-setup pitfalls along the way, both
+   artifacts of the TEST harness rather than the unit file: `PrivateTmp=yes` gives
+   the service its own private `/tmp`, so a scratch sandbox living under `/tmp/`
+   silently became invisible to the service; `ProtectHome=yes` does the identical
+   thing to `/home`. Moving the scratch sandbox to `/opt/...` (matching the real
+   `/opt/wiki` deployment path) fixed both. The one finding that WOULD matter for a
+   real deployment change: `CapabilityBoundingSet=` empty strips
+   `CAP_DAC_OVERRIDE`, so root running WITHOUT that capability against a directory
+   it doesn't own fails with a confusing "attempt to write a readonly database" —
+   harmless here since the documented deployment already runs as `User=wiki` owning
+   `vault_data` (`chown wiki:wiki`, see docs/deployment.md), but re-verify this
+   specific dependency if `User=`/`ReadWritePaths`/file ownership ever changes,
+   rather than assuming it still holds. Once running as an unprivileged user that
+   genuinely owns its data dir, the full hardened unit passed a real end-to-end
+   exercise: `--create-admin`, login, CSRF-protected document create, FTS5 search,
+   multipart attachment upload — all clean. Fully torn down afterward (transient
+   unit stopped, scratch test user removed, sandbox directories deleted) — nothing
+   from this verification pass was left running or installed on the dev machine.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
