@@ -1,0 +1,98 @@
+name: CI
+
+# Builds the project (vcpkg manifest mode, same recipe as README.md's
+# quickstart) and runs the test suite. Two lanes, matching this repo's own
+# local convention (tests/CMakeLists.txt's `stress` LABEL, `ctest -LE stress`
+# documented as the fast default in CLAUDE.md):
+#
+#   - Every push to main and every PR: the fast lane — unit_tests (Catch2)
+#     + security_e2e.py (the real HTTP-layer auth/CSRF/traversal/session
+#     suite). Gates normal development without slowing it down.
+#   - Weekly (and on manual dispatch): the FULL sweep, stress_concurrency.py
+#     and stress_resources.py included — these are slower and some of what
+#     they report is a measured, accepted gap rather than a hard failure
+#     (see tests/integration/_stress_common.py's module docstring), so they
+#     don't gate every push, but they do need to run SOMEWHERE regularly —
+#     both found real bugs live the first time they were actually run
+#     (see docs/architecture.md's "Stress testing" entry).
+#
+# Deliberately does NOT build the tests/fuzz/ libFuzzer targets
+# (WIKI_ENABLE_FUZZING, off by default, Clang-only) — those are a manual,
+# open-ended fuzzing exercise, not a pass/fail CI check.
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 3 * * 1'  # Monday 03:17 UTC — arbitrary off-peak slot
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build cmake pkg-config \
+            curl zip unzip tar git python3 \
+            autoconf automake autoconf-archive libtool m4 bison flex nasm
+
+      # FULL clone, never --depth 1 — vcpkg.json pins builtin-baseline to
+      # one specific vcpkg commit; manifest mode resolves every dependency
+      # version via `git show <that commit>:versions/baseline.json` against
+      # vcpkg's OWN repo history. A shallow clone only contains whatever
+      # commit is vcpkg's current upstream tip, which silently stops
+      # containing the pinned baseline commit once upstream has moved far
+      # enough — confirmed live in this project once already (2026-09-04,
+      # building the Docker image), see docs/architecture.md's "git clone
+      # vcpkg with a FULL clone" entry. Don't shortcut this in CI either.
+      - name: Clone vcpkg
+        run: git clone https://github.com/microsoft/vcpkg.git vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      # Building Drogon+OpenSSL+trantor+everything else from scratch is
+      # NOT fast (README.md/docs/deployment.md both call this out for a
+      # weak SBC; a GitHub-hosted runner is faster but still real minutes).
+      # Cache the installed tree keyed on vcpkg.json's own content so a
+      # dependency-only change invalidates it correctly.
+      - name: Cache vcpkg installed packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-installed-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-installed-${{ runner.os }}-
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build build -j"$(nproc)"
+
+      - name: "Test (fast lane: unit_tests + security_e2e)"
+        if: github.event_name != 'schedule' && github.event_name != 'workflow_dispatch'
+        run: ctest --test-dir build -LE stress --output-on-failure
+
+      - name: "Test (full sweep: adds stress_concurrency + stress_resources)"
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Upload ctest logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ctest-logs
+          path: build/Testing/Temporary/
+          retention-days: 14
