@@ -70,9 +70,14 @@ jobs:
           # Only this project's own code -- vcpkg/ (the cloned tool
           # itself) and build/vcpkg_installed (compiled dependency
           # headers/binaries) never get flagged as if they were our bugs.
-          paths-ignore:
-            - vcpkg/**
-            - build/**
+          # paths-ignore is NOT a direct action input (that name belongs
+          # to the unrelated on.push.paths-ignore workflow trigger) --
+          # CodeQL's own path filtering goes through an inline config
+          # block instead.
+          config: |
+            paths-ignore:
+              - vcpkg/**
+              - build/**
 
       - name: Configure
         run: |
