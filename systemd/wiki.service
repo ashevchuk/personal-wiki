@@ -30,45 +30,77 @@ ProtectHome=yes
 PrivateTmp=yes
 ReadWritePaths=/opt/wiki/vault_data
 
-# Further hardening, added 2026-09-10 — verified live (not just
-# `systemd-analyze verify`'d): a transient unit with this full directive
-# set, running as a dedicated unprivileged user that OWNS
-# /opt/wiki/vault_data, was actually started and exercised end to end
-# (--create-admin, login, CSRF-protected document create, FTS5 search,
-# multipart attachment upload) with nothing broken. wiki-server is a
-# plain compiled binary (no JIT, no dynamic codegen), needs no kernel/
-# hardware access beyond a TCP listen socket and files under
-# ReadWritePaths above.
+# Further hardening, added 2026-09-10 — verified live on TWO different
+# targets, with two different real outcomes, not assumed from either
+# `systemd-analyze verify` or a same-architecture test alone:
 #
-# CapabilityBoundingSet= (empty) has a real, non-obvious dependency worth
-# knowing before touching User=/file ownership: dropping ALL capabilities
-# means the process loses CAP_DAC_OVERRIDE, root's usual "ignore file
-# permission bits" superpower — caught live in exactly this form during
-# verification, BEFORE fixing the test setup to run as an unprivileged
-# user that genuinely owns vault_data: running as root WITHOUT
-# CAP_DAC_OVERRIDE against a directory some other uid owns fails with
-# "attempt to write a readonly database", not a permissions-sounding
-# error. This is a non-issue for the real deployment as documented here
-# (`useradd wiki` + `chown wiki:wiki vault_data`, see docs/deployment.md)
-# since the service already owns every path it writes to — but if
-# ReadWritePaths or User= ever changes, re-verify this specific
-# dependency, don't assume it still holds.
+# 1. On the x86_64 dev machine (systemd 261, glibc): a transient unit
+#    (systemd-run) with this full directive set INCLUDING
+#    SystemCallFilter=@system-service, running the real wiki-server
+#    binary as a dedicated unprivileged user that OWNS
+#    /opt/wiki/vault_data, was started and exercised end to end
+#    (--create-admin, login, CSRF-protected document create, FTS5
+#    search, multipart attachment upload) with nothing broken.
+# 2. Deployed to the real production target (systemd 232, the
+#    cross-compiled arm-linux-musleabihf/musl-static binary, real armv7
+#    hardware) the SAME DAY: the service died in an immediate
+#    Restart=on-failure crash loop, `code=killed, status=31/SYS` — a
+#    seccomp SIGSYS kill from SystemCallFilter=@system-service, NOT a
+#    missing-directive warning (systemd 232 recognized and enforced it
+#    just fine; the failure was the filter correctly blocking a real
+#    syscall this binary needs). systemd 232 logs no syscall number for
+#    a SIGSYS kill, so the specific call was never identified —
+#    diagnosing it further would mean an ARM-static strace or an
+#    offline seccomp-audit setup, not more guessing against a live
+#    service. Rolled back within under a minute (the previous unit file
+#    is always kept as wiki.service.bak-<timestamp> on the target — see
+#    docs/deployment.md — specifically so a rollback like this is a
+#    two-command copy-back, not a rebuild). Musl vs. glibc and/or
+#    ARM32 vs. x86_64 is the most likely reason the SAME directive
+#    behaved differently on the two targets — @system-service's exact
+#    syscall set is architecture- and systemd-version-dependent, and
+#    this project statically links musl specifically for the ARM
+#    target (see docs/architecture.md's Cross-compilation section),
+#    which can easily make different libc-internal syscalls than glibc
+#    does for the same C++ operation.
+#
+# CONCLUSION: SystemCallFilter is deliberately NOT included below.
+# Every other directive here is a namespace/mount/capability-level
+# restriction (what the process can SEE or ACCESS), not a syscall-level
+# allowlist (what the process can DO) — a fundamentally lower-risk
+# category that doesn't depend on the exact set of syscalls a given
+# libc+arch combination happens to make, and none of them caused any
+# problem on either target. If a syscall-level filter is ever
+# reattempted, do it against a genuine offline ARM-static-binary test
+# first (not qemu-arm-static — it emulates INSTRUCTIONS, not kernel
+# seccomp filtering, so it structurally cannot catch this class of
+# failure; confirmed the hard way, this is exactly why the qemu smoke
+# test before this deploy didn't catch it either), and roll out with
+# SystemCallErrorNumber=EPERM initially rather than the default kill,
+# so a wrong guess degrades to a caught, loggable error instead of a
+# crash loop on a live service.
+#
+# CapabilityBoundingSet= (empty) has its own real, non-obvious
+# dependency worth knowing before touching User=/file ownership:
+# dropping ALL capabilities means the process loses CAP_DAC_OVERRIDE,
+# root's usual "ignore file permission bits" superpower — caught live
+# in exactly this form during the x86_64 verification above, BEFORE
+# fixing the test setup to run as an unprivileged user that genuinely
+# owns vault_data: running as root WITHOUT CAP_DAC_OVERRIDE against a
+# directory some other uid owns fails with "attempt to write a
+# readonly database", not a permissions-sounding error. This is a
+# non-issue for the real deployment as documented here (`useradd wiki`
+# + `chown wiki:wiki vault_data`, see docs/deployment.md) since the
+# service already owns every path it writes to — but if ReadWritePaths
+# or User= ever changes, re-verify this specific dependency, don't
+# assume it still holds.
 #
 # `systemd-analyze security wiki.service` after deploying this is still
-# worth running for its score/report, but isn't a substitute for the
-# live exercise above — it can't catch a runtime failure like the one
-# above, only static configuration issues.
-#
-# NOTE: this project's own cross-compilation target has been verified on
-# Debian 9 Stretch (systemd 232) — several of these directives postdate
-# that systemd version (RestrictAddressFamilies/LockPersonality landed in
-# 235-ish, ProtectKernelTunables/Modules/ControlGroups similarly). An
-# older systemd's parser logs a warning and skips a key it doesn't
-# recognize rather than refusing to start the unit — check `journalctl -u
-# wiki.service` after a restart for exactly that "Unknown key" pattern if
-# targeting an older systemd; nothing here should ever be a hard failure
-# on its own, but confirm rather than assume for whatever systemd version
-# is actually on the target host.
+# worth running for its score/report, but isn't a substitute for a live
+# exercise on the ACTUAL target architecture+libc — it can't catch a
+# runtime failure like the one above, only static configuration issues,
+# and (as this incident showed) same-directive-different-arch behavior
+# isn't a static property at all.
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=yes
@@ -83,7 +115,6 @@ ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 PrivateDevices=yes
-SystemCallFilter=@system-service
 SystemCallArchitectures=native
 
 [Install]

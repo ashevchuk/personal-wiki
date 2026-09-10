@@ -821,6 +821,50 @@ above — these are real fixes, not speculative additions, each verified live:
    unit stopped, scratch test user removed, sandbox directories deleted) — nothing
    from this verification pass was left running or installed on the dev machine.
 
+   **Update, same day, real production deploy: `SystemCallFilter=@system-service`
+   does NOT ship — removed after actually breaking the live service.** The
+   x86_64/glibc verification above passed with `SystemCallFilter` included; the
+   ARM cross-compiled musl-static binary, deployed to the real production target
+   (systemd 232, real armv7 hardware — see docs/deployment.md), crashed
+   immediately in a `Restart=on-failure` loop: `code=killed, status=31/SYS`, a
+   seccomp SIGSYS kill. systemd 232 logs no syscall number for that kill, so the
+   specific blocked call was never identified — musl vs. glibc and/or ARM32 vs.
+   x86_64 is the most likely reason `@system-service`'s syscall set (which is
+   itself architecture/libc-dependent, not a fixed list) behaved differently on
+   the two targets. Rolled back within under a minute using the standard
+   `.bak-<timestamp>` unit-file copy this repo's redeploy recipe always keeps
+   (docs/deployment.md) — real downtime, but short and immediately caught by the
+   post-restart verification step, not left silently broken.
+
+   This also **falsified a specific claim the original comment block made**: it
+   predicted that on an older systemd (232), unrecognized newer directives would
+   log an "Unknown lvalue" warning and be skipped, harmlessly. That part turned
+   out to be exactly right when the corrected unit (SystemCallFilter removed) was
+   redeployed and its journal was checked: `RestrictSUIDSGID`, `LockPersonality`,
+   `ProtectKernelLogs`, `ProtectClock`, `ProtectHostname` all logged exactly that
+   "Unknown lvalue ... in section 'Service'" line on the real box and were
+   harmlessly skipped, while the rest (`CapabilityBoundingSet`,
+   `RestrictAddressFamilies`, `RestrictNamespaces`, `MemoryDenyWriteExecute`, the
+   `ProtectKernel*`/`ProtectControlGroups` pair, `PrivateDevices`,
+   `SystemCallArchitectures`) were recognized and are genuinely active on
+   production right now. What the original comment got WRONG was treating
+   `SystemCallFilter` as belonging to that same "maybe just an unrecognized key"
+   risk category — it isn't: systemd 232 recognizes and enforces
+   `SystemCallFilter` just fine, so the failure mode for a syscall-level filter
+   is a live crash loop, categorically different from (and worse than) a
+   silently-skipped unrecognized directive. `qemu-arm-static` could never have
+   caught this either way, confirmed the hard way: it emulates instructions, not
+   kernel-level seccomp filtering, so a `qemu-arm-static ./wiki-server
+   --create-admin` smoke test (which this deploy DID run, and which passed) is
+   structurally incapable of exercising `SystemCallFilter` at all.
+
+   Current state (both verified live, production included): every directive
+   below `PrivateDevices=yes` in the unit file except `SystemCallFilter` — which
+   is gone — plus `SystemCallArchitectures=native` (an ABI-table restriction, not
+   a syscall-level allowlist, and confirmed not implicated in the crash: a
+   native-arch binary on native-arch hardware has nothing for this directive to
+   reject in the first place).
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
