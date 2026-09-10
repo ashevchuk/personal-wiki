@@ -42,31 +42,48 @@
   color-scheme: light;
 }
 
-/* Scrollbar styling — global (html/*), not per scroll-container, so any
-   new overflow:auto region added later (a code block, a future panel)
-   picks this up automatically without its own rule. Firefox via the
-   standard scrollbar-color/scrollbar-width properties; Chromium/Safari
-   via the older ::-webkit-scrollbar pseudo-elements — both needed, no
-   single property covers both engines yet.
+/* Scrollbar styling — global (* / .is-scrolling), not per scroll-
+   container, so any new overflow:auto region added later (a code
+   block, a future panel) picks this up automatically without its own
+   rule. Firefox AND modern Chromium via the standard scrollbar-color/
+   scrollbar-width properties; older Chromium/Safari via the
+   ::-webkit-scrollbar pseudo-elements — both needed, no single
+   property covers every engine yet.
 
    Transparent by default, revealed only by js/scrollbar.js's
    `.is-scrolling` class (added while an actual scroll is in flight,
    removed ~600ms after it stops) or by :hover directly on the
    scrollbar's own track — an always-visible scrollbar reads as visual
    noise on every page whether or not anything is actually scrolling
-   right now. */
-html {
+   right now.
+
+   `*`/`.is-scrolling`, NOT `html`/`html.is-scrolling` — confirmed live
+   (2026-09-10) that scrollbar-color/scrollbar-width do NOT reliably
+   inherit from an ancestor into a nested overflow:auto box's OWN
+   scrollbar on this engine: with the rule scoped to `html`, the page's
+   own (document-level) scrollbar worked fine, but .sidebar-scroll's
+   independent scrollbar never did — getComputedStyle on it kept
+   reporting the browser default (scrollbar-width: auto, fully
+   transparent scrollbar-color) no matter what `.is-scrolling` said,
+   because `.is-scrolling` lands on .sidebar-scroll itself, never on
+   <html>, and the `html.is-scrolling` selector only ever matches when
+   the PAGE itself is what's scrolling. The ::-webkit-scrollbar-thumb
+   rules below never had this bug (they were already unscoped), which
+   is exactly why the page's own scrollbar looked right in every
+   screenshot while the sidebar's silently never worked — a real,
+   confirmed intermittent-looking bug, not a flaky repro. */
+* {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
 }
 
-html.is-scrolling {
+.is-scrolling {
   scrollbar-color: var(--border) transparent;
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 /* The up/down (or left/right) arrow-button end-caps some platforms
