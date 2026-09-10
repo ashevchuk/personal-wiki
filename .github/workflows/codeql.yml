@@ -1,0 +1,89 @@
+name: CodeQL
+
+# GitHub's static analysis (CodeQL) on this project's OWN C++ source —
+# a different, complementary check from ci.yml's tests: this looks for bug
+# PATTERNS in code we wrote (buffer overflows, injection, use-after-free,
+# etc. via semantic analysis of the compiled translation units), not
+# regressions against expected behavior. Also a different problem from
+# vcpkg dependency CVE scanning (investigated separately, see
+# docs/architecture.md — that doesn't work for this project's C/C++
+# dependencies at all); CodeQL here only ever looks at src/ and tests/,
+# never at vcpkg's own port sources.
+#
+# build-mode: manual, not autobuild — CodeQL's autobuild guesses a generic
+# `cmake && make` invocation for a CMake project, which would miss
+# -DCMAKE_TOOLCHAIN_FILE=vcpkg/... entirely and fail to find any
+# dependency. Reuses the exact same vcpkg setup as ci.yml so CodeQL's
+# extractor intercepts the real compiler invocations against the real
+# dependency graph, not a stub build.
+
+"on":
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '43 4 * * 1'  # Monday 04:43 UTC, offset from ci.yml's own weekly run
+  workflow_dispatch:
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build cmake pkg-config \
+            curl zip unzip tar git python3 \
+            autoconf automake autoconf-archive libtool m4 bison flex nasm
+
+      # Same FULL-clone reasoning as ci.yml — see that workflow's own
+      # comment, and docs/architecture.md's "git clone vcpkg with a FULL
+      # clone" entry.
+      - name: Clone vcpkg
+        run: git clone https://github.com/microsoft/vcpkg.git vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Cache vcpkg installed packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-installed-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-installed-${{ runner.os }}-
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: cpp
+          build-mode: manual
+          # Only this project's own code -- vcpkg/ (the cloned tool
+          # itself) and build/vcpkg_installed (compiled dependency
+          # headers/binaries) never get flagged as if they were our bugs.
+          paths-ignore:
+            - vcpkg/**
+            - build/**
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build (traced by CodeQL)
+        run: cmake --build build -j"$(nproc)"
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:cpp"
