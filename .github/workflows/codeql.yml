@@ -63,21 +63,28 @@ jobs:
             vcpkg-installed-${{ runner.os }}-
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: cpp
           build-mode: manual
-          # Only this project's own code -- vcpkg/ (the cloned tool
-          # itself) and build/vcpkg_installed (compiled dependency
-          # headers/binaries) never get flagged as if they were our bugs.
-          # paths-ignore is NOT a direct action input (that name belongs
-          # to the unrelated on.push.paths-ignore workflow trigger) --
-          # CodeQL's own path filtering goes through an inline config
-          # block instead.
+          # ALLOWLIST (paths:), not a blocklist -- a blocklist here
+          # (paths-ignore: vcpkg/**, build/**) was tried first and
+          # genuinely missed a real vendored dependency: cpp-mcp is
+          # pulled in via CMake FetchContent (see CLAUDE.md), landing at
+          # build/_deps/cpp_mcp-src/ -- NOT under vcpkg/ at all, and
+          # `build/**` alone didn't catch it either (confirmed live: it
+          # generated a real cpp/non-https-url alert against
+          # build/_deps/cpp_mcp-src/common/httplib.h, vendored code that
+          # isn't ours to fix). An allowlist inverts the failure mode:
+          # anything not explicitly listed here is excluded by
+          # construction, so a THIRD dependency mechanism this project
+          # adds later (FetchContent, a git submodule, whatever) can't
+          # leak through the same way again without someone noticing
+          # this list needs updating.
           config: |
-            paths-ignore:
-              - vcpkg/**
-              - build/**
+            paths:
+              - src
+              - tests
 
       - name: Configure
         run: |
@@ -89,6 +96,6 @@ jobs:
         run: cmake --build build -j"$(nproc)"
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:cpp"
