@@ -982,6 +982,41 @@ now cover the GitHub Actions ecosystem in `.github/workflows/ci.yml` (enabled th
 same day, see the `vulnerability-alerts` API) — genuinely useful, but for a
 completely different, non-overlapping set of dependencies than vcpkg's C/C++ ones.
 
+## CodeQL scoping — paths/paths-ignore does not work for a built compiled language
+
+`.github/workflows/codeql.yml` originally tried to scope CodeQL to this project's
+own `src/`/`tests/` via a `paths:` allowlist passed as inline config to
+`codeql-action/init`. This looked correct on every push-triggered run (5–8 min)
+for four days straight — zero stray alerts. The weekly scheduled run
+(2026-09-14, 41 min — five times longer) told a different story: 70 new open
+alerts, every single one inside `vcpkg/buildtrees/{openssl,c-ares,zlib}/...` —
+none of it this project's code.
+
+Root cause, confirmed two ways: (1) the actual `user-config.yaml` CodeQL wrote at
+run time DID contain the correct `paths: [src, tests]` — pulled the real log
+line, the allowlist was received intact, so this wasn't a YAML-passing bug; (2)
+GitHub's own docs state `paths`/`paths-ignore` apply "when you analyze a compiled
+language without building the code" and that scoping a built compiled language
+requires altering "appropriate build steps in the workflow" instead — i.e. the
+option is a documented no-op once a real build (`build-mode: manual`, as here) is
+involved. The push runs looked clean only because `actions/cache` kept hitting
+(unchanged `vcpkg.json` hash) and vcpkg had nothing left to rebuild — no
+compilation of `openssl`/`c-ares`/`zlib` ever happened on those runs for CodeQL to
+trace. The scheduled run hit a cold cache, rebuilt every vcpkg port from source,
+and CodeQL — already tracing by then — dutifully flagged all of it.
+
+**Fix**: moved the `Configure` step (the one that triggers vcpkg manifest-mode
+install, i.e. actually compiles any cache-missed dependency) to run BEFORE
+`codeql-action/init` turns on compiler tracing, instead of after. Dependency
+builds now happen entirely outside the traced window; only `cmake --build`
+(which, by then, is just compiling `src/`/`tests/` and linking already-built
+deps) runs traced. This scopes by *when tracing starts*, not by a filter that
+doesn't apply to this build mode — removed the now-known-ineffective `paths:`
+config entirely rather than leaving it in as false reassurance. All 70 stray
+alerts dismissed (`won't fix` — vendored/upstream build output, not this
+project's code) after confirming none had a plausible connection to anything
+this project's own build steps or overlay ports touch.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

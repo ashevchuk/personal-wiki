@@ -7,8 +7,12 @@ name: CodeQL
 # regressions against expected behavior. Also a different problem from
 # vcpkg dependency CVE scanning (investigated separately, see
 # docs/architecture.md — that doesn't work for this project's C/C++
-# dependencies at all); CodeQL here only ever looks at src/ and tests/,
-# never at vcpkg's own port sources.
+# dependencies at all).
+#
+# Scoped to src/ and tests/ by STEP ORDER, not by a paths/paths-ignore
+# config filter — see the comment on the "Configure" step below for why
+# that filter doesn't actually work here and what real live incident
+# (70 alerts against vcpkg's own OpenSSL/c-ares/zlib sources) proved it.
 #
 # build-mode: manual, not autobuild — CodeQL's autobuild guesses a generic
 # `cmake && make` invocation for a CMake project, which would miss
@@ -62,35 +66,41 @@ jobs:
           restore-keys: |
             vcpkg-installed-${{ runner.os }}-
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v4
-        with:
-          languages: cpp
-          build-mode: manual
-          # ALLOWLIST (paths:), not a blocklist -- a blocklist here
-          # (paths-ignore: vcpkg/**, build/**) was tried first and
-          # genuinely missed a real vendored dependency: cpp-mcp is
-          # pulled in via CMake FetchContent (see CLAUDE.md), landing at
-          # build/_deps/cpp_mcp-src/ -- NOT under vcpkg/ at all, and
-          # `build/**` alone didn't catch it either (confirmed live: it
-          # generated a real cpp/non-https-url alert against
-          # build/_deps/cpp_mcp-src/common/httplib.h, vendored code that
-          # isn't ours to fix). An allowlist inverts the failure mode:
-          # anything not explicitly listed here is excluded by
-          # construction, so a THIRD dependency mechanism this project
-          # adds later (FetchContent, a git submodule, whatever) can't
-          # leak through the same way again without someone noticing
-          # this list needs updating.
-          config: |
-            paths:
-              - src
-              - tests
-
+      # Configure BEFORE CodeQL init, deliberately. CMake's configure step
+      # is what actually triggers vcpkg manifest-mode install -- meaning
+      # every dependency (OpenSSL, c-ares, zlib, md4c, ...) that isn't
+      # already cache-hit gets COMPILED FROM SOURCE right here, in
+      # vcpkg/buildtrees/. paths/paths-ignore in CodeQL's config CANNOT
+      # exclude that: GitHub's own docs are explicit that for a compiled
+      # language under build-mode manual/autobuild, paths/paths-ignore
+      # only applies "where code is built ... without building the code"
+      # -- i.e. it's a no-op once a real build is involved, and exclusion
+      # has to happen by not compiling the files at all. A `paths: [src,
+      # tests]` allowlist was tried here first and looked fine on every
+      # push run, purely because actions/cache kept hitting (same
+      # vcpkg.json hash) and vcpkg had nothing left to rebuild -- the
+      # illusion broke on the weekly schedule run, which hit a cold cache,
+      # rebuilt every vcpkg port from source, and CodeQL (already tracing
+      # by then) dutifully flagged 70 real-looking alerts in
+      # vcpkg/buildtrees/openssl/... none of which are this project's code.
+      #
+      # The actual fix: do the vcpkg-triggering configure step BEFORE
+      # `codeql-action/init` turns on compiler tracing, so dependency
+      # builds happen outside the traced window entirely. Only the
+      # `cmake --build` step below (which, once configure has already
+      # installed every dependency, just compiles src/ and tests/ plus
+      # links the prebuilt deps) runs traced.
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: cpp
+          build-mode: manual
 
       - name: Build (traced by CodeQL)
         run: cmake --build build -j"$(nproc)"
