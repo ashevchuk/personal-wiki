@@ -1,0 +1,8 @@
+# Vendored, minified third-party code — not this project's own architecture.
+# toastui-editor.min.js is a single-line minified bundle; its AST-extracted
+# classes/methods (mangled single-letter names like P, O, e()) produce huge
+# artificial "god nodes" and dozens of pseudo-communities that are Louvain
+# clustering an unminified library's call graph into noise, not anything
+# this project's own contributors wrote or decided. Excluded from graphify
+# so god-node/community reports reflect actual project architecture.
+static/js/toastui-editor/

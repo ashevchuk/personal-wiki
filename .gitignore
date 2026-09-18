@@ -5,6 +5,8 @@ build-fuzz/
 build-asan/
 out/
 
+graphify-out/
+
 # vcpkg (bootstrapped locally, not vendored in git — see docs/architecture.md)
 vcpkg/
 vcpkg_installed/
@@ -37,6 +39,8 @@ config.local.toml
 # imported by the stress scripts, not just run standalone)
 __pycache__/
 *.pyc
+
+.cache
 
 # Claude Code session-local state (scheduled-task locks, etc.) — not
 # project content
