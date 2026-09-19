@@ -365,7 +365,16 @@ self-healing state above:
   whole index row (via `IndexBuilder::reindexOneFile`, the same primitive
   `VaultWatcher` uses) — NOT a full `--reindex`. `POST .../reembed-all` does that
   for every currently-listed document and reports how many still fail afterward,
-  rather than claiming success it didn't actually verify.
+  rather than claiming success it didn't actually verify. Both are logged to
+  `mcp_audit_log` (`"admin:reembed"`/`"admin:reembed-all"` — same table and
+  `"admin:"`-prefix convention `RemoteMcpRoutes.cpp` already uses for the HTTP
+  MCP transport's own `"remote:"` prefix), success or failure, visible via the
+  existing `GET /api/admin/mcp-audit-log` — an admin retry is a real
+  write-adjacent action, and "what happened to this vault, and when" is already
+  exactly what that log answers; no reason to build a second one for the same
+  question. `reembed-all` writes ONE summary entry per call, not one per
+  document — the response body's own `attempted`/`stillFailing` counts already
+  say which.
 - **Account page UI** (`static/js/pages/account.js`, "Semantic search
   (embeddings)" section, same apply-immediately style as the Remote MCP section
   right above it — no separate "Save" button): a checkbox bound to the runtime

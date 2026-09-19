@@ -285,8 +285,8 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
 
   app.registerHandler(
       "/api/admin/embeddings-status/reembed",
-      [&indexBuilder](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback) {
+      [&indexBuilder, &mcpAuditLog](const HttpRequestPtr& req,
+                                     std::function<void(const HttpResponsePtr&)>&& callback) {
         if (auto rejection = requireAdminApi(req)) {
           callback(*rejection);
           return;
@@ -301,12 +301,22 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
           callback(resp);
           return;
         }
+        const std::string path = (*json)["path"].asString();
         // Re-derives the WHOLE index row (FTS/tags/embedding), not just the
         // embedding — the same primitive VaultWatcher uses for a single
         // changed file. Simpler than a dedicated "embedding-only" path, and
         // a document actually needing this is, almost by definition, one
         // whose index row is suspect in the first place.
-        if (!indexBuilder.reindexOneFile((*json)["path"].asString())) {
+        //
+        // Logged to mcp_audit_log (same table/endpoint as MCP write tools
+        // and the "remote:"-prefixed HTTP MCP transport calls — see
+        // RemoteMcpRoutes.cpp) under an "admin:" prefix, same convention:
+        // this is a real write-adjacent action an admin took through the
+        // Web UI, and the existing GET /api/admin/mcp-audit-log view is
+        // already exactly "what did someone do to this vault, and when" —
+        // no reason to build a second, parallel log for the same question.
+        if (!indexBuilder.reindexOneFile(path)) {
+          mcpAuditLog.record("admin:reembed", path, false, "no such document on disk");
           Json::Value err;
           err["error"] = "no such document on disk";
           auto resp = HttpResponse::newHttpJsonResponse(err);
@@ -314,6 +324,7 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
           callback(resp);
           return;
         }
+        mcpAuditLog.record("admin:reembed", path, true, "reembedded via admin retry");
         Json::Value body;
         body["ok"] = true;
         callback(HttpResponse::newHttpJsonResponse(body));
@@ -322,8 +333,8 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
 
   app.registerHandler(
       "/api/admin/embeddings-status/reembed-all",
-      [&db, &indexBuilder](const HttpRequestPtr& req,
-                            std::function<void(const HttpResponsePtr&)>&& callback) {
+      [&db, &indexBuilder, &mcpAuditLog](const HttpRequestPtr& req,
+                                          std::function<void(const HttpResponsePtr&)>&& callback) {
         if (auto rejection = requireAdminApi(req)) {
           callback(*rejection);
           return;
@@ -337,10 +348,18 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
         for (const auto& doc : pending) {
           indexBuilder.reindexOneFile(doc.path);
         }
+        const auto stillFailing = EmbeddingIndexer(db.handle()).listNeedingAttention().size();
+        // One summary row, not one per document — a batch retry is one
+        // admin action, and `pending.size()`/`stillFailing` already say
+        // exactly which documents were attempted (see the GET response's
+        // own needingAttention list for the per-document detail).
+        mcpAuditLog.record("admin:reembed-all", "",
+                            /*success=*/stillFailing == 0,
+                            "attempted " + std::to_string(pending.size()) + ", " +
+                                std::to_string(stillFailing) + " still failing");
         Json::Value body;
         body["attempted"] = static_cast<Json::UInt64>(pending.size());
-        body["stillFailing"] = static_cast<Json::UInt64>(
-            EmbeddingIndexer(db.handle()).listNeedingAttention().size());
+        body["stillFailing"] = static_cast<Json::UInt64>(stillFailing);
         callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});

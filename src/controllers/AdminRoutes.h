@@ -80,12 +80,16 @@ namespace wikicore::controllers {
 //        IndexBuilder::reindexOneFile, the same primitive VaultWatcher
 //        uses), including a fresh embed attempt — NOT a full --reindex.
 //        {"ok":true} or a 404 if the path no longer exists on disk.
+//        Logged to mcp_audit_log as "admin:reembed" (see McpAuditLog.h),
+//        success or failure — visible via GET /api/admin/mcp-audit-log
+//        same as any MCP write tool call.
 //   POST /api/admin/embeddings-status/reembed-all
 //     -> calls the above for every document listNeedingAttention() returns
 //        right now. {"attempted":N,"stillFailing":M} — stillFailing is a
 //        fresh listNeedingAttention() count taken after all attempts, so a
 //        provider that's still down shows up honestly rather than as a
-//        false "fixed".
+//        false "fixed". Logged as ONE "admin:reembed-all" summary entry
+//        (not one per document), success = stillFailing == 0.
 void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::index::IndexBuilder& indexBuilder,
                           wikicore::index::McpAuditLog& mcpAuditLog,
                           wikicore::auth::McpRemoteConfig& mcpRemoteConfig,

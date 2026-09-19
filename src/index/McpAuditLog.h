@@ -22,6 +22,13 @@ struct McpAuditEntry {
 // LLM write to the vault unsupervised, this table is what lets the
 // human admin find out what it actually did, after the fact, via
 // GET /api/admin/mcp-audit-log (AdminRoutes.cpp).
+//
+// Also reused (with an "admin:"-prefixed toolName, same convention as
+// RemoteMcpRoutes.cpp's "remote:" prefix for the HTTP MCP transport) for
+// admin-triggered actions that aren't MCP tool calls at all but are the
+// same category of question — "what happened to this vault, and when":
+// POST /api/admin/embeddings-status/reembed[-all] (AdminRoutes.cpp).
+// One shared log/view for that question beats a second, parallel one.
 class McpAuditLog {
  public:
   explicit McpAuditLog(Database& db) : db_(db) {}
