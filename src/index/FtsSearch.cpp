@@ -361,13 +361,38 @@ std::optional<std::vector<SearchResultItem>> FtsSearch::tryHybridSearch(
   }
 
   std::vector<float> queryEmbedding;
-  try {
-    queryEmbedding = provider_->embedQuery(query.text);
-  } catch (...) {
-    // Best-effort, same reasoning as IndexUpdater's own embedding step:
-    // a broken embeddings API/model must never break search itself, it
-    // should just fall back to FTS5-only for this one call.
-    return std::nullopt;
+  bool cacheHit = false;
+  {
+    std::lock_guard<std::mutex> lock(queryEmbeddingCacheMutex_);
+    auto it = queryEmbeddingCache_.find(query.text);
+    if (it != queryEmbeddingCache_.end()) {
+      queryEmbedding = it->second;
+      cacheHit = true;
+    }
+  }
+  if (!cacheHit) {
+    try {
+      queryEmbedding = provider_->embedQuery(query.text);
+    } catch (...) {
+      // Best-effort, same reasoning as IndexUpdater's own embedding step:
+      // a broken embeddings API/model must never break search itself, it
+      // should just fall back to FTS5-only for this one call.
+      return std::nullopt;
+    }
+    // Locked separately from the embedQuery() call above, deliberately —
+    // that call alone measured 1.3-2.6s on real hardware (see the cache
+    // member's own comment in FtsSearch.h); holding this mutex across it
+    // would serialize every concurrent search behind whichever request
+    // happens to be computing an embedding, even for unrelated query
+    // text. embedQuery() itself is already safely concurrent (or safely
+    // serialized, for LocalEmbeddingProvider — see its own embedMutex_)
+    // without any help from this lock.
+    std::lock_guard<std::mutex> lock(queryEmbeddingCacheMutex_);
+    if (queryEmbeddingCache_.size() >= kQueryEmbeddingCacheCap &&
+        queryEmbeddingCache_.find(query.text) == queryEmbeddingCache_.end()) {
+      queryEmbeddingCache_.clear();
+    }
+    queryEmbeddingCache_[query.text] = queryEmbedding;
   }
 
   // A generous candidate pool (not just query.limit+query.offset) so RRF

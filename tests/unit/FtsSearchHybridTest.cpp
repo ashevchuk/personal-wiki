@@ -64,6 +64,28 @@ bool containsPath(const std::vector<SearchResultItem>& results, const std::strin
   return false;
 }
 
+// Wraps a real LocalEmbeddingProvider, counting embed() calls — embedQuery()
+// isn't overridden, so it falls through to EmbeddingProvider's own default
+// (embedQuery(text) { return embed(text); }), meaning a call through
+// embedQuery() increments embedCalls exactly like IndexUpdaterEmbeddingTest's
+// own CountingEmbeddingProvider does for its embed()-side tests.
+class CountingEmbeddingProvider : public EmbeddingProvider {
+ public:
+  explicit CountingEmbeddingProvider(LocalEmbeddingProvider& inner) : inner_(inner) {}
+
+  std::vector<float> embed(const std::string& text) override {
+    ++embedCalls;
+    return inner_.embed(text);
+  }
+  std::size_t dimensions() const override { return inner_.dimensions(); }
+  std::string modelIdentifier() const override { return inner_.modelIdentifier(); }
+
+  int embedCalls = 0;
+
+ private:
+  LocalEmbeddingProvider& inner_;
+};
+
 }  // namespace
 
 TEST_CASE("FtsSearch: a plain FTS5 search (no provider) does NOT find a "
@@ -269,4 +291,39 @@ TEST_CASE("FtsSearch: maxSemanticCandidates caps how many semantic matches "
   // The one genuinely relevant document must still be the nearest
   // neighbor and survive the cap.
   REQUIRE(containsPath(results, "notes/cat.md"));
+}
+
+TEST_CASE("FtsSearch: a repeated identical query does NOT call embedQuery() "
+          "again — the whole point of caching it",
+          "[FtsSearch][real-model]") {
+  // Found live: a single embedQuery() call measured 1.3-2.6 SECONDS on the
+  // real production armv7 SBC — by far the dominant cost of a hybrid
+  // search request. search.js's tag/type filter checkboxes re-run a
+  // search with the SAME query text on every toggle, with no debounce —
+  // a real, common case this cache is meant to fix. See FtsSearch.h's own
+  // comment on queryEmbeddingCache_ for the full reasoning.
+  TempDb env;
+  LocalEmbeddingProvider realProvider(WIKI_TEST_EMBEDDING_MODEL_PATH);
+  CountingEmbeddingProvider provider(realProvider);
+  IndexUpdater updater(env.db(), &provider);
+  updater.upsertOne(makeEntry("notes/cat.md", "About cats", "The cat sat on the mat."));
+
+  FtsSearch search(env.db(), &provider);
+  SearchQuery q;
+  q.text = "A small feline animal";
+  q.includePrivate = true;
+
+  provider.embedCalls = 0;  // upsertOne() above already embedded the document once
+
+  search.search(q);
+  REQUIRE(provider.embedCalls == 1);
+
+  search.search(q);
+  REQUIRE(provider.embedCalls == 1);  // second identical query: cache hit, no new call
+
+  SearchQuery different;
+  different.text = "Quarterly financial report";
+  different.includePrivate = true;
+  search.search(different);
+  REQUIRE(provider.embedCalls == 2);  // different text: genuinely not cached yet
 }

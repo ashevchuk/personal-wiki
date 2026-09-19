@@ -3,8 +3,10 @@
 #include "embeddings/EmbeddingProvider.h"
 #include "index/Database.h"
 
+#include <mutex>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -140,6 +142,35 @@ class FtsSearch {
   embeddings::EmbeddingProvider* provider_ = nullptr;
   double maxSemanticDistance_ = 0.5;
   int maxSemanticCandidates_ = 5;
+
+  // Cache of embedQuery(query.text) results, keyed on the raw query text.
+  // Found live: a single embedQuery() call costs 1.3-2.6 SECONDS on the
+  // real production armv7 SBC (bge-small-en-v1.5, no GPU) — the dominant
+  // cost of a hybrid search request by far, FTS5+RRF is noise next to it.
+  // search.js's tag/type filter checkboxes deliberately re-run a search
+  // with the SAME query text and no debounce on every toggle (see that
+  // file's own comment) — a real, common interaction this cache turns
+  // from "another 1.3-2.6s wait" into a map lookup.
+  //
+  // Correct WITHOUT tracking model identity or query_prefix in the cache
+  // key: both are fixed for this FtsSearch instance's entire lifetime
+  // (set once at construction, from config.toml, read only at process
+  // startup) — a model swap requires a restart, which recreates this
+  // object and its cache from scratch. No cross-request staleness is
+  // possible.
+  //
+  // A hard cap, not a real LRU: /api/search doesn't require
+  // authentication for public content, so an unbounded map keyed on
+  // arbitrary caller-supplied query text would be a real memory-growth
+  // vector on this project's resource-constrained target hardware (2GB
+  // RAM measured on the real box). Clearing the whole cache on overflow
+  // rather than evicting one entry is deliberately simple — personal-wiki
+  // query volume doesn't come close to needing genuine LRU bookkeeping,
+  // and an occasional full flush costs one more slow embedQuery() call,
+  // not a correctness problem.
+  static constexpr size_t kQueryEmbeddingCacheCap = 256;
+  mutable std::mutex queryEmbeddingCacheMutex_;
+  mutable std::unordered_map<std::string, std::vector<float>> queryEmbeddingCache_;
 };
 
 }  // namespace wikicore::index

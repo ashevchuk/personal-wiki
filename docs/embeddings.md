@@ -812,6 +812,64 @@ wide open (so distance alone would admit all five), and asserts exactly
 `semantic_top_k` results come back with the one genuinely relevant document
 among them.
 
+## Query embedding latency, and caching it
+
+Real, measured cost of a single `embedQuery()` call on the actual production
+armv7 SBC (bge-small-en-v1.5, no GPU), timed directly on the real hardware
+(not `qemu-arm-static` — real timing needs real silicon), one call per query
+after a warm-up call to exclude one-time graph-setup cost:
+
+| query | embedQuery() time |
+|---|---|
+| stabilize | 1366 ms |
+| beet soup | 1465 ms |
+| markdown backlinks wiki | 1513 ms |
+| unique_ptr shared_ptr raii | 1518 ms |
+| peer to peer networking keys | 2617 ms |
+
+This dwarfs everything else in a hybrid search request — FTS5's own MATCH
+query and the RRF merge are noise by comparison. Real end-to-end
+`GET /api/search` latency measured over HTTP on the same box lines up
+exactly: 1-1.7s per request, one as high as 4s.
+
+**The fix isn't a faster model or a smaller one — it's not re-computing an
+embedding for text already embedded once.** `static/js/pages/search.js`'s
+tag/type filter checkboxes deliberately re-run a search with the SAME query
+text on every toggle, no debounce (see that file's own comment) — a real,
+common interaction, not a hypothetical one: type a query, wait out the
+1-2.6s, get results, tick a tag filter, wait out the SAME 1-2.6s again for
+text that hasn't changed at all.
+
+`FtsSearch` now caches `embedQuery()` results keyed on the raw query text
+(`queryEmbeddingCache_`, `FtsSearch.h`). Correct without tracking model
+identity or `query_prefix` in the cache key: both are fixed for the whole
+lifetime of the one `FtsSearch` instance `main.cpp` constructs at startup —
+config.toml is only read once, at startup, so a model swap requires a
+restart, which recreates this object and its cache from nothing. No
+cross-request staleness is possible.
+
+A hard cap (256 entries), not a real LRU: `/api/search` doesn't require
+authentication for public content, so an unbounded map keyed on
+caller-supplied query text would be a real memory-growth vector on this
+project's resource-constrained target (2GB RAM, measured on the real box).
+Clearing the whole cache on overflow rather than evicting one entry at a
+time is deliberately simple — personal-wiki query volume doesn't come close
+to needing real LRU bookkeeping, and an occasional full flush costs one
+more slow `embedQuery()` call, not a correctness problem.
+
+The cache lookup and the `embedQuery()` call are under TWO SEPARATE lock
+acquisitions, not one held across both — `embedQuery()` alone costs
+1.3-2.6s, and holding the cache's mutex across it would serialize every
+concurrent search behind whichever request happens to be computing an
+embedding, even for entirely unrelated query text. `LocalEmbeddingProvider`
+already has its own `embedMutex_` for `embed()`/`embedQuery()` itself (see
+"A fifth real bug" above) — this cache adds nothing to that existing
+serialization, it just lets a cache HIT skip the wait entirely.
+`tests/unit/FtsSearchHybridTest.cpp` has a permanent regression test using
+a counting embedding-provider wrapper: asserts a second identical query
+makes zero additional `embed()` calls, and a genuinely different query
+still makes one.
+
 ## Why two provider kinds, not one
 
 A personal wiki has fail-safe-private documents by default (see `architecture.md`). A
