@@ -50,8 +50,8 @@ window.WikiPages = window.WikiPages || {};
       "travels in a plain HTTP header.</p>" +
       '<p id="mcp-remote-error" style="color:#ff5555"></p>' +
       '<p id="mcp-remote-success" style="color:#50fa7b"></p>' +
-      '<p><label><input type="checkbox" id="mcp-remote-enabled"> Enabled</label></p>' +
-      '<p><label><input type="checkbox" id="mcp-remote-write"> ' +
+      '<p><label class="checkbox-label"><input type="checkbox" id="mcp-remote-enabled"> Enabled</label></p>' +
+      '<p><label class="checkbox-label"><input type="checkbox" id="mcp-remote-write"> ' +
       "Allow create/update through remote MCP (independent of the local " +
       "stdio server's own write-access setting)</label></p>" +
       "<p>Bearer token: " +
@@ -309,7 +309,7 @@ window.WikiPages = window.WikiPages || {};
     '<p id="embeddings-error" style="color:#ff5555"></p>' +
     '<p id="embeddings-success" style="color:#50fa7b"></p>' +
     '<p id="embeddings-summary">Loading&hellip;</p>' +
-    '<p><label><input type="checkbox" id="embeddings-enabled-cb"> ' +
+    '<p><label class="checkbox-label"><input type="checkbox" id="embeddings-enabled-cb"> ' +
     "Vector search enabled</label> " +
     "(turning this off falls back to plain full-text search immediately, " +
     "no restart needed)</p>" +

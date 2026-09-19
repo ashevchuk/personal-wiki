@@ -528,6 +528,21 @@ label {
   width: auto;
 }
 
+/* Same generic-`label`-is-flex-column problem as .visibility-toggle above,
+   for every OTHER inline "<label><input type=checkbox> Text</label>"
+   pair in the app (account.js's embeddings/remote-MCP toggles) — reusing
+   .visibility-toggle itself would misname the class for a checkbox that
+   has nothing to do with document visibility. */
+.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--fg);
+  width: auto;
+}
+
 input,
 textarea,
 select,

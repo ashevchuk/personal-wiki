@@ -442,6 +442,15 @@ label {
   align-items: center;
   gap: 0.4rem;
 }
+.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+.checkbox-label input[type="checkbox"] {
+  accent-color: var(--link);
+  width: auto;
+}
 .visibility-toggle input[type="checkbox"] {
   accent-color: var(--link);
   width: auto;
