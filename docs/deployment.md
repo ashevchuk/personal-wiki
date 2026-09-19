@@ -389,6 +389,79 @@ doesn't terminate TLS itself — adding a dedicated `server{}` block to the exis
 nginx (a new subdomain or a `location`) is left to the administrator by hand, it does
 NOT touch any existing nginx configuration automatically.
 
+### Porting to a different board (different CPU architecture)
+
+**First, check whether you need this section at all.** The existing
+`cross/arm-musl` target is armv7 (32-bit ARM, Cortex-A7-class or newer,
+hardfloat) — if your board is ALSO armv7/armhf, the already-built binary
+(or your own build from the exact recipe above, unmodified) just runs, no
+porting needed. If your board is x86_64, skip cross-compilation entirely —
+use the plain native build recipe at the top of this doc; `cross/` isn't
+involved. This section is only for a genuinely different CPU architecture
+(most commonly aarch64/arm64 — the 64-bit mode most current-generation
+SBCs, including newer Raspberry Pi boards, actually ship by default).
+
+**Everything target-specific lives in exactly four files**, all under
+`cross/arm-musl/` — copy that whole directory to `cross/<your-triplet-name>/`
+and edit only what's below (`ar`/`ranlib` need NO changes at all — they're
+architecture-agnostic wrappers around `zig ar`/`zig ranlib`):
+
+1. **`cc`/`c++`** — change the `-target` string to your architecture's zig
+   target triple (`zig targets` lists what your installed zig supports).
+   `arm-linux-musleabihf` becomes, for example, `aarch64-linux-musl` for a
+   64-bit ARM board. Drop `-mcpu=generic+v7a` unless your new target has an
+   equivalent reason to pin a baseline CPU feature set — that flag exists
+   specifically for armv7's own fragmented Cortex-A/ARMv7 feature story, it
+   isn't a generic requirement.
+2. **`toolchain.cmake`** — change `CMAKE_SYSTEM_PROCESSOR` and both
+   `CMAKE_C_COMPILER_TARGET`/`CMAKE_CXX_COMPILER_TARGET` to match. Leave
+   `CMAKE_LINK_DEPENDS_USE_LINKER OFF` and `CMAKE_CXX_SCAN_FOR_MODULES OFF`
+   in place for your first attempt — both work around real zig 0.16.0
+   bugs in its bundled lld/clang-scan-deps that were found on armv7 and
+   are plausibly generic to zig's cross-linking path, not proven
+   arm-specific, but this hasn't actually been verified against a second
+   architecture. If your build links cleanly without them, feel free to
+   drop them; if it SIGSEGVs identically to the documented armv7 bug
+   above, you've just found the same bug on a new target — the fix is the
+   same one line.
+3. **The vcpkg triplet file** (`arm-musl.cmake` → `<your-name>.cmake`) —
+   change `VCPKG_TARGET_ARCHITECTURE` to vcpkg's own name for your
+   architecture (`arm64` for aarch64, `x64` for x86_64, `riscv64` for
+   RISC-V — see vcpkg's own triplet docs, not this project's, for the
+   authoritative list). Keep `VCPKG_CRT_LINKAGE`/`VCPKG_LIBRARY_LINKAGE`
+   `static` and the `VCPKG_CHAINLOAD_TOOLCHAIN_FILE` line pointing at your
+   new `toolchain.cmake`.
+4. **`cross/overlay-ports/`** (brotli, libuuid, md4c) — these are NOT
+   triplet-specific; the same `--overlay-ports=cross/overlay-ports` flag
+   applies regardless of which triplet you build. Whether the specific
+   patches in them (a brotli CLI-binary link crash, a libuuid CLI/test
+   build issue) are still NECESSARY for your new architecture is unverified
+   — they were found empirically on armv7, not designed in from a spec.
+   Try building without needing to touch these first; only patch further
+   if you hit a matching crash on your own target.
+
+Then run the exact same recipe as the armv7 instructions above, pointed at
+your new triplet/toolchain file instead. **The mandatory step is the same,
+too**: `qemu-<your-arch>-static ./build-<name>/tests/unit_tests` must pass
+every case, not just avoid crashing, before this binary goes anywhere near
+real hardware — the two real, non-obvious bugs documented above (the
+lld depfile SIGSEGV, the brotli CLI crash) were BOTH found this way, not by
+reading zig's or vcpkg's own documentation. Assume a new architecture has
+its own equally non-obvious surprise waiting and budget time to actually
+find it, rather than trusting that "it's the same pattern, it'll just work."
+
+**One more path worth considering before cross-compiling at all**: the
+entire musl+static approach exists specifically to dodge a `GLIBC_2.XX not
+found` failure against an old target OS (Debian 9 stretch, glibc 2.24, in
+this project's real deployment). If your board runs a reasonably current
+Linux distro, a plain glibc cross-toolchain — or even a native on-device
+build, if the board has enough RAM/storage/patience for an hours-long
+Drogon+OpenSSL build — may work fine and sidesteps this whole `cross/`
+mechanism entirely. Nobody has actually tried a native on-device build for
+this project yet (see "Real-hardware verification status" at the top of
+this doc) — if you do, that's genuinely new information worth reporting
+back.
+
 ## Reverse-proxying under a subpath (e.g. `/wiki`)
 
 When the app needs to be exposed not on its own (sub)domain but under a path on an
