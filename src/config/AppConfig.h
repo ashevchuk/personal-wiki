@@ -103,6 +103,32 @@ struct AppConfig {
   // gets pasted into issues/screenshots, an env var doesn't accidentally
   // travel with it. Ignored for "none"/"local".
   std::string embeddingsApiKeyEnv;
+  // Local only — prepended to a search QUERY (never to a document/passage)
+  // before embedding it, via EmbeddingProvider::embedQuery(). Empty
+  // (default) means no prefix. Many small local retrieval models,
+  // including bge-family ones, are trained with an instruction prefix on
+  // the query side only — bge-small-en-v1.5's own model card recommends
+  // "Represent this sentence for searching relevant passages: ". Found
+  // live to matter a lot for result relevance — see docs/embeddings.md's
+  // "hybrid search relevance" writeup for real measured numbers. Ignored
+  // for "none"/"cloud" (OpenAI's embeddings are symmetric — no query-side
+  // convention to apply).
+  std::string embeddingsQueryPrefix;
+  // Local/cloud — the maximum cosine DISTANCE (1 - cosine similarity; 0 =
+  // identical, 2 = opposite) a document's embedding may have from the
+  // query's before FtsSearch::tryHybridSearch() lets it into the semantic
+  // candidate list RRF blends with BM25 results at all. Without this,
+  // EmbeddingIndexer::nearest() returns the closest N neighbors with NO
+  // relevance floor — on a small vault (the common case for this
+  // project), that's effectively the WHOLE vault, ranked by a distance
+  // that's often just noise for a genuinely unrelated document, and RRF
+  // then gives every one of them a nonzero score. Found live on real
+  // production content: a plain one-word query returned most of an
+  // unrelated vault (recipes, a welcome page, empty demo docs) alongside
+  // the few actually-relevant results. Default chosen empirically against
+  // real bge-small-en-v1.5 measurements — see docs/embeddings.md — not
+  // guessed; tune per-model if a different one is configured.
+  double embeddingsMaxDistance = 0.5;
 
   // [log]
   std::string logLevel = "info";

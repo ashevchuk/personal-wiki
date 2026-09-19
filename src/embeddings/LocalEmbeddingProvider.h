@@ -21,8 +21,20 @@ namespace wikicore::embeddings {
 // inference. See docs/embeddings.md.
 class LocalEmbeddingProvider : public EmbeddingProvider {
  public:
-  // Throws std::runtime_error if the model at `modelPath` fails to load.
-  explicit LocalEmbeddingProvider(const std::string& modelPath);
+  // `queryPrefix`: prepended to the text ONLY for embedQuery() calls, never
+  // for plain embed() (document/passage) calls — see embedQuery()'s own
+  // comment below and EmbeddingProvider.h's for why this asymmetry exists
+  // and matters. Empty (the default) means no prefix, i.e. embedQuery()
+  // behaves exactly like embed() — correct for a model with no documented
+  // query-side instruction convention. For bge-small-en-v1.5 specifically,
+  // the model's own card recommends
+  // "Represent this sentence for searching relevant passages: " — see
+  // config.example.toml's [embeddings] section and
+  // docs/embeddings.md's "hybrid search relevance" writeup for real,
+  // measured before/after numbers. Throws std::runtime_error if the model
+  // at `modelPath` fails to load.
+  explicit LocalEmbeddingProvider(const std::string& modelPath,
+                                   const std::string& queryPrefix = "");
   ~LocalEmbeddingProvider() override;
 
   LocalEmbeddingProvider(const LocalEmbeddingProvider&) = delete;
@@ -33,6 +45,15 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
   // comment for why this check exists and must run before llama_decode(),
   // not after.
   std::vector<float> embed(const std::string& text) override;
+
+  // embed(queryPrefix_ + text) when queryPrefix_ is non-empty, else
+  // identical to embed(text) — see the constructor's own comment. Adding
+  // the prefix ONLY on this path (never to a document/passage embed()
+  // call) is the whole point: an asymmetric retrieval model was trained
+  // to expect the two sides to look different, not identically prefixed
+  // or both bare.
+  std::vector<float> embedQuery(const std::string& text) override;
+
   std::size_t dimensions() const override;
   std::string modelIdentifier() const override;
 
@@ -83,6 +104,9 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
   // EmbeddingProvider.h for why this is enough without hashing tens of
   // MB on every startup).
   std::string modelIdentifier_;
+  // See the constructor's own comment — empty means embedQuery() behaves
+  // identically to embed().
+  std::string queryPrefix_;
 };
 
 }  // namespace wikicore::embeddings

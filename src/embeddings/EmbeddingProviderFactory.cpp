@@ -28,7 +28,8 @@ std::unique_ptr<EmbeddingProvider> createEmbeddingProvider(
           "embeddings.provider = \"local\" requires embeddings.model_path to "
           "be set (path to a GGUF model file)");
     }
-    return std::make_unique<LocalEmbeddingProvider>(config.embeddingsModelPath);
+    return std::make_unique<LocalEmbeddingProvider>(config.embeddingsModelPath,
+                                                      config.embeddingsQueryPrefix);
 #else
     throw std::runtime_error(
         "embeddings.provider = \"local\" requires this binary to be built "

@@ -362,7 +362,7 @@ std::optional<std::vector<SearchResultItem>> FtsSearch::tryHybridSearch(
 
   std::vector<float> queryEmbedding;
   try {
-    queryEmbedding = provider_->embed(query.text);
+    queryEmbedding = provider_->embedQuery(query.text);
   } catch (...) {
     // Best-effort, same reasoning as IndexUpdater's own embedding step:
     // a broken embeddings API/model must never break search itself, it
@@ -378,8 +378,18 @@ std::optional<std::vector<SearchResultItem>> FtsSearch::tryHybridSearch(
   const std::vector<int64_t> bm25Candidates =
       bm25CandidateRowIds(query, matchExpr, kCandidatePoolSize);
 
+  // Cosine-distance cutoff — see maxSemanticDistance_'s own comment in
+  // FtsSearch.h for why this is necessary, not optional polish:
+  // EmbeddingIndexer::nearest() has no relevance floor of its own, so on
+  // a small vault "the nearest kCandidatePoolSize neighbors" is
+  // effectively the WHOLE vault, ranked by a distance that's often pure
+  // noise for a genuinely unrelated document. Filtering here, before RRF
+  // ever sees these rowids, is what actually keeps irrelevant documents
+  // out of hybrid results — RRF itself has no way to reject a candidate
+  // once it's in a ranked list, only rank it.
   std::vector<int64_t> semanticCandidates;
   for (const auto& neighbor : indexer.nearest(queryEmbedding, kCandidatePoolSize)) {
+    if (neighbor.distance > maxSemanticDistance_) continue;
     semanticCandidates.push_back(neighbor.documentRowId);
   }
 

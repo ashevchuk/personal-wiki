@@ -179,3 +179,45 @@ TEST_CASE("FtsSearch: the runtime embeddings_runtime_config toggle actually "
   EmbeddingsRuntimeConfig(env.db()).setVectorSearchEnabled(true);
   REQUIRE(containsPath(search.search(q), "notes/cat.md"));
 }
+
+TEST_CASE("FtsSearch: a genuinely unrelated document does NOT appear in "
+          "hybrid results just for being the closest thing available in a "
+          "small vault",
+          "[FtsSearch][real-model]") {
+  // Real bug, found live from a user report on real production content:
+  // EmbeddingIndexer::nearest() has no relevance floor of its own — on a
+  // small vault, "the nearest N neighbors" is effectively the WHOLE
+  // vault, ranked by a distance that's often pure noise for a genuinely
+  // unrelated document, and RRF gave every one of them a nonzero score
+  // regardless of actual relevance. A one-word query against a handful of
+  // documents returned recipes, a welcome page, and empty demo docs
+  // alongside the couple of actually-relevant results. See
+  // docs/embeddings.md's "hybrid search relevance" writeup for the real
+  // measured numbers behind the fix (a query-side instruction prefix,
+  // via embedQuery(), plus a configurable cosine-distance cutoff in
+  // FtsSearch itself).
+  TempDb env;
+  LocalEmbeddingProvider provider(
+      WIKI_TEST_EMBEDDING_MODEL_PATH,
+      "Represent this sentence for searching relevant passages: ");
+  IndexUpdater updater(env.db(), &provider);
+  updater.upsertOne(makeEntry("notes/stability.md", "API Stability",
+                               "Once a public interface stabilizes, avoid breaking changes."));
+  updater.upsertOne(
+      makeEntry("recipes/borscht.md", "Borscht",
+                "Beets, cabbage, potato, carrot, onion. Simmer broth with beef."));
+  updater.upsertOne(makeEntry("welcome.md", "Welcome", "Welcome to the wiki."));
+
+  // Default maxSemanticDistance (0.5, same as AppConfig::embeddingsMaxDistance's
+  // own default) — deliberately NOT overridden, so this test exercises the
+  // real default an admin gets without touching config.toml.
+  FtsSearch search(env.db(), &provider);
+  SearchQuery q;
+  q.text = "stabilize";
+  q.includePrivate = true;
+  const auto results = search.search(q);
+
+  REQUIRE(containsPath(results, "notes/stability.md"));
+  REQUIRE_FALSE(containsPath(results, "recipes/borscht.md"));
+  REQUIRE_FALSE(containsPath(results, "welcome.md"));
+}

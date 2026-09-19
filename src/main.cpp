@@ -215,7 +215,7 @@ int main(int argc, char** argv) {
           : cfg.attachmentInlineSafeExtensions);
   wikicore::index::IndexBuilder indexBuilder(vault, indexUpdater);
   wikicore::vault::FolderService folderService(vault, indexUpdater, indexBuilder);
-  wikicore::index::FtsSearch ftsSearch(db, activeEmbeddingProvider);
+  wikicore::index::FtsSearch ftsSearch(db, activeEmbeddingProvider, cfg.embeddingsMaxDistance);
   wikicore::index::NavQueries navQueries(db);
   // Read-only from wiki-server's side — write_access is a wiki-mcp-only
   // concept (see McpServer.cpp); this exists here purely to back the

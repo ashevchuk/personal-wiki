@@ -623,6 +623,73 @@ the result (confirming it came through the semantic/excerpt path, not an FTS5 MA
 — the same real search a browser or the MCP `search_documents` tool would see,
 observably better than FTS5-only search could produce for that query.
 
+### A real relevance bug, found from a real user report on real production content
+
+A one-word search ("stabilize") on the live wiki returned most of the vault —
+recipes, a welcome page, empty demo documents — alongside the couple of
+genuinely relevant results. Two compounding root causes, both real, both fixed
+together:
+
+**1. `EmbeddingIndexer::nearest()` has no relevance floor.** It returns the N
+closest neighbors, full stop — on a small vault (the common case for this
+project), "the N closest neighbors" is effectively the WHOLE vault, ranked by
+a distance that's often just noise for a document with nothing to do with the
+query. RRF then gives every one of them a nonzero score regardless of actual
+relevance — a candidate, once in a ranked list, has no way to be rejected by
+RRF itself, only ranked.
+
+**2. The query side was embedded exactly like a document.** bge-small-en-v1.5
+— like other small local retrieval models — is trained with an instruction
+prefix on the QUERY side only; its own model card recommends
+`"Represent this sentence for searching relevant passages: "`. Embedding a
+bare query the same way a passage gets embedded measurably narrows the gap
+between relevant and irrelevant results, which matters doubly once a distance
+threshold is added: a threshold can't cleanly separate two things that are
+already close together.
+
+Real measurements against bge-small-en-v1.5, query `"stabilize"`, cosine
+distance (0 = identical, 2 = opposite) to a handful of real documents:
+
+| document | distance, no prefix | distance, with prefix |
+|---|---|---|
+| API Stability (relevant) | 0.3415 | 0.3692 |
+| Move Semantics (relevant-ish) | 0.3988 | 0.3884 |
+| Smart Pointers (borderline) | 0.4586 | 0.4657 |
+| Borscht (irrelevant) | 0.4633 | 0.5047 |
+| Pasta Carbonara (irrelevant) | 0.4887 | 0.5431 |
+| Welcome (irrelevant) | 0.4535 | 0.5855 |
+
+Without the prefix, Borscht (0.4633) sits BELOW Smart Pointers (0.4586) — no
+single distance threshold separates relevant from irrelevant cleanly. With the
+prefix, every irrelevant document lands at 0.50+ while every relevant one
+stays under 0.47 — a real, usable gap for a threshold to sit in.
+
+**The fix, two parts:**
+- `EmbeddingProvider::embedQuery()` (new, default = `embed()`) — overridable
+  per-provider for an asymmetric retrieval model.
+  `LocalEmbeddingProvider::embedQuery()` prepends a configurable
+  `queryPrefix_` (empty by default — no behavior change unless
+  `embeddings.query_prefix` is actually set in `config.toml`).
+  `FtsSearch::tryHybridSearch()` calls `embedQuery()`, never `embed()`, for
+  the query side. `CloudEmbeddingProvider` needed no change — OpenAI's
+  embeddings are symmetric, the default (`embedQuery() == embed()`) is
+  already correct.
+- `FtsSearch`'s new `maxSemanticDistance_` (from `embeddings.max_distance`,
+  default `0.5` — chosen from the measurements above, not guessed) filters
+  `nearest()`'s results BEFORE they ever reach RRF. A document whose distance
+  exceeds it never becomes a semantic candidate, however close it happens to
+  be relative to everything else in a small vault.
+
+Verified live against a sandbox reproducing the real reported content
+(the same recipes/welcome/demo-doc mix): before the fix, searching
+`"stabilize"` returned 10 of 10 seeded documents; with `max_distance = 0.5`
+alone (no query prefix), Borscht and Pasta Carbonara still leaked through
+(their un-prefixed distances, 0.4633/0.4887, sit under 0.5); with both fixes
+together, exactly the relevant/borderline documents remained and every recipe/
+welcome/demo document was excluded. `tests/unit/LocalEmbeddingProviderTest.cpp`
+and `tests/unit/FtsSearchHybridTest.cpp` both have permanent regression tests
+built on these same real measurements.
+
 ## Why two provider kinds, not one
 
 A personal wiki has fail-safe-private documents by default (see `architecture.md`). A
@@ -739,8 +806,11 @@ every other target's compile flags untouched.
 `src/embeddings/EmbeddingProvider.h` — a minimal interface, matching this project's
 established discipline of hiding a vendored SDK behind a small internal abstraction
 (the same shape as `McpToolRegistry` hiding cpp-mcp): `embed(text) -> vector<float>`
-plus `dimensions()`. Nothing else — no speculative batching/streaming API added ahead
-of an actual second caller needing it.
+plus `dimensions()`, `modelIdentifier()`, and `embedQuery(text)` (default =
+`embed(text)`, overridable for an asymmetric retrieval model that expects the
+query and passage sides embedded differently — see "A real relevance bug"
+above for why this exists and what it fixed). Nothing else — no speculative
+batching/streaming API added ahead of an actual second caller needing it.
 
 `src/embeddings/EmbeddingProviderFactory.*` reads `AppConfig.embeddings` and returns
 the right implementation, or throws a clear `std::runtime_error` naming the missing
@@ -756,6 +826,10 @@ provider = "none"        # "none" | "local" | "cloud"
 # model_path = "..."     # local only — path to a GGUF model file
 # api_key_env = "..."    # cloud only — name of an env var holding the API key,
                           # never the raw key itself (see config.example.toml)
+# query_prefix = "..."   # local only — prepended to search queries only, not
+                          # documents (see "A real relevance bug" above)
+# max_distance = 0.5     # cosine-distance cutoff for a semantic match — default
+                          # shown even if commented out (see same section)
 ```
 
 ## Phased rollout

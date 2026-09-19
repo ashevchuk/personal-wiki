@@ -82,8 +82,15 @@ class FtsSearch {
   // and the search silently falls back to FTS5-only results for that one
   // call — same "additive, never load-bearing" reasoning as
   // IndexUpdater's own embedding step (see that class's comment).
-  explicit FtsSearch(Database& db, embeddings::EmbeddingProvider* provider = nullptr)
-      : db_(db), provider_(provider) {}
+  //
+  // maxSemanticDistance: cosine-distance cutoff (see AppConfig::
+  // embeddingsMaxDistance's own comment for why this exists — without
+  // it, a small vault's "nearest neighbors" is effectively the whole
+  // vault, and every one of them gets a nonzero RRF score regardless of
+  // actual relevance). Found live on real production content.
+  explicit FtsSearch(Database& db, embeddings::EmbeddingProvider* provider = nullptr,
+                      double maxSemanticDistance = 0.5)
+      : db_(db), provider_(provider), maxSemanticDistance_(maxSemanticDistance) {}
 
   std::vector<SearchResultItem> search(const SearchQuery& query) const;
 
@@ -117,6 +124,7 @@ class FtsSearch {
 
   Database& db_;
   embeddings::EmbeddingProvider* provider_ = nullptr;
+  double maxSemanticDistance_ = 0.5;
 };
 
 }  // namespace wikicore::index

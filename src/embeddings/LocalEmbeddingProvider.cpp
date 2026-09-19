@@ -43,7 +43,9 @@ void l2Normalize(std::vector<float>& v) {
 
 }  // namespace
 
-LocalEmbeddingProvider::LocalEmbeddingProvider(const std::string& modelPath) {
+LocalEmbeddingProvider::LocalEmbeddingProvider(const std::string& modelPath,
+                                                 const std::string& queryPrefix)
+    : queryPrefix_(queryPrefix) {
   ensureBackendInit();
 
   // Path + mtime + size, not a content hash of the whole (potentially
@@ -195,6 +197,11 @@ std::vector<float> LocalEmbeddingProvider::embed(const std::string& text) {
 
   l2Normalize(result);
   return result;
+}
+
+std::vector<float> LocalEmbeddingProvider::embedQuery(const std::string& text) {
+  if (queryPrefix_.empty()) return embed(text);
+  return embed(queryPrefix_ + text);
 }
 
 std::size_t LocalEmbeddingProvider::dimensions() const { return dimensions_; }

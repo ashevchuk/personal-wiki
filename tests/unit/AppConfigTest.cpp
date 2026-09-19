@@ -121,3 +121,25 @@ TEST_CASE("AppConfig::load: embeddings.api_key_env is read verbatim as a name, "
   REQUIRE(cfg.embeddingsProvider == "cloud");
   REQUIRE(cfg.embeddingsApiKeyEnv == "WIKI_EMBEDDINGS_API_KEY");
 }
+
+TEST_CASE("AppConfig::load: embeddings.max_distance defaults to 0.5 when not "
+          "set in config.toml",
+          "[AppConfig]") {
+  TempConfigFile file("[vault]\npath = \"./vault_data\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.embeddingsMaxDistance == 0.5);
+  REQUIRE(cfg.embeddingsQueryPrefix.empty());
+}
+
+TEST_CASE("AppConfig::load: embeddings.query_prefix/max_distance are read "
+          "verbatim when set",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[embeddings]\nprovider = \"local\"\n"
+      "query_prefix = \"Represent this sentence for searching relevant passages: \"\n"
+      "max_distance = 0.42\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.embeddingsQueryPrefix ==
+          "Represent this sentence for searching relevant passages: ");
+  REQUIRE(cfg.embeddingsMaxDistance == 0.42);
+}

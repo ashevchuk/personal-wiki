@@ -79,6 +79,10 @@ AppConfig AppConfig::load(const std::string& path) {
         (*embeddings)["model_path"].value_or(cfg.embeddingsModelPath);
     cfg.embeddingsApiKeyEnv =
         (*embeddings)["api_key_env"].value_or(cfg.embeddingsApiKeyEnv);
+    cfg.embeddingsQueryPrefix =
+        (*embeddings)["query_prefix"].value_or(cfg.embeddingsQueryPrefix);
+    cfg.embeddingsMaxDistance =
+        (*embeddings)["max_distance"].value_or(cfg.embeddingsMaxDistance);
   }
   if (auto* log = root["log"].as_table()) {
     cfg.logLevel = (*log)["level"].value_or(cfg.logLevel);

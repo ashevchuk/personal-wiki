@@ -115,6 +115,29 @@ write_access = false
 # systemd/wiki.env.example), never inline here — config.toml is plain
 # text and sometimes ends up pasted into an issue or a screenshot.
 # api_key_env = "WIKI_EMBEDDINGS_API_KEY"
+#
+# Local only — prepended to a search QUERY (never to a document) before
+# embedding it. Matters a lot for result relevance: many small local
+# retrieval models, bge-small-en-v1.5 included, are trained with an
+# instruction prefix on the query side only. bge-small-en-v1.5's own
+# model card recommends the exact string below. Leaving this unset (the
+# default) means a bare query embeds the same way a document does, which
+# measurably weakens how well genuinely relevant results separate from
+# irrelevant ones — see docs/embeddings.md's "hybrid search relevance"
+# writeup for real, measured before/after numbers from a real bug report.
+# query_prefix = "Represent this sentence for searching relevant passages: "
+#
+# Local/cloud — the maximum cosine DISTANCE (0 = identical, 2 = opposite)
+# a document may have from the query before hybrid search lets it count
+# as a semantic match at all. Without this, a small vault's "nearest
+# neighbors" is effectively the WHOLE vault ranked by a distance that's
+# often just noise for an unrelated document — found live: a one-word
+# query on real content returned recipes and a welcome page alongside the
+# actually-relevant results. 0.5 (the default, used even if this line is
+# left commented out) was chosen empirically against real
+# bge-small-en-v1.5 measurements, not guessed — tune it if a different
+# model gives a different useful range.
+# max_distance = 0.5
 
 [log]
 level = "info"   # trace | debug | info | warn | error

@@ -15,8 +15,26 @@ class EmbeddingProvider {
 
   // Throws on failure — a provider that can't embed `text` right now has
   // nothing useful to return; there's no valid all-zero-vector fallback a
-  // caller could safely treat as "similar to nothing".
+  // caller could safely treat as "similar to nothing". Used for DOCUMENT
+  // (passage) text — see embedQuery() below for the other half of an
+  // asymmetric retrieval model.
   virtual std::vector<float> embed(const std::string& text) = 0;
+
+  // Embeds a SEARCH QUERY specifically — defaults to embed(text) (correct
+  // for a symmetric model, e.g. OpenAI's embeddings, where a query and a
+  // passage are embedded identically), but overridable for an asymmetric
+  // retrieval model that expects the query and passage sides to be
+  // embedded differently. Found live to matter a lot: many small local
+  // models (bge family included) are trained with an instruction PREFIX
+  // on the query side only ("Represent this sentence for searching
+  // relevant passages: ..." for bge) — embedding a bare one-word query
+  // the same way a passage is embedded measurably weakens the
+  // similarity-score gap between genuinely relevant and irrelevant
+  // documents (see LocalEmbeddingProvider's own comment, and
+  // docs/embeddings.md's "hybrid search relevance" writeup, for real
+  // measured numbers). FtsSearch::tryHybridSearch() calls this, never
+  // embed(), for the query side.
+  virtual std::vector<float> embedQuery(const std::string& text) { return embed(text); }
 
   // Fixed per provider instance (depends on the underlying model) — a
   // caller needs this up front to size whatever storage/index it builds.

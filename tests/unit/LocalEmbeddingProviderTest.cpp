@@ -178,3 +178,59 @@ TEST_CASE("LocalEmbeddingProvider: concurrent embed() calls on the SAME "
 
   REQUIRE(failures.load() == 0);
 }
+
+TEST_CASE("LocalEmbeddingProvider: embedQuery() with no configured prefix "
+          "behaves identically to embed()",
+          "[LocalEmbeddingProvider][real-model]") {
+  LocalEmbeddingProvider provider(WIKI_TEST_EMBEDDING_MODEL_PATH);  // no queryPrefix arg
+  const auto a = provider.embed("stabilize");
+  const auto b = provider.embedQuery("stabilize");
+  REQUIRE(a.size() == b.size());
+  for (size_t i = 0; i < a.size(); ++i) REQUIRE(a[i] == b[i]);
+}
+
+TEST_CASE("LocalEmbeddingProvider: embedQuery() with a configured prefix "
+          "measurably widens the gap between a relevant and an irrelevant "
+          "document — the actual reason this exists, not just a plumbing "
+          "check",
+          "[LocalEmbeddingProvider][real-model]") {
+  // Real bug, found live from a user report: searching a real production
+  // wiki for a single word ("stabilize") returned most of the vault
+  // (recipes, a welcome page, empty demo docs) because bge-small-en-v1.5
+  // — like other small local retrieval models — is trained with an
+  // instruction prefix on the QUERY side only (its own model card:
+  // "Represent this sentence for searching relevant passages: "). Without
+  // it, a bare one-word query embeds too close to genuinely unrelated
+  // passages for any distance threshold to cleanly separate them — see
+  // docs/embeddings.md's "hybrid search relevance" writeup for the full
+  // real-measured numbers this test's assertions are drawn from.
+  LocalEmbeddingProvider withPrefix(
+      WIKI_TEST_EMBEDDING_MODEL_PATH,
+      "Represent this sentence for searching relevant passages: ");
+  LocalEmbeddingProvider withoutPrefix(WIKI_TEST_EMBEDDING_MODEL_PATH);
+
+  auto cosineDistance = [](const std::vector<float>& a, const std::vector<float>& b) {
+    double dot = 0.0;
+    for (size_t i = 0; i < a.size(); ++i) dot += static_cast<double>(a[i]) * b[i];
+    return 1.0 - dot;  // both already L2-normalized by embed()
+  };
+
+  const std::string relevantDoc =
+      "API Stability\n\nOnce a public interface stabilizes, avoid breaking changes.";
+  const std::string irrelevantDoc =
+      "Borscht\n\nBeets, cabbage, potato, carrot, onion. Simmer broth with beef.";
+
+  const auto relevantEmbedding = withoutPrefix.embed(relevantDoc);
+  const auto irrelevantEmbedding = withoutPrefix.embed(irrelevantDoc);
+
+  const double gapWithoutPrefix =
+      cosineDistance(withoutPrefix.embedQuery("stabilize"), irrelevantEmbedding) -
+      cosineDistance(withoutPrefix.embedQuery("stabilize"), relevantEmbedding);
+  const double gapWithPrefix =
+      cosineDistance(withPrefix.embedQuery("stabilize"), irrelevantEmbedding) -
+      cosineDistance(withPrefix.embedQuery("stabilize"), relevantEmbedding);
+
+  INFO("gap without prefix: " << gapWithoutPrefix);
+  INFO("gap with prefix: " << gapWithPrefix);
+  REQUIRE(gapWithPrefix > gapWithoutPrefix);
+}
