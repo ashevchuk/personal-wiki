@@ -72,6 +72,14 @@ AppConfig AppConfig::load(const std::string& path) {
       }
     }
   }
+  if (auto* embeddings = root["embeddings"].as_table()) {
+    cfg.embeddingsProvider =
+        (*embeddings)["provider"].value_or(cfg.embeddingsProvider);
+    cfg.embeddingsModelPath =
+        (*embeddings)["model_path"].value_or(cfg.embeddingsModelPath);
+    cfg.embeddingsApiKeyEnv =
+        (*embeddings)["api_key_env"].value_or(cfg.embeddingsApiKeyEnv);
+  }
   if (auto* log = root["log"].as_table()) {
     cfg.logLevel = (*log)["level"].value_or(cfg.logLevel);
   }

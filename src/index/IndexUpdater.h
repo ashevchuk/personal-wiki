@@ -1,5 +1,6 @@
 #pragma once
 
+#include "embeddings/EmbeddingProvider.h"
 #include "index/Database.h"
 
 #include <cstdint>
@@ -32,7 +33,20 @@ struct DocumentIndexEntry {
 // about.
 class IndexUpdater {
  public:
-  explicit IndexUpdater(Database& db) : db_(db) {}
+  // provider: optional (nullptr = no embedding computed on write — matches
+  // embeddings.provider="none", or a build without WIKI_ENABLE_SQLITE_VEC;
+  // see docs/embeddings.md). Not owned — must outlive this IndexUpdater
+  // (main.cpp constructs and owns both). A failed embed() call (network
+  // error for the cloud provider, model issue for local) is caught and
+  // swallowed inside upsertOne() rather than failing the whole document
+  // save — see that method's own comment for why this is a deliberate,
+  // documented best-effort step and not the "silent helper failure" shape
+  // that's normally a bug: FTS5/tags (committed just before this runs)
+  // remain the authoritative, always-succeeding search path, and a
+  // missed embedding self-heals on the next `--reindex` once it's wired
+  // up there.
+  explicit IndexUpdater(Database& db, embeddings::EmbeddingProvider* provider = nullptr)
+      : db_(db), provider_(provider) {}
 
   // Inserts the row for entry.path if new, or updates it in place if the
   // path is already indexed (path is UNIQUE). Replaces the document's tag
@@ -64,6 +78,7 @@ class IndexUpdater {
 
  private:
   Database& db_;
+  embeddings::EmbeddingProvider* provider_ = nullptr;
 
   // Guards upsertOne/removeOne's BEGIN IMMEDIATE...COMMIT/ROLLBACK
   // sequence. `db_` is a single sqlite3* connection shared by reference
@@ -86,6 +101,19 @@ class IndexUpdater {
   // prepare/step/destroy, not a multi-statement transaction, so there's
   // no BEGIN/COMMIT window for another thread to land inside.
   std::mutex mutex_;
+
+  // A SEPARATE mutex from mutex_ above, deliberately — not reused.
+  // provider_->embed() (a network call for the cloud provider, real
+  // inference for local) runs OUTSIDE both mutexes entirely, so one
+  // slow embedding call never blocks other threads' document/FTS saves
+  // (which only need mutex_) or other threads' own embedding writes.
+  // This one guards ONLY the EmbeddingIndexer's own
+  // BEGIN IMMEDIATE...COMMIT sequence against the exact same
+  // shared-connection race mutex_ exists to prevent above — two threads
+  // each finishing embed() around the same time and racing a BEGIN on
+  // this same db_ connection would reproduce that identical bug in the
+  // embeddings path if this weren't held around it.
+  std::mutex embeddingMutex_;
 };
 
 }  // namespace wikicore::index

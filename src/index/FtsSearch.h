@@ -1,9 +1,11 @@
 #pragma once
 
+#include "embeddings/EmbeddingProvider.h"
 #include "index/Database.h"
 
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace wikicore::index {
@@ -56,10 +58,14 @@ struct SearchResultItem {
   bool snippetIsHighlighted = false;  // true only for the FTS5 snippet() path
 };
 
-// Read-only search over the FTS5 index. Two modes: `text` non-empty uses
-// FTS5 MATCH + bm25() ranking + snippet(); `text` empty just lists
-// documents (newest-updated first) matching the tag/type filters, for
-// plain browsing without a query.
+// Read-only search over the FTS5 index. Three modes: `text` non-empty
+// with no embedding provider configured uses FTS5 MATCH + bm25() ranking
+// + snippet() (unchanged from before hybrid search existed); `text`
+// non-empty WITH a provider configured additionally blends in semantic
+// (cosine, via EmbeddingIndexer) ranking — see search()'s own comment for
+// how; `text` empty just lists documents (newest-updated first) matching
+// the tag/type filters, for plain browsing without a query — never
+// touches embeddings either way.
 class FtsSearch {
  public:
   // Non-printable bytes used as snippet() match delimiters instead of
@@ -69,12 +75,48 @@ class FtsSearch {
   static constexpr char kSnippetMatchStart = '\x01';
   static constexpr char kSnippetMatchEnd = '\x02';
 
-  explicit FtsSearch(Database& db) : db_(db) {}
+  // provider: optional (nullptr = FTS5-only ranking, matches
+  // embeddings.provider="none" or a build without WIKI_ENABLE_SQLITE_VEC
+  // — see docs/embeddings.md). Not owned — must outlive this FtsSearch.
+  // A failed embed() call during search (network error, etc.) is caught
+  // and the search silently falls back to FTS5-only results for that one
+  // call — same "additive, never load-bearing" reasoning as
+  // IndexUpdater's own embedding step (see that class's comment).
+  explicit FtsSearch(Database& db, embeddings::EmbeddingProvider* provider = nullptr)
+      : db_(db), provider_(provider) {}
 
   std::vector<SearchResultItem> search(const SearchQuery& query) const;
 
  private:
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  // Attempts hybrid (BM25 + semantic) ranking; std::nullopt on anything
+  // that should fall back to plain FTS5 instead of failing the whole
+  // search — no document_embeddings table yet, or provider_->embed()
+  // itself failing (network error for the cloud provider, etc.).
+  std::optional<std::vector<SearchResultItem>> tryHybridSearch(
+      const SearchQuery& query, const std::string& matchExpr) const;
+
+  // rowid-only BM25 ranking (same filters/weights as the plain-FTS5 path
+  // in search(), just without the metadata SELECT) — used to build one
+  // of the two ranked lists reciprocalRankFusion() (FtsSearch.cpp)
+  // combines.
+  std::vector<int64_t> bm25CandidateRowIds(const SearchQuery& query,
+                                            const std::string& matchExpr,
+                                            int candidateLimit) const;
+
+  // Fetches full SearchResultItem metadata for exactly `orderedRowIds`,
+  // returned in that SAME order (SQL's `IN (...)` makes no ordering
+  // promise, so this re-sorts after the fact) — snippet() for rowids
+  // that came from the BM25 side (real FTS5 MATCH context), the stored
+  // excerpt for rowids found ONLY via semantic search (snippet() has no
+  // defined result for a row that never matched the FTS5 query).
+  std::vector<SearchResultItem> fetchByRowIds(
+      const std::vector<int64_t>& orderedRowIds,
+      const std::unordered_set<int64_t>& snippetEligibleRowIds, bool includePrivate) const;
+#endif
+
   Database& db_;
+  embeddings::EmbeddingProvider* provider_ = nullptr;
 };
 
 }  // namespace wikicore::index

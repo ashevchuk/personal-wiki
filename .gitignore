@@ -3,6 +3,12 @@ build/
 build-arm/
 build-fuzz/
 build-asan/
+# Scratch trees used to verify WIKI_ENABLE_LOCAL_EMBEDDINGS/
+# WIKI_ENABLE_CLOUD_EMBEDDINGS builds (see docs/embeddings.md) — not the
+# project's own canonical build/, just parallel configs for testing the
+# optional embeddings flags without reconfiguring build/ back and forth.
+build-local-emb/
+build-cloud-emb/
 out/
 
 graphify-out/

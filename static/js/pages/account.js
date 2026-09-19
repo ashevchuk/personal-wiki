@@ -255,6 +255,196 @@ window.WikiPages = window.WikiPages || {};
     loadAuditLog();
   }
 
+  // Embeddings (semantic search) admin — GET/PUT/POST
+  // /api/admin/embeddings-status (AdminRoutes.h). These routes only exist
+  // on a WIKI_ENABLE_SQLITE_VEC build; on any other build the GET below
+  // 404s and this whole section is left out entirely rather than showing
+  // broken controls for a feature that isn't compiled in. Same
+  // apply-immediately convention as the Remote MCP section above — no
+  // "Save" button, every control fires its own request on change/click.
+  var embeddingsSectionHtml =
+    "<h2>Semantic search (embeddings)</h2>" +
+    '<p id="embeddings-error" style="color:#ff5555"></p>' +
+    '<p id="embeddings-success" style="color:#50fa7b"></p>' +
+    '<p id="embeddings-summary">Loading&hellip;</p>' +
+    '<p><label><input type="checkbox" id="embeddings-enabled-cb"> ' +
+    "Vector search enabled</label> " +
+    "(turning this off falls back to plain full-text search immediately, " +
+    "no restart needed)</p>" +
+    "<h3>Documents needing attention</h3>" +
+    "<p>Never successfully embedded yet, or the last attempt failed — NOT " +
+    "documents merely due for a routine re-embed on next save.</p>" +
+    '<p><button type="button" id="embeddings-retry-all-btn">Retry all</button></p>' +
+    '<ul id="embeddings-needing-attention-list"><li class="empty">Loading&hellip;</li></ul>';
+
+  function wireEmbeddingsSection(container) {
+    fetch(basePath() + "/api/admin/embeddings-status", { credentials: "same-origin" })
+      .then(function (resp) {
+        // Not a build with embeddings compiled in at all — leave the
+        // section out rather than rendering controls for an API that
+        // will 404 on every subsequent click.
+        if (resp.status === 404) return null;
+        if (!resp.ok) {
+          return errorFromResponse(resp).then(function (e) {
+            throw e;
+          });
+        }
+        return resp.json();
+      })
+      .then(function (status) {
+        if (!status) return;  // 404 case above — nothing to render
+
+        var section = document.createElement("div");
+        section.innerHTML = embeddingsSectionHtml;
+        container.appendChild(section);
+
+        var errorEl = document.getElementById("embeddings-error");
+        var successEl = document.getElementById("embeddings-success");
+        var summaryEl = document.getElementById("embeddings-summary");
+        var enabledCb = document.getElementById("embeddings-enabled-cb");
+        var listEl = document.getElementById("embeddings-needing-attention-list");
+
+        function showError(err) {
+          errorEl.textContent = err.message || String(err);
+          successEl.textContent = "";
+        }
+        function showSuccess(msg) {
+          successEl.textContent = msg;
+          errorEl.textContent = "";
+        }
+
+        function renderStatus(status) {
+          summaryEl.textContent = status.configured
+            ? "Provider: " +
+              status.providerModel +
+              " (" +
+              status.dimensions +
+              " dimensions)"
+            : "No embeddings provider configured (embeddings.provider = " +
+              '"none" in config.toml) — nothing below applies until one is set up. ' +
+              "See docs/embeddings.md.";
+          enabledCb.checked = status.vectorSearchEnabled;
+          enabledCb.disabled = !status.configured;
+
+          var needing = status.needingAttention || [];
+          if (needing.length === 0) {
+            listEl.innerHTML = '<li class="empty">None — every document is embedded.</li>';
+            return;
+          }
+          listEl.innerHTML = "";
+          needing.forEach(function (doc) {
+            var li = document.createElement("li");
+            var label = doc.path + (doc.lastError ? " — " + doc.lastError : " — never attempted");
+            li.appendChild(document.createTextNode(label + " "));
+            var retryBtn = document.createElement("button");
+            retryBtn.type = "button";
+            retryBtn.textContent = "Retry";
+            retryBtn.addEventListener("click", function () {
+              retryBtn.disabled = true;
+              fetch(basePath() + "/api/admin/embeddings-status/reembed", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-CSRF-Token": getCookie("wiki_csrf_token"),
+                },
+                credentials: "same-origin",
+                body: JSON.stringify({ path: doc.path }),
+              })
+                .then(function (resp) {
+                  if (!resp.ok) {
+                    return errorFromResponse(resp).then(function (e) {
+                      throw e;
+                    });
+                  }
+                  return loadStatus();
+                })
+                .then(function () {
+                  showSuccess("Retried " + doc.path + ".");
+                })
+                .catch(showError);
+            });
+            li.appendChild(retryBtn);
+            listEl.appendChild(li);
+          });
+        }
+
+        function loadStatus() {
+          return fetch(basePath() + "/api/admin/embeddings-status", {
+            credentials: "same-origin",
+          })
+            .then(function (r) {
+              return r.json();
+            })
+            .then(renderStatus);
+        }
+
+        enabledCb.addEventListener("change", function () {
+          fetch(basePath() + "/api/admin/embeddings-status", {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": getCookie("wiki_csrf_token"),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ vectorSearchEnabled: enabledCb.checked }),
+          })
+            .then(function (resp) {
+              if (!resp.ok) {
+                return errorFromResponse(resp).then(function (e) {
+                  throw e;
+                });
+              }
+              return resp.json();
+            })
+            .then(function (status) {
+              renderStatus(status);
+              showSuccess("Saved.");
+            })
+            .catch(showError);
+        });
+
+        document
+          .getElementById("embeddings-retry-all-btn")
+          .addEventListener("click", function () {
+            fetch(basePath() + "/api/admin/embeddings-status/reembed-all", {
+              method: "POST",
+              headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+              credentials: "same-origin",
+            })
+              .then(function (resp) {
+                if (!resp.ok) {
+                  return errorFromResponse(resp).then(function (e) {
+                    throw e;
+                  });
+                }
+                return resp.json();
+              })
+              .then(function (result) {
+                return loadStatus().then(function () {
+                  showSuccess(
+                    "Retried " +
+                      result.attempted +
+                      " document(s); " +
+                      result.stillFailing +
+                      " still failing."
+                  );
+                });
+              })
+              .catch(showError);
+          });
+
+        renderStatus(status);
+      })
+      .catch(function (err) {
+        // The section itself may not exist in the DOM yet if this is the
+        // initial GET failing (network error, non-404 error before any
+        // element with an id above was created) — nowhere in-page to show
+        // this, so at least surface it in the console rather than fail
+        // silently.
+        console.error("failed to load embeddings status:", err);
+      });
+  }
+
   window.WikiPages.renderAccount = function (container, session) {
     document.getElementById("page-title").textContent = "Account — wiki";
 
@@ -284,6 +474,7 @@ window.WikiPages = window.WikiPages || {};
 
     wireBackupSection();
     wireRemoteMcpSection();
+    wireEmbeddingsSection(container);
 
     var errorEl = document.getElementById("account-error");
     var successEl = document.getElementById("account-success");

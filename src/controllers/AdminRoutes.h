@@ -1,6 +1,8 @@
 #pragma once
 
 #include "auth/McpRemoteConfig.h"
+#include "embeddings/EmbeddingProvider.h"
+#include "index/Database.h"
 #include "index/IndexBuilder.h"
 #include "index/McpAuditLog.h"
 
@@ -57,9 +59,37 @@ namespace wikicore::controllers {
 // client-side JS blob/fetch dance needed, same reasoning as why this route
 // doesn't need CSRF: reading response bytes cross-origin is blocked by the
 // browser regardless, and there's no state here to forge a change to.
+//
+// Embeddings admin (only registered on a WIKI_ENABLE_SQLITE_VEC build — see
+// AdminRoutes.cpp; on any other build these routes simply don't exist, a
+// plain 404, same as the frontend section that calls them staying hidden):
+//   GET  /api/admin/embeddings-status
+//     -> {configured, providerModel, dimensions, vectorSearchEnabled,
+//         needingAttention: [{documentRowId, path, title, lastError}]}.
+//        `configured` is false for provider="none" (providerModel=="none")
+//        — see docs/embeddings.md's "Three real bugs" section on why this
+//        check matters. `needingAttention` is
+//        EmbeddingIndexer::listNeedingAttention() as-is: never attempted,
+//        or last attempt failed — never documents merely due for a routine
+//        hash-mismatch re-embed on next save.
+//   PUT  /api/admin/embeddings-status   body: {vectorSearchEnabled}
+//     -> flips the runtime toggle (EmbeddingsRuntimeConfig, no restart —
+//        see docs/embeddings.md), returns the same body as GET.
+//   POST /api/admin/embeddings-status/reembed   body: {path}
+//     -> re-derives exactly that one document's index row (via
+//        IndexBuilder::reindexOneFile, the same primitive VaultWatcher
+//        uses), including a fresh embed attempt — NOT a full --reindex.
+//        {"ok":true} or a 404 if the path no longer exists on disk.
+//   POST /api/admin/embeddings-status/reembed-all
+//     -> calls the above for every document listNeedingAttention() returns
+//        right now. {"attempted":N,"stillFailing":M} — stillFailing is a
+//        fresh listNeedingAttention() count taken after all attempts, so a
+//        provider that's still down shows up honestly rather than as a
+//        false "fixed".
 void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::index::IndexBuilder& indexBuilder,
                           wikicore::index::McpAuditLog& mcpAuditLog,
                           wikicore::auth::McpRemoteConfig& mcpRemoteConfig,
-                          const std::string& vaultPath);
+                          const std::string& vaultPath, wikicore::index::Database& db,
+                          wikicore::embeddings::EmbeddingProvider* embeddingProvider);
 
 }  // namespace wikicore::controllers

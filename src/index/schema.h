@@ -14,10 +14,16 @@ namespace wikicore::index::schema {
 
 // Migration 1: full MVP schema, including the Phase 2 document_snapshots
 // table (created but unused — versioning is deliberately out of scope for
-// the MVP). document_embeddings (sqlite-vec, Phase 2 semantic search) is
-// NOT created here: it needs the vec0 virtual table module loaded via
-// extension, which isn't wired up yet — adding that table prematurely
-// would reference a module that doesn't exist.
+// the MVP). document_embeddings (sqlite-vec) is deliberately NOT created
+// here either, unlike every other table: it's a vec0 virtual table whose
+// column width is fixed at CREATE time to a specific embedding
+// provider's dimensionality (384 for the local bge-small model, 1536 for
+// OpenAI's cloud one) — baking one into this always-applied migration
+// would make the OTHER provider kind permanently unusable without a
+// manual DROP. index::EmbeddingIndexer::ensureTable() creates (or
+// recreates, on a provider/dimension change) this table on demand
+// instead, once an EmbeddingProvider is actually configured and its
+// dimensions() are known — see docs/embeddings.md.
 inline constexpr const char* kMigration1 = R"sql(
 CREATE TABLE documents (
   rowid_id     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +159,49 @@ CREATE TABLE mcp_remote_config (
 CREATE TABLE mcp_remote_allowed_cidrs (
   id   INTEGER PRIMARY KEY,
   cidr TEXT NOT NULL UNIQUE
+);
+)sql";
+
+// Migration 5: embeddings skip-if-unchanged tracking + a runtime on/off
+// switch for vector search — see docs/embeddings.md's "Skip-if-unchanged
+// and self-healing" section.
+//
+// document_embedding_state tracks, per document, the content hash as of
+// the LAST SUCCESSFUL embed — EmbeddingIndexer::EmbeddingIndexer (via
+// IndexUpdater::upsertOne) compares a freshly-computed hash against this
+// before calling embed() at all, skipping the (potentially slow/network)
+// call entirely when nothing has changed. content_hash is '' (never a
+// real sha256 hex value) for a document that has NEVER had a successful
+// embed — deliberately never NULL, so "no row yet" (LEFT JOIN IS NULL,
+// used by the admin-facing "needs attention" query) and "row exists but
+// content_hash is unset" stay distinguishable if that's ever needed,
+// without relying on NULL doing double duty for both. last_error is
+// NULL exactly when the LAST attempt (not necessarily the last SUCCESSFUL
+// one) succeeded — a failure leaves content_hash stale (the PRE-failure
+// value, or '' if there was never a success) so the mismatch persists and
+// the next rescan retries automatically; see IndexUpdater.cpp's own
+// comment on why this is real self-healing, not a bug being papered over.
+// ON DELETE CASCADE mirrors document_tags/document_snapshots — deleting a
+// document must not leave an orphaned tracking row for a rowid that no
+// longer exists.
+inline constexpr const char* kMigration5 = R"sql(
+CREATE TABLE document_embedding_state (
+  document_rowid INTEGER PRIMARY KEY REFERENCES documents(rowid_id) ON DELETE CASCADE,
+  content_hash    TEXT NOT NULL DEFAULT '',
+  last_error      TEXT,
+  updated_at      TEXT NOT NULL
+);
+
+-- Singleton row, same CHECK(id = 1) pattern as mcp_remote_config — one
+-- vector-search on/off switch per instance, flippable from the Web UI
+-- with no server restart (see auth/EmbeddingsRuntimeConfig.h). Default
+-- ON: an admin who already configured [embeddings] in config.toml
+-- expects it active until they explicitly turn it off, not silently
+-- disabled by a migration that runs once at first startup after
+-- upgrading to this schema version.
+CREATE TABLE embeddings_runtime_config (
+  id                     INTEGER PRIMARY KEY CHECK (id = 1),
+  vector_search_enabled  INTEGER NOT NULL DEFAULT 1
 );
 )sql";
 

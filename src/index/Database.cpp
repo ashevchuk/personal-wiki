@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 
@@ -23,12 +24,50 @@ void execOrThrow(sqlite3* db, const char* sql) {
 
 // Ordered list of migrations; index 0 is schema_version 1, etc. Add new
 // entries at the end only — never edit or reorder an already-shipped one.
-constexpr std::array<const char*, 4> kMigrations = {schema::kMigration1, schema::kMigration2,
-                                                      schema::kMigration3, schema::kMigration4};
+constexpr std::array<const char*, 5> kMigrations = {schema::kMigration1, schema::kMigration2,
+                                                      schema::kMigration3, schema::kMigration4,
+                                                      schema::kMigration5};
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+// Deliberately NOT `#include <sqlite-vec.h>` here — that header pulls in
+// sqlite3ext.h unless SQLITE_CORE is defined, which redefines every
+// sqlite3_* symbol as a macro through a sqlite3_api diversion table this
+// file never initializes (it's not itself an extension entry point) —
+// that would silently break execOrThrow/sqlite3_open_v2/etc. everywhere
+// else in this file. sqlite-vec.c (the loadable-extension side, where
+// that diversion table IS the correct and intended pattern — see its own
+// sqlite3_vec_init()) is compiled as its own separate translation unit
+// (root CMakeLists.txt), so this is the ONLY declaration this file
+// needs: the exact signature sqlite-vec.h itself declares, reproduced by
+// hand instead of including the header that comes with side effects
+// this file doesn't want.
+struct sqlite3_api_routines;
+extern "C" int sqlite3_vec_init(sqlite3* db, char** pzErrMsg,
+                                 const sqlite3_api_routines* pApi);
+
+// sqlite3_auto_extension() registers vec0 for every sqlite3_open() the
+// process makes from here on (this Database's own connection AND
+// VaultWatcher's separate one — see docs/architecture.md's "VaultWatcher
+// gets its OWN Database" entry) — process-wide and permanent, so it only
+// needs doing once regardless of how many Database instances get
+// constructed. std::call_once (same shape as
+// LocalEmbeddingProvider::ensureBackendInit()) guards that.
+std::once_flag g_sqliteVecInitFlag;
+
+void ensureSqliteVecRegistered() {
+  std::call_once(g_sqliteVecInitFlag, [] {
+    sqlite3_auto_extension(reinterpret_cast<void (*)()>(sqlite3_vec_init));
+  });
+}
+#endif
 
 }  // namespace
 
 Database::Database(std::filesystem::path dbPath) {
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  ensureSqliteVecRegistered();
+#endif
+
   // Parent directory must exist before sqlite3 will create the db file.
   if (dbPath.has_parent_path()) {
     std::filesystem::create_directories(dbPath.parent_path());

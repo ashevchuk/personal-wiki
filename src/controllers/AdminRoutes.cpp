@@ -4,6 +4,11 @@
 #include "util/Time.h"
 #include "vault/BackupService.h"
 
+#ifdef WIKI_ENABLE_SQLITE_VEC
+#include "index/EmbeddingIndexer.h"
+#include "index/EmbeddingsRuntimeConfig.h"
+#endif
+
 #include <drogon/HttpResponse.h>
 
 #include <algorithm>
@@ -12,6 +17,7 @@ using namespace drogon;
 using namespace wikicore::auth;
 using namespace wikicore::index;
 using namespace wikicore::vault;
+using namespace wikicore::embeddings;
 
 namespace wikicore::controllers {
 
@@ -29,6 +35,31 @@ Json::Value remoteConfigToJson(const McpRemoteConfig& cfg) {
   return body;
 }
 
+#ifdef WIKI_ENABLE_SQLITE_VEC
+Json::Value embeddingsStatusToJson(Database& db, EmbeddingProvider* embeddingProvider) {
+  Json::Value body;
+  const bool configured =
+      embeddingProvider != nullptr && embeddingProvider->modelIdentifier() != "none";
+  body["configured"] = configured;
+  body["providerModel"] = embeddingProvider != nullptr ? embeddingProvider->modelIdentifier() : "none";
+  body["dimensions"] =
+      static_cast<Json::UInt64>(embeddingProvider != nullptr ? embeddingProvider->dimensions() : 0);
+  body["vectorSearchEnabled"] = EmbeddingsRuntimeConfig(db).isVectorSearchEnabled();
+
+  Json::Value needing(Json::arrayValue);
+  for (const auto& doc : EmbeddingIndexer(db.handle()).listNeedingAttention()) {
+    Json::Value item;
+    item["documentRowId"] = static_cast<Json::Int64>(doc.documentRowId);
+    item["path"] = doc.path;
+    item["title"] = doc.title;
+    item["lastError"] = doc.lastError ? Json::Value(*doc.lastError) : Json::Value();
+    needing.append(item);
+  }
+  body["needingAttention"] = needing;
+  return body;
+}
+#endif
+
 // Turns "2026-09-04T14:26:55Z" into "2026-09-04T14-26-55Z" — colons are
 // legal in a Linux filename but a suggested Content-Disposition name with
 // them in it trips up some browsers/OSes on the receiving end (Windows
@@ -44,7 +75,8 @@ std::string backupFilename() {
 
 void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
                           McpAuditLog& mcpAuditLog, McpRemoteConfig& mcpRemoteConfig,
-                          const std::string& vaultPath) {
+                          const std::string& vaultPath, [[maybe_unused]] Database& db,
+                          [[maybe_unused]] EmbeddingProvider* embeddingProvider) {
   app.registerHandler(
       "/api/admin/reindex",
       [&indexBuilder](const HttpRequestPtr& req,
@@ -214,6 +246,105 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
         callback(resp);
       },
       {Get, "wikicore::auth::AuthFilter"});
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  app.registerHandler(
+      "/api/admin/embeddings-status",
+      [&db, embeddingProvider](const HttpRequestPtr& req,
+                                std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        callback(HttpResponse::newHttpJsonResponse(embeddingsStatusToJson(db, embeddingProvider)));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
+  app.registerHandler(
+      "/api/admin/embeddings-status",
+      [&db, embeddingProvider](const HttpRequestPtr& req,
+                                std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("vectorSearchEnabled") ||
+            !(*json)["vectorSearchEnabled"].isBool()) {
+          Json::Value err;
+          err["error"] = "expected {\"vectorSearchEnabled\": bool}";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+        EmbeddingsRuntimeConfig(db).setVectorSearchEnabled((*json)["vectorSearchEnabled"].asBool());
+        callback(HttpResponse::newHttpJsonResponse(embeddingsStatusToJson(db, embeddingProvider)));
+      },
+      {Put, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/admin/embeddings-status/reembed",
+      [&indexBuilder](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("path") || !(*json)["path"].isString() ||
+            (*json)["path"].asString().empty()) {
+          Json::Value err;
+          err["error"] = "expected {\"path\": \"...\"}";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+        // Re-derives the WHOLE index row (FTS/tags/embedding), not just the
+        // embedding — the same primitive VaultWatcher uses for a single
+        // changed file. Simpler than a dedicated "embedding-only" path, and
+        // a document actually needing this is, almost by definition, one
+        // whose index row is suspect in the first place.
+        if (!indexBuilder.reindexOneFile((*json)["path"].asString())) {
+          Json::Value err;
+          err["error"] = "no such document on disk";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k404NotFound);
+          callback(resp);
+          return;
+        }
+        Json::Value body;
+        body["ok"] = true;
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/admin/embeddings-status/reembed-all",
+      [&db, &indexBuilder](const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        // Snapshot the list ONCE before attempting anything — each
+        // reindexOneFile() call below can itself change what
+        // listNeedingAttention() would return next (a success clears a
+        // row), so iterating a live-refreshed list here would risk
+        // skipping or double-processing entries.
+        const auto pending = EmbeddingIndexer(db.handle()).listNeedingAttention();
+        for (const auto& doc : pending) {
+          indexBuilder.reindexOneFile(doc.path);
+        }
+        Json::Value body;
+        body["attempted"] = static_cast<Json::UInt64>(pending.size());
+        body["stillFailing"] = static_cast<Json::UInt64>(
+            EmbeddingIndexer(db.handle()).listNeedingAttention().size());
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+#endif
 }
 
 }  // namespace wikicore::controllers

@@ -24,6 +24,7 @@
 #include "controllers/RemoteMcpRoutes.h"
 #include "controllers/VersionRoutes.h"
 #include "core/wikicore.h"
+#include "embeddings/EmbeddingProviderFactory.h"
 #include "index/Database.h"
 #include "index/FtsSearch.h"
 #include "index/IndexBuilder.h"
@@ -106,10 +107,11 @@ int runCreateAdmin(wikicore::index::Database& db) {
 // `wiki-server --reindex`: full vault rescan without starting the HTTP
 // server — recovery path for a deleted/corrupted index db, or documents
 // added/edited outside the app (external editor, git pull, ...).
-int runReindex(const wikicore::config::AppConfig& cfg, wikicore::index::Database& db) {
+int runReindex(const wikicore::config::AppConfig& cfg, wikicore::index::Database& db,
+               wikicore::embeddings::EmbeddingProvider* embeddingProvider) {
   std::filesystem::create_directories(cfg.vaultPath);
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
-  wikicore::index::IndexUpdater indexUpdater(db);
+  wikicore::index::IndexUpdater indexUpdater(db, embeddingProvider);
   wikicore::index::IndexBuilder builder(vault, indexUpdater);
 
   const wikicore::index::RescanStats stats = builder.fullRescan();
@@ -133,8 +135,44 @@ int main(int argc, char** argv) {
   if (argc > 1 && std::string(argv[1]) == "--create-admin") {
     return runCreateAdmin(db);
   }
+
+  // Constructed once, after --create-admin's early return (that path has
+  // no reason to pay for loading a local model or validating a cloud API
+  // key just to set a password) but before --reindex (which, like the
+  // normal server run below, DOES need it — --reindex is exactly the
+  // recovery path that should recompute embeddings for every document,
+  // not skip them). A misconfigured embeddings.provider fails the whole
+  // startup here with a clear error rather than silently running with
+  // search quietly missing its semantic half — see
+  // EmbeddingProviderFactory's own "fail loudly" contract,
+  // docs/embeddings.md.
+  std::unique_ptr<wikicore::embeddings::EmbeddingProvider> embeddingProvider;
+  try {
+    embeddingProvider = wikicore::embeddings::createEmbeddingProvider(cfg);
+  } catch (const std::exception& e) {
+    LOG_ERROR << "failed to initialize embeddings.provider = \"" << cfg.embeddingsProvider
+              << "\": " << e.what();
+    return 1;
+  }
+
+  // createEmbeddingProvider() always returns a real, non-null
+  // NullEmbeddingProvider for provider="none" rather than nullptr — "none"
+  // is meant to stay a valid, always-buildable choice on its own (see
+  // NullEmbeddingProvider.h). But every consumer below (IndexUpdater,
+  // FtsSearch) treats a raw nullptr as ITS OWN "no provider configured"
+  // signal (see their own header comments) — handing them a live
+  // NullEmbeddingProvider* instead would make every document save actually
+  // attempt embed() (which always throws by design), silently poisoning
+  // document_embedding_state with a permanent failure row for every
+  // document on any WIKI_ENABLE_SQLITE_VEC build left at its default
+  // provider="none", not just the ones that genuinely failed. Bridge the
+  // two conventions exactly once, here — every call site below uses this,
+  // never embeddingProvider.get() directly.
+  wikicore::embeddings::EmbeddingProvider* activeEmbeddingProvider =
+      embeddingProvider->modelIdentifier() == "none" ? nullptr : embeddingProvider.get();
+
   if (argc > 1 && std::string(argv[1]) == "--reindex") {
-    return runReindex(cfg, db);
+    return runReindex(cfg, db, activeEmbeddingProvider);
   }
 
   std::filesystem::create_directories(cfg.vaultPath);
@@ -159,7 +197,7 @@ int main(int argc, char** argv) {
   }
 
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
-  wikicore::index::IndexUpdater indexUpdater(db);
+  wikicore::index::IndexUpdater indexUpdater(db, activeEmbeddingProvider);
   wikicore::index::SnapshotStore snapshotStore(db);
   wikicore::vault::DocumentService documentService(vault, indexUpdater, snapshotStore);
   // config.toml's [attachments] table REPLACES the built-in defaults
@@ -176,7 +214,7 @@ int main(int argc, char** argv) {
           : cfg.attachmentInlineSafeExtensions);
   wikicore::index::IndexBuilder indexBuilder(vault, indexUpdater);
   wikicore::vault::FolderService folderService(vault, indexUpdater, indexBuilder);
-  wikicore::index::FtsSearch ftsSearch(db);
+  wikicore::index::FtsSearch ftsSearch(db, activeEmbeddingProvider);
   wikicore::index::NavQueries navQueries(db);
   // Read-only from wiki-server's side — write_access is a wiki-mcp-only
   // concept (see McpServer.cpp); this exists here purely to back the
@@ -207,7 +245,17 @@ int main(int argc, char** argv) {
   // file coordinate correctly; it does not mean one connection tolerates
   // concurrent callers each assuming they own its transaction state.
   wikicore::index::Database watcherDb(cfg.dbPath);
-  wikicore::index::IndexUpdater watcherIndexUpdater(watcherDb);
+  // Same embeddingProvider instance as the main indexUpdater above —
+  // this IndexUpdater's own, separate embeddingMutex_ member coordinates
+  // its EmbeddingIndexer calls against ITS OWN connection (watcherDb),
+  // the identical pattern already relied on for documents/FTS: distinct
+  // sqlite3* connections to the same WAL-mode file coordinate correctly
+  // at the file level (see the comment block above); a mutex only ever
+  // needed to guard multiple callers sharing ONE connection, which this
+  // one has to itself. Without this, a document changed by an external
+  // editor/git pull would stay findable via FTS but never gain a
+  // semantic embedding until the next --reindex.
+  wikicore::index::IndexUpdater watcherIndexUpdater(watcherDb, activeEmbeddingProvider);
   wikicore::index::IndexBuilder watcherIndexBuilder(vault, watcherIndexUpdater);
   wikicore::index::VaultWatcher vaultWatcher(
       cfg.vaultPath,
@@ -384,7 +432,8 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog,
-                                              remoteMcpConfig, cfg.vaultPath);
+                                              remoteMcpConfig, cfg.vaultPath, db,
+                                              embeddingProvider.get());
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
   wikicore::controllers::registerVersionRoutes(drogon::app(), indexUpdater, snapshotStore,
                                                 documentService);

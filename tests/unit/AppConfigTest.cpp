@@ -93,3 +93,31 @@ TEST_CASE("AppConfig::load: an unrecognized theme name is still read verbatim "
   const AppConfig cfg = AppConfig::load(file.path().string());
   REQUIRE(cfg.defaultTheme == "nonexistent-theme");
 }
+
+TEST_CASE("AppConfig::load: embeddings.provider defaults to \"none\" when "
+          "config.toml has no [embeddings] table at all",
+          "[AppConfig]") {
+  TempConfigFile file("[vault]\npath = \"./vault_data\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.embeddingsProvider == "none");
+  REQUIRE(cfg.embeddingsModelPath.empty());
+  REQUIRE(cfg.embeddingsApiKeyEnv.empty());
+}
+
+TEST_CASE("AppConfig::load: embeddings.provider/model_path are read verbatim",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[embeddings]\nprovider = \"local\"\nmodel_path = \"/opt/wiki/models/m.gguf\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.embeddingsProvider == "local");
+  REQUIRE(cfg.embeddingsModelPath == "/opt/wiki/models/m.gguf");
+}
+
+TEST_CASE("AppConfig::load: embeddings.api_key_env is read verbatim as a name, "
+          "not resolved to the environment variable's own value",
+          "[AppConfig]") {
+  TempConfigFile file("[embeddings]\nprovider = \"cloud\"\napi_key_env = \"WIKI_EMBEDDINGS_API_KEY\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.embeddingsProvider == "cloud");
+  REQUIRE(cfg.embeddingsApiKeyEnv == "WIKI_EMBEDDINGS_API_KEY");
+}

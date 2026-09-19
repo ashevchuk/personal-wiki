@@ -93,5 +93,28 @@ write_access = false
 # [attachments]
 # inline_safe_extensions = ["png", "jpg", "jpeg", "gif", "webp", "pdf", "txt", "md", "mp3", "mp4", "webm", "csv", "json", "ogg", "wav"]
 
+[embeddings]
+# Semantic search — see docs/embeddings.md. Both "local" (llama.cpp) and
+# "cloud" (OpenAI-compatible embeddings API) are fully implemented, but
+# each requires the binary to actually be built with the matching
+# -DWIKI_ENABLE_LOCAL_EMBEDDINGS/-DWIKI_ENABLE_CLOUD_EMBEDDINGS flag — a
+# provider that's set but not compiled in fails loudly at startup rather
+# than silently falling back. Leave this whole section out entirely (as
+# commented below) for the same effect as "none" — FTS5-only search, no
+# different from today.
+#
+# provider = "none"   # "none" | "local" | "cloud"
+#
+# Local only — path to a GGUF model file (requires a binary built with
+# -DWIKI_ENABLE_LOCAL_EMBEDDINGS=ON).
+# model_path = "/opt/wiki/models/embedding-model.gguf"
+#
+# Cloud only — the NAME of an environment variable holding the API key,
+# NOT the key itself (requires -DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON). Set
+# that environment variable via systemd/wiki.env (see
+# systemd/wiki.env.example), never inline here — config.toml is plain
+# text and sometimes ends up pasted into an issue or a screenshot.
+# api_key_env = "WIKI_EMBEDDINGS_API_KEY"
+
 [log]
 level = "info"   # trace | debug | info | warn | error

@@ -2,7 +2,14 @@
 
 #include "index/Statement.h"
 
+#ifdef WIKI_ENABLE_SQLITE_VEC
+#include "index/EmbeddingIndexer.h"
+#include "index/EmbeddingsRuntimeConfig.h"
+#endif
+
+#include <algorithm>
 #include <sstream>
+#include <unordered_map>
 
 namespace wikicore::index {
 
@@ -82,6 +89,70 @@ constexpr const char* kTagFilterClause =
     "EXISTS (SELECT 1 FROM document_tags dt2 JOIN tags t2 ON t2.id = dt2.tag_id "
     "WHERE dt2.document_rowid = d.rowid_id AND t2.name = ?)";
 
+// Appends the tag/docType/folder filter clauses shared by every query
+// variant below (plain browse, BM25 candidate retrieval, and the
+// hybrid-search metadata lookups) — kept in exactly one place so the SQL
+// text here and the bind order in bindCommonFilters() below can't drift
+// apart from each other across the several call sites that both now
+// need them.
+void appendCommonFilterSql(std::ostringstream& sql, const SearchQuery& query) {
+  if (query.docType) sql << " AND d.doc_type = ?";
+  if (!query.docTypes.empty()) {
+    sql << " AND d.doc_type IN (";
+    for (size_t i = 0; i < query.docTypes.size(); ++i) sql << (i == 0 ? "?" : ",?");
+    sql << ")";
+  }
+  if (query.tag) sql << " AND " << kTagFilterClause;
+  for (size_t i = 0; i < query.tags.size(); ++i) sql << " AND " << kTagFilterClause;
+  if (query.folderPrefix) sql << " AND substr(d.path, 1, ?) = ?";
+}
+
+// Binds parameters for appendCommonFilterSql() above, in the exact same
+// order its clauses appear.
+void bindCommonFilters(Statement& stmt, int& idx, const SearchQuery& query) {
+  if (query.docType) stmt.bind(idx++, *query.docType);
+  for (const auto& t : query.docTypes) stmt.bind(idx++, t);
+  if (query.tag) stmt.bind(idx++, *query.tag);
+  for (const auto& t : query.tags) stmt.bind(idx++, t);
+  if (query.folderPrefix) {
+    stmt.bind(idx++, static_cast<int64_t>(query.folderPrefix->size()));
+    stmt.bind(idx++, *query.folderPrefix);
+  }
+}
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+// Reciprocal Rank Fusion: combines two independently-ranked rowid lists
+// (BM25 lexical rank, cosine-distance semantic rank) into one score per
+// rowid, without needing to normalize BM25's and cosine distance's
+// completely different, incomparable scales — RRF only ever looks at
+// each list's own RANK POSITIONS, never the underlying scores. k=60 is
+// the standard constant from the original RRF paper (Cormack et al.
+// 2009) and virtually every production hybrid-search implementation
+// since; not tuned for this project specifically; there's no principled
+// reason yet to deviate from a well-established default. Returns rowids
+// sorted by combined score, descending (best first).
+std::vector<int64_t> reciprocalRankFusion(const std::vector<int64_t>& bm25Ranked,
+                                           const std::vector<int64_t>& semanticRanked) {
+  constexpr double k = 60.0;
+  std::unordered_map<int64_t, double> scores;
+  for (size_t i = 0; i < bm25Ranked.size(); ++i) {
+    scores[bm25Ranked[i]] += 1.0 / (k + static_cast<double>(i) + 1.0);
+  }
+  for (size_t i = 0; i < semanticRanked.size(); ++i) {
+    scores[semanticRanked[i]] += 1.0 / (k + static_cast<double>(i) + 1.0);
+  }
+
+  std::vector<std::pair<int64_t, double>> ranked(scores.begin(), scores.end());
+  std::sort(ranked.begin(), ranked.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+
+  std::vector<int64_t> result;
+  result.reserve(ranked.size());
+  for (const auto& [rowId, score] : ranked) result.push_back(rowId);
+  return result;
+}
+#endif  // WIKI_ENABLE_SQLITE_VEC
+
 std::vector<SearchResultItem> runQuery(Statement& stmt, bool highlighted) {
   std::vector<SearchResultItem> results;
   while (stmt.step()) {
@@ -102,7 +173,6 @@ std::vector<SearchResultItem> runQuery(Statement& stmt, bool highlighted) {
 }  // namespace
 
 std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const {
-  std::ostringstream sql;
   // Built once, used both to decide the query mode AND as the actual
   // bound MATCH text below — also correctly demotes an all-whitespace
   // query.text (e.g. "   ") to browse mode, which a plain
@@ -110,6 +180,24 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
   const std::string matchExpr = buildMatchExpression(query.text);
   const bool textSearch = !matchExpr.empty();
 
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  // Hybrid ranking only ever applies to an actual text search — browse
+  // mode (empty query) has no query text to embed, and its own ordering
+  // (newest-updated-first) has nothing to do with relevance ranking at
+  // all. tryHybridSearch() returns nullopt (not an empty vector — that
+  // would be indistinguishable from "zero real results") for every
+  // condition that should fall back to plain FTS5 below instead of
+  // changing the answer: no document_embeddings table yet, or
+  // provider_->embed() itself failing.
+  if (textSearch && provider_ != nullptr &&
+      EmbeddingsRuntimeConfig(db_).isVectorSearchEnabled()) {
+    if (auto hybridResults = tryHybridSearch(query, matchExpr)) {
+      return std::move(*hybridResults);
+    }
+  }
+#endif
+
+  std::ostringstream sql;
   if (textSearch) {
     // Match markers are bound parameters (kSnippetMatchStart/End), not
     // literal "<mark>" — see SearchResultItem::snippet's doc comment.
@@ -125,22 +213,7 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
         << "WHERE (? = 1 OR d.visibility = 'public')";
   }
 
-  if (query.docType) sql << " AND d.doc_type = ?";
-  // IN (...) -> OR semantics (see docTypes' doc comment in FtsSearch.h for
-  // why AND, as used for tags below, would never match anything here).
-  if (!query.docTypes.empty()) {
-    sql << " AND d.doc_type IN (";
-    for (size_t i = 0; i < query.docTypes.size(); ++i) sql << (i == 0 ? "?" : ",?");
-    sql << ")";
-  }
-  if (query.tag) sql << " AND " << kTagFilterClause;
-  // One EXISTS per requested tag -> AND semantics (must carry all of them).
-  for (size_t i = 0; i < query.tags.size(); ++i) sql << " AND " << kTagFilterClause;
-  if (query.folderPrefix) {
-    // Exact-length prefix comparison rather than LIKE, so a folder name
-    // containing a literal '%'/'_' can't be misread as a wildcard.
-    sql << " AND substr(d.path, 1, ?) = ?";
-  }
+  appendCommonFilterSql(sql, query);
 
   // Column order is (title, body, tags_flat) per schema.h — weights make
   // a title hit count for more than the same word buried in the body, and
@@ -164,18 +237,167 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
     stmt.bind(idx++, matchExpr);
   }
   stmt.bind(idx++, static_cast<int64_t>(query.includePrivate ? 1 : 0));
-  if (query.docType) stmt.bind(idx++, *query.docType);
-  for (const auto& t : query.docTypes) stmt.bind(idx++, t);
-  if (query.tag) stmt.bind(idx++, *query.tag);
-  for (const auto& t : query.tags) stmt.bind(idx++, t);
-  if (query.folderPrefix) {
-    stmt.bind(idx++, static_cast<int64_t>(query.folderPrefix->size()));
-    stmt.bind(idx++, *query.folderPrefix);
-  }
+  bindCommonFilters(stmt, idx, query);
   stmt.bind(idx++, static_cast<int64_t>(query.limit));
   stmt.bind(idx++, static_cast<int64_t>(query.offset));
 
   return runQuery(stmt, textSearch);
 }
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+
+std::vector<int64_t> FtsSearch::bm25CandidateRowIds(const SearchQuery& query,
+                                                      const std::string& matchExpr,
+                                                      int candidateLimit) const {
+  std::ostringstream sql;
+  sql << "SELECT d.rowid_id "
+      << "FROM documents_fts JOIN documents d ON d.rowid_id = documents_fts.rowid "
+      << "WHERE documents_fts MATCH ? AND (? = 1 OR d.visibility = 'public')";
+  appendCommonFilterSql(sql, query);
+  sql << " ORDER BY bm25(documents_fts, 4.0, 1.0, 2.5) LIMIT ?;";
+
+  Statement stmt(db_.handle(), sql.str());
+  int idx = 1;
+  stmt.bind(idx++, matchExpr);
+  stmt.bind(idx++, static_cast<int64_t>(query.includePrivate ? 1 : 0));
+  bindCommonFilters(stmt, idx, query);
+  stmt.bind(idx++, static_cast<int64_t>(candidateLimit));
+
+  std::vector<int64_t> rowIds;
+  while (stmt.step()) rowIds.push_back(stmt.columnInt64(0));
+  return rowIds;
+}
+
+std::vector<SearchResultItem> FtsSearch::fetchByRowIds(
+    const std::vector<int64_t>& orderedRowIds,
+    const std::unordered_set<int64_t>& snippetEligibleRowIds, bool includePrivate) const {
+  if (orderedRowIds.empty()) return {};
+
+  std::unordered_map<int64_t, SearchResultItem> byRowId;
+
+  std::vector<int64_t> snippetIds, excerptIds;
+  for (auto id : orderedRowIds) {
+    (snippetEligibleRowIds.count(id) != 0 ? snippetIds : excerptIds).push_back(id);
+  }
+
+  if (!snippetIds.empty()) {
+    std::ostringstream sql;
+    sql << "SELECT d.rowid_id, d.path, d.title, d.visibility, d.updated_at, d.doc_type, "
+        << kTagsSubquery << ", snippet(documents_fts, 1, ?, ?, '...', 12) "
+        << "FROM documents_fts JOIN documents d ON d.rowid_id = documents_fts.rowid "
+        << "WHERE d.rowid_id IN (";
+    for (size_t i = 0; i < snippetIds.size(); ++i) sql << (i == 0 ? "?" : ",?");
+    sql << ") AND (? = 1 OR d.visibility = 'public');";
+
+    Statement stmt(db_.handle(), sql.str());
+    int idx = 1;
+    stmt.bind(idx++, std::string(1, kSnippetMatchStart));
+    stmt.bind(idx++, std::string(1, kSnippetMatchEnd));
+    for (auto id : snippetIds) stmt.bind(idx++, id);
+    stmt.bind(idx++, static_cast<int64_t>(includePrivate ? 1 : 0));
+
+    while (stmt.step()) {
+      const int64_t rowId = stmt.columnInt64(0);
+      SearchResultItem item;
+      item.path = stmt.columnText(1);
+      item.title = stmt.columnText(2);
+      item.visibility = stmt.columnText(3);
+      item.updatedAt = stmt.columnText(4);
+      item.docType = stmt.columnText(5);
+      item.tags = splitCsv(stmt.columnText(6));
+      item.snippet = stmt.columnText(7);
+      item.snippetIsHighlighted = true;
+      byRowId[rowId] = std::move(item);
+    }
+  }
+
+  if (!excerptIds.empty()) {
+    std::ostringstream sql;
+    sql << "SELECT d.rowid_id, d.path, d.title, d.visibility, d.updated_at, d.doc_type, "
+        << kTagsSubquery << ", d.excerpt "
+        << "FROM documents d WHERE d.rowid_id IN (";
+    for (size_t i = 0; i < excerptIds.size(); ++i) sql << (i == 0 ? "?" : ",?");
+    sql << ") AND (? = 1 OR d.visibility = 'public');";
+
+    Statement stmt(db_.handle(), sql.str());
+    int idx = 1;
+    for (auto id : excerptIds) stmt.bind(idx++, id);
+    stmt.bind(idx++, static_cast<int64_t>(includePrivate ? 1 : 0));
+
+    while (stmt.step()) {
+      const int64_t rowId = stmt.columnInt64(0);
+      SearchResultItem item;
+      item.path = stmt.columnText(1);
+      item.title = stmt.columnText(2);
+      item.visibility = stmt.columnText(3);
+      item.updatedAt = stmt.columnText(4);
+      item.docType = stmt.columnText(5);
+      item.tags = splitCsv(stmt.columnText(6));
+      item.snippet = stmt.columnText(7);
+      item.snippetIsHighlighted = false;
+      byRowId[rowId] = std::move(item);
+    }
+  }
+
+  // Re-order to match the RRF-merged rank exactly — SQL's IN (...) makes
+  // no ordering promise. A rowid with no row back at all here (deleted
+  // between the candidate query and this one, or filtered out by the
+  // visibility check just above) is silently skipped rather than
+  // producing a hole/placeholder in the results.
+  std::vector<SearchResultItem> results;
+  results.reserve(orderedRowIds.size());
+  for (auto id : orderedRowIds) {
+    auto it = byRowId.find(id);
+    if (it != byRowId.end()) results.push_back(std::move(it->second));
+  }
+  return results;
+}
+
+std::optional<std::vector<SearchResultItem>> FtsSearch::tryHybridSearch(
+    const SearchQuery& query, const std::string& matchExpr) const {
+  EmbeddingIndexer indexer(db_.handle());
+  if (!indexer.currentDimensions().has_value()) {
+    return std::nullopt;  // nothing indexed yet — fall back to plain FTS5
+  }
+
+  std::vector<float> queryEmbedding;
+  try {
+    queryEmbedding = provider_->embed(query.text);
+  } catch (...) {
+    // Best-effort, same reasoning as IndexUpdater's own embedding step:
+    // a broken embeddings API/model must never break search itself, it
+    // should just fall back to FTS5-only for this one call.
+    return std::nullopt;
+  }
+
+  // A generous candidate pool (not just query.limit+query.offset) so RRF
+  // actually has enough of both ranked lists to blend meaningfully —
+  // limit/offset are applied to the MERGED ranking below, not to either
+  // source list individually.
+  constexpr int kCandidatePoolSize = 200;
+  const std::vector<int64_t> bm25Candidates =
+      bm25CandidateRowIds(query, matchExpr, kCandidatePoolSize);
+
+  std::vector<int64_t> semanticCandidates;
+  for (const auto& neighbor : indexer.nearest(queryEmbedding, kCandidatePoolSize)) {
+    semanticCandidates.push_back(neighbor.documentRowId);
+  }
+
+  const std::vector<int64_t> merged = reciprocalRankFusion(bm25Candidates, semanticCandidates);
+
+  if (query.offset >= static_cast<int>(merged.size())) {
+    return std::vector<SearchResultItem>{};
+  }
+  const size_t start = static_cast<size_t>(query.offset);
+  const size_t end =
+      std::min(merged.size(), start + static_cast<size_t>(std::max(query.limit, 0)));
+  const std::vector<int64_t> page(merged.begin() + static_cast<long>(start),
+                                   merged.begin() + static_cast<long>(end));
+
+  const std::unordered_set<int64_t> bm25Set(bm25Candidates.begin(), bm25Candidates.end());
+  return fetchByRowIds(page, bm25Set, query.includePrivate);
+}
+
+#endif  // WIKI_ENABLE_SQLITE_VEC
 
 }  // namespace wikicore::index

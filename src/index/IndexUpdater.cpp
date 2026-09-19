@@ -3,6 +3,14 @@
 #include "index/Statement.h"
 #include "util/WikiLinks.h"
 
+#ifdef WIKI_ENABLE_SQLITE_VEC
+#include "index/EmbeddingIndexer.h"
+
+#include <functional>
+#include <iomanip>
+#include <sstream>
+#endif
+
 #include <optional>
 
 namespace wikicore::index {
@@ -24,6 +32,25 @@ std::optional<int64_t> findRowIdByPath(Database& db, const std::string& path) {
   if (stmt.step()) return stmt.columnInt64(0);
   return std::nullopt;
 }
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+// Deliberately std::hash, not a cryptographic hash (e.g.
+// auth::sha256Hex) — this exists purely to detect "did the text used
+// for embedding change since last time", not anything
+// security-sensitive, and pulling in OpenSSL here would violate
+// wikicore's own "no Drogon/OpenSSL/auth dependency" boundary (see
+// CLAUDE.md) for a change-detection checksum that has no adversarial
+// model at all. A collision would at worst skip a re-embed that should
+// have happened — recoverable by any future edit to the document (which
+// changes the hash again) or a --reindex forcing model/dimension
+// tracking to reset, not a security hole.
+std::string contentHashForEmbedding(const std::string& title, const std::string& body) {
+  const std::size_t h = std::hash<std::string>{}(title + "\n\n" + body);
+  std::ostringstream out;
+  out << std::hex << std::setfill('0') << std::setw(sizeof(std::size_t) * 2) << h;
+  return out.str();
+}
+#endif
 
 int64_t findOrCreateTagId(Database& db, const std::string& name) {
   {
@@ -92,6 +119,13 @@ void replaceFtsEntry(Database& db, int64_t documentRowId,
 }  // namespace
 
 int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
+  // rowId is set inside the locked block below and used again afterward
+  // (by the embedding step) once the lock has already been released —
+  // see the comment right after this scope closes for why that step
+  // deliberately runs unlocked.
+  int64_t rowId;
+
+  {
   // See mutex_'s doc comment in IndexUpdater.h -- this whole
   // BEGIN...COMMIT/ROLLBACK sequence must run as one unit against `db_`,
   // never interleaved with another thread's own BEGIN on the same
@@ -103,7 +137,6 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
 
   try {
     const auto existingRowId = findRowIdByPath(db_, entry.path);
-    int64_t rowId;
 
     if (existingRowId) {
       rowId = *existingRowId;
@@ -149,12 +182,83 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
 
     Statement commit(db_.handle(), "COMMIT;");
     commit.run();
-    return rowId;
   } catch (...) {
     Statement rollback(db_.handle(), "ROLLBACK;");
     rollback.run();
     throw;
   }
+  }  // lock released here — FTS/tags/documents are committed and
+
+  // authoritative regardless of what happens below.
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  // Deliberately best-effort throughout: an embedding failure (API down,
+  // rate limited, model error) must never fail the document save itself
+  // — the FTS5 index committed just above already IS the authoritative
+  // search path (see docs/architecture.md's storage model), semantic
+  // search is strictly additive to it. Unlike the very first version of
+  // this code, a failure now ALSO records itself (EmbeddingIndexer's
+  // document_embedding_state) so an admin can see and manually retry it
+  // — see docs/embeddings.md's "Skip-if-unchanged and self-healing" —
+  // rather than the only visibility being "semantic search silently
+  // doesn't find this one document".
+  if (provider_ != nullptr) {
+    // Step 1: is an embed() call even worth attempting? ensureTable()
+    // must run first (cheap — a no-op when nothing changed) because a
+    // provider/model swap since the last run clears
+    // document_embedding_state entirely; needsEmbedding() has to see
+    // that POST-clear state, not a stale pre-clear one.
+    std::string currentHash;
+    bool needsEmbed = true;
+    try {
+      std::lock_guard<std::mutex> embLock(embeddingMutex_);
+      EmbeddingIndexer indexer(db_.handle());
+      indexer.ensureTable(provider_->dimensions(), provider_->modelIdentifier());
+      currentHash = contentHashForEmbedding(entry.title, entry.body);
+      needsEmbed = indexer.needsEmbedding(rowId, currentHash);
+    } catch (...) {
+      // ensureTable() itself hit a real sqlite error — fall through and
+      // let the embed attempt below run anyway; its own failure path
+      // records something actionable instead of this step silently
+      // deciding "nothing to do".
+    }
+
+    if (needsEmbed) {
+      // Step 2: the actual embed() call — deliberately OUTSIDE
+      // embeddingMutex_ (and mutex_, already released above). A network
+      // call for the cloud provider, or real model inference for local,
+      // must never hold a lock other threads' document/FTS saves or
+      // their own embedding writes are waiting on.
+      try {
+        const auto embedding = provider_->embed(entry.title + "\n\n" + entry.body);
+        std::lock_guard<std::mutex> embLock(embeddingMutex_);
+        EmbeddingIndexer indexer(db_.handle());
+        indexer.upsertOne(rowId, embedding);
+        indexer.recordEmbeddingSuccess(rowId, currentHash);
+      } catch (const std::exception& e) {
+        try {
+          std::lock_guard<std::mutex> embLock(embeddingMutex_);
+          EmbeddingIndexer(db_.handle()).recordEmbeddingFailure(rowId, e.what());
+        } catch (...) {
+          // Even recording the failure failed (a real sqlite error) —
+          // nothing left to do but let this document stay silently
+          // unindexed for now; the NEXT rescan/save attempt still finds
+          // needsEmbed=true (no successful hash was ever recorded) and
+          // tries again.
+        }
+      } catch (...) {
+        try {
+          std::lock_guard<std::mutex> embLock(embeddingMutex_);
+          EmbeddingIndexer(db_.handle())
+              .recordEmbeddingFailure(rowId, "unknown error (non-std::exception thrown)");
+        } catch (...) {
+        }
+      }
+    }
+  }
+#endif
+
+  return rowId;
 }
 
 std::vector<std::string> IndexUpdater::allIndexedPaths() const {
@@ -178,13 +282,16 @@ std::optional<std::string> IndexUpdater::findPathByUuid(const std::string& uuid)
 }
 
 void IndexUpdater::removeOne(const std::string& path) {
+  std::optional<int64_t> rowId;
+
+  {
   // See mutex_'s doc comment in IndexUpdater.h.
   std::lock_guard<std::mutex> lock(mutex_);
 
   Statement begin(db_.handle(), "BEGIN IMMEDIATE;");
   begin.run();
   try {
-    const auto rowId = findRowIdByPath(db_, path);
+    rowId = findRowIdByPath(db_, path);
     if (rowId) {
       Statement clearFts(db_.handle(),
                           "DELETE FROM documents_fts WHERE rowid = ?1;");
@@ -205,6 +312,18 @@ void IndexUpdater::removeOne(const std::string& path) {
     rollback.run();
     throw;
   }
+  }  // lock released — EmbeddingIndexer::removeOne() below opens its OWN
+     // BEGIN/COMMIT on this same connection; nesting it inside the
+     // transaction just committed above would be a second BEGIN on an
+     // already-open one, a real sqlite error, not just untidy.
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  if (provider_ != nullptr && rowId.has_value()) {
+    std::lock_guard<std::mutex> embLock(embeddingMutex_);
+    EmbeddingIndexer indexer(db_.handle());
+    indexer.removeOne(*rowId);
+  }
+#endif
 }
 
 }  // namespace wikicore::index

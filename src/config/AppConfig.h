@@ -88,6 +88,22 @@ struct AppConfig {
   std::unordered_map<std::string, std::string> attachmentMimeTypes;
   std::unordered_set<std::string> attachmentInlineSafeExtensions;
 
+  // [embeddings] — see docs/embeddings.md. "none" (default) means FTS5 is
+  // the only search path; always valid regardless of how this binary was
+  // built. "local"/"cloud" additionally require the matching
+  // WIKI_ENABLE_LOCAL_EMBEDDINGS/WIKI_ENABLE_CLOUD_EMBEDDINGS build flag —
+  // EmbeddingProviderFactory throws a clear startup error naming the
+  // missing flag rather than silently falling back to "none" when it
+  // doesn't (see docs/embeddings.md's "Fail loudly, not silently").
+  std::string embeddingsProvider = "none";
+  // Local only — path to a GGUF model file. Ignored for "none"/"cloud".
+  std::string embeddingsModelPath;
+  // Cloud only — the NAME of an environment variable holding the API key,
+  // never the raw key itself: config.toml is plain text and sometimes
+  // gets pasted into issues/screenshots, an env var doesn't accidentally
+  // travel with it. Ignored for "none"/"local".
+  std::string embeddingsApiKeyEnv;
+
   // [log]
   std::string logLevel = "info";
 
