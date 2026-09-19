@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config/AppConfig.h"
 #include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
@@ -31,9 +32,19 @@ namespace wikicore::mcp {
 // `auditLog` records every write attempt, success or failure, regardless
 // of this flag's current value (a write made while the flag was on stays
 // in the log even after it's turned back off).
+//
+// `cfg` is used ONLY to lazily construct a real EmbeddingProvider (see
+// EmbeddingProviderFactory) on the FIRST successful create_document/
+// update_document call, via `indexUpdater.setProvider()` — never at
+// startup, and never at all for a session that only ever uses the
+// read-only tools. A failed lazy-init (bad model path, missing API key)
+// is logged to stderr once and the write proceeds FTS5-only, same
+// best-effort philosophy as wiki-server's own embedding step — an
+// embedding problem must never fail the document save itself.
 void runServer(const std::string& serverName, const std::string& serverVersion,
                index::FtsSearch& search, index::NavQueries& nav,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
-               index::McpAuditLog& auditLog, bool includePrivate, bool writeAccess);
+               index::McpAuditLog& auditLog, bool includePrivate, bool writeAccess,
+               const config::AppConfig& cfg);
 
 }  // namespace wikicore::mcp

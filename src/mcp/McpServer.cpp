@@ -1,5 +1,7 @@
 #include "mcp/McpServer.h"
 
+#include "embeddings/EmbeddingProviderFactory.h"
+
 // From the vendored hkr04/cpp-mcp library (FetchContent, see
 // CMakeLists.txt) — mcp::json is nlohmann::ordered_json, vendored by that
 // library under common/json.hpp. Deliberately never mix this file's JSON
@@ -11,6 +13,8 @@
 #include <mcp_server.h>
 #include <mcp_tool.h>
 
+#include <cstdio>
+#include <memory>
 #include <stdexcept>
 
 using namespace wikicore;
@@ -18,6 +22,45 @@ using namespace wikicore;
 namespace wikicore::mcp {
 
 namespace {
+
+// Constructs a real EmbeddingProvider only on the first actual write —
+// see McpServer.h's own comment on `cfg` for why this matters for
+// wiki-mcp specifically (fast-starting, spawned per session, most
+// sessions never write at all). NOT thread-safe, but doesn't need to be:
+// srv.start_stdio() processes one request at a time.
+class LazyEmbeddingProvider {
+ public:
+  LazyEmbeddingProvider(index::IndexUpdater& indexUpdater, const config::AppConfig& cfg)
+      : indexUpdater_(indexUpdater), cfg_(cfg) {}
+
+  // Idempotent: a no-op on every call after the first (successful or
+  // failed) attempt.
+  void ensureLoaded() {
+    if (attempted_) return;
+    attempted_ = true;
+    try {
+      provider_ = embeddings::createEmbeddingProvider(cfg_);
+      indexUpdater_.setProvider(provider_.get());
+    } catch (const std::exception& e) {
+      // Best-effort, same philosophy as IndexUpdater::upsertOne's own
+      // embedding step — a broken embeddings config must never block the
+      // actual document write, which FTS5 already serves regardless.
+      // Logged once (attempted_ prevents retrying every subsequent
+      // write), to stderr only — see runServer()'s own comment on why
+      // stdout is reserved exclusively for JSON-RPC framing.
+      std::fprintf(stderr,
+                    "wiki-mcp: failed to initialize embeddings.provider = \"%s\" on first "
+                    "write — writes will stay FTS5-only this session: %s\n",
+                    cfg_.embeddingsProvider.c_str(), e.what());
+    }
+  }
+
+ private:
+  index::IndexUpdater& indexUpdater_;
+  const config::AppConfig& cfg_;
+  std::unique_ptr<embeddings::EmbeddingProvider> provider_;
+  bool attempted_ = false;
+};
 
 // FtsSearch's snippet() highlight markers (see docs/architecture.md) are
 // control bytes meant for an HTML render step to escape-then-swap into
@@ -186,14 +229,16 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 // attempt still lands in the audit log rather than only ever showing up
 // as a generic error the caller sees but the admin never does.
 ::mcp::tool_handler makeCreateDocumentHandler(vault::DocumentService& documents,
-                                               index::McpAuditLog& auditLog) {
-  return [&documents, &auditLog](const ::mcp::json& params,
-                                  const std::string&) -> ::mcp::json {
+                                               index::McpAuditLog& auditLog,
+                                               LazyEmbeddingProvider& lazyProvider) {
+  return [&documents, &auditLog, &lazyProvider](const ::mcp::json& params,
+                                                 const std::string&) -> ::mcp::json {
     if (!params.contains("path") || !params["path"].is_string() ||
         params["path"].get<std::string>().empty()) {
       throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
     }
     const std::string path = params["path"].get<std::string>();
+    lazyProvider.ensureLoaded();
 
     vault::DocumentInput input;
     input.title = params.value("title", std::string());
@@ -233,14 +278,16 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 // have to first fetch and echo back the title/tags/type/visibility it
 // isn't touching.
 ::mcp::tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
-                                               index::McpAuditLog& auditLog) {
-  return [&documents, &auditLog](const ::mcp::json& params,
-                                  const std::string&) -> ::mcp::json {
+                                               index::McpAuditLog& auditLog,
+                                               LazyEmbeddingProvider& lazyProvider) {
+  return [&documents, &auditLog, &lazyProvider](const ::mcp::json& params,
+                                                 const std::string&) -> ::mcp::json {
     if (!params.contains("path") || !params["path"].is_string() ||
         params["path"].get<std::string>().empty()) {
       throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
     }
     const std::string path = params["path"].get<std::string>();
+    lazyProvider.ensureLoaded();
 
     try {
       const vault::DocumentRecord existing = documents.get(path);
@@ -276,7 +323,10 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 void runServer(const std::string& serverName, const std::string& serverVersion,
                index::FtsSearch& search, index::NavQueries& nav,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
-               index::McpAuditLog& auditLog, bool includePrivate, bool writeAccess) {
+               index::McpAuditLog& auditLog, bool includePrivate, bool writeAccess,
+               const config::AppConfig& cfg) {
+  LazyEmbeddingProvider lazyProvider(indexUpdater, cfg);
+
   ::mcp::server::configuration conf;
   conf.name = serverName;
   conf.version = serverVersion;
@@ -344,7 +394,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
             .with_string_param("visibility", "\"public\" or \"private\" (default private)", false)
             .with_array_param("tags", "Tags for this document", "string", false)
             .build();
-    srv.register_tool(createDocumentTool, makeCreateDocumentHandler(documents, auditLog));
+    srv.register_tool(createDocumentTool,
+                       makeCreateDocumentHandler(documents, auditLog, lazyProvider));
 
     ::mcp::tool updateDocumentTool =
         ::mcp::tool_builder("update_document")
@@ -360,7 +411,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                                 "New \"public\"/\"private\" (omit to keep current)", false)
             .with_array_param("tags", "New tag list (omit to keep current)", "string", false)
             .build();
-    srv.register_tool(updateDocumentTool, makeUpdateDocumentHandler(documents, auditLog));
+    srv.register_tool(updateDocumentTool,
+                       makeUpdateDocumentHandler(documents, auditLog, lazyProvider));
   }
 
   // CRITICAL: nothing in this process may ever write to stdout except the

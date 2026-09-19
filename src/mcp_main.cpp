@@ -63,7 +63,7 @@ int main() {
 
   wikicore::mcp::runServer("personal-wiki", wikicore::versionString(), search, nav,
                             indexUpdater, documents, auditLog, includePrivate,
-                            cfg.mcpWriteAccess);
+                            cfg.mcpWriteAccess, cfg);
 
   return 0;
 }

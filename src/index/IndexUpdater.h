@@ -48,6 +48,19 @@ class IndexUpdater {
   explicit IndexUpdater(Database& db, embeddings::EmbeddingProvider* provider = nullptr)
       : db_(db), provider_(provider) {}
 
+  // Swaps the embedding provider after construction — used by wiki-mcp
+  // (mcp/McpServer.cpp) to lazily construct a real provider only on the
+  // FIRST actual create_document/update_document call, rather than at
+  // process startup: unlike wiki-server, wiki-mcp is spawned fresh per
+  // MCP session and is documented project-wide as staying
+  // fast-starting/dependency-light (see CLAUDE.md's two-binary-layout
+  // entry), so a read-only session (the common case — search_documents/
+  // get_document/list_tags/list_documents never touch this) shouldn't
+  // pay for loading a local model or validating a cloud API key at all.
+  // Not used by wiki-server, which already knows its provider (or lack
+  // of one) up front and passes it straight to the constructor.
+  void setProvider(embeddings::EmbeddingProvider* provider) { provider_ = provider; }
+
   // Inserts the row for entry.path if new, or updates it in place if the
   // path is already indexed (path is UNIQUE). Replaces the document's tag
   // set and FTS entry to match `entry` exactly. Returns the row's

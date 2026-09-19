@@ -16,10 +16,10 @@ not just cross-compiled for it. The build-time options, the runtime config schem
 have been verified against real inference, a real running server over real HTTP, and
 real armv7l production hardware — see "Real-model verification", "Real-API
 verification", "sqlite-vec storage — live end-to-end verification", "Hybrid ranking —
-live end-to-end verification", and phased-rollout step 6 below. The two remaining,
-explicitly documented gaps are `wiki-mcp`'s write tools and its `search_documents`
-tool not being wired to a provider (see "Known gap" below) — a deliberate scope
-boundary, not an oversight. `[embeddings].provider` defaults to `"none"`, and FTS5
+live end-to-end verification", and phased-rollout step 6 below. `wiki-mcp`'s write
+tools now embed too, lazily (see "Closed gap" below); its `search_documents` tool
+staying FTS5-only, never hybrid, remains a deliberate scope boundary, not an
+oversight. `[embeddings].provider` defaults to `"none"`, and FTS5
 remains the only search path in that mode — semantic search is additive to FTS5,
 never a replacement for it.
 
@@ -237,22 +237,42 @@ empirical finding about this model, not test flakiness), this was verified again
    through the full real stack: HTTP → `DocumentService` → `IndexUpdater` →
    `LocalEmbeddingProvider` → `EmbeddingIndexer` → `vec0` storage → KNN query.
 
-### Known gap: `wiki-mcp`'s write tools don't embed yet
+### Closed gap: `wiki-mcp`'s write tools now embed too, lazily
 
-`wiki-mcp` (`src/mcp_main.cpp`) also constructs an `IndexUpdater` for its Phase 2
-`create_document`/`update_document` tools, but it was deliberately NOT wired to a
-real `EmbeddingProvider` in this pass — `wiki-mcp` is spawned fresh per MCP session
-and documented project-wide as staying "fast-starting, dependency-light" (see
-`CLAUDE.md`'s two-binary-layout entry); unconditionally constructing a provider at
-startup would mean every MCP session pays for loading a local model (or validating a
-cloud API key) even for a purely read-only session that never calls a write tool. A
-document created/updated via MCP today is FTS-searchable immediately, same as
-always, but not semantically searchable until the next `--reindex`. Left as an
-explicit, documented gap rather than either silently skipped or rushed into a
-lazy-construct-on-first-write design without space to actually test it properly.
-For the same reason, `wiki-mcp`'s `FtsSearch` (its `search_documents` tool) also
-doesn't receive a provider — its results stay FTS5-only, never hybrid, until this
-gap is closed.
+`wiki-mcp` (`src/mcp_main.cpp`) constructs an `IndexUpdater` for its Phase 2
+`create_document`/`update_document` tools, but deliberately does NOT construct a
+real `EmbeddingProvider` at process startup — `wiki-mcp` is spawned fresh per MCP
+session and documented project-wide as staying "fast-starting, dependency-light"
+(see `CLAUDE.md`'s two-binary-layout entry); unconditionally constructing a
+provider at startup would mean every MCP session pays for loading a local model
+(or validating a cloud API key) even for a purely read-only session that never
+calls a write tool — the overwhelmingly common case (`search_documents`/
+`get_document`/`list_tags`/`list_documents`).
+
+Instead, `mcp/McpServer.cpp`'s `LazyEmbeddingProvider` constructs the real
+provider (via `EmbeddingProviderFactory`, same as `wiki-server`) on the FIRST
+actual `create_document`/`update_document` call, via
+`IndexUpdater::setProvider()` (a small setter added specifically for this —
+`wiki-server` never uses it, since it already knows its provider up front and
+passes it straight to the constructor). Every write after the first reuses the
+already-loaded provider; a read-only session never touches any of this. A failed
+lazy-init (bad model path, missing API key) is logged to stderr once and the
+write proceeds FTS5-only — same best-effort philosophy as `wiki-server`'s own
+embedding step, an embeddings problem must never fail the document save itself.
+
+Verified live over real MCP stdio (not just a unit test in isolation): a
+`tools/list` call produces zero llama.cpp loading output in stderr (the provider
+genuinely wasn't constructed yet); the first `create_document` call DOES produce
+real `llama_decode`/inference log lines, and the created document's
+`document_embedding_state` row shows a real `content_hash` with no `last_error`
+— a real, successful embed, not a silently-skipped one.
+
+`wiki-mcp`'s `FtsSearch` (its `search_documents` tool) still does NOT receive a
+provider, and stays FTS5-only rather than hybrid — that half of the original gap
+remains open on purpose: unlike the write path, there's no natural "first write"
+moment to lazily hook into for a read-only search tool, and wiring a provider in
+just for this would reopen the exact "every session pays for a model load"
+problem this section describes, just for reads instead of writes.
 
 ## Skip-if-unchanged and self-healing
 
@@ -710,11 +730,13 @@ provider = "none"        # "none" | "local" | "cloud"
    `vec0`), wired into `IndexUpdater`'s write path and `main.cpp`'s wiring (including
    `VaultWatcher`'s own `IndexUpdater`), live-verified end to end against a real
    running server (see "Live end-to-end verification" above). `wiki-mcp`'s write
-   tools are a known, documented gap — see "Known gap" above.
+   tools now embed too, lazily — see "Closed gap" above.
 5. **Hybrid ranking (done)** — `FtsSearch` blends BM25 + cosine ranking via
    Reciprocal Rank Fusion, live-verified over real HTTP (see "Hybrid ranking — live
    end-to-end verification" above). `wiki-mcp`'s `search_documents` tool stays
-   FTS5-only for now — same gap as its write tools not embedding, above.
+   FTS5-only for now — a deliberate scope boundary, not the same gap as the write
+   tools (which is now closed) — see "Closed gap" above for why it's a different
+   shape of problem.
 6. **`LocalEmbeddingProvider` on real ARM hardware (done)** — cross-compiled with the
    same `cross/arm-musl` toolchain and march fix as `wiki-server`/`wiki-mcp`, copied to
    the real production SBC's `/tmp` (never touching `/opt/wiki` — no live service or
