@@ -2,6 +2,7 @@
 
 #include "embeddings/EmbeddingProvider.h"
 
+#include <mutex>
 #include <string>
 
 // Opaque forward declarations from llama.h — kept out of this header so
@@ -38,6 +39,30 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
  private:
   llama_model* model_ = nullptr;
   llama_context* ctx_ = nullptr;
+  // Guards every embed() call on this instance — llama_context (ctx_) is
+  // mutable, shared, per-provider state (llama_memory_clear/llama_decode
+  // both write into it), and this provider is itself shared across every
+  // IndexUpdater in the process (main.cpp constructs ONE and hands the
+  // same pointer to the HTTP-request-handling IndexUpdater AND
+  // VaultWatcher's own separate one — see main.cpp's own comment on
+  // "same embeddingProvider instance"). IndexUpdater::upsertOne calls
+  // provider_->embed() deliberately OUTSIDE its own embeddingMutex_ (see
+  // that class's comment — a slow embed() must never hold the lock other
+  // threads' document saves need), which means nothing outside this class
+  // was serializing concurrent embed() calls on the SAME provider at
+  // all — two documents saved close together from two Drogon worker
+  // threads could, and did, call embed() on this same ctx_ at the same
+  // time. Found live: reproduced as a hard SIGSEGV under qemu-arm-static
+  // with two threads calling embed() on one provider instance
+  // concurrently (see docs/embeddings.md's "real bugs" — not a
+  // hypothetical, a real crash caught before it could hit production).
+  // Serializing embed() calls here (rather than pushing this requirement
+  // onto every caller) is the right owner for it: this provider is the
+  // one thing that actually knows its own inference isn't reentrant, and
+  // llama.cpp inference on one context gains nothing from being called
+  // "concurrently" anyway — ggml already parallelizes internally across
+  // threads for a single decode.
+  std::mutex embedMutex_;
   std::size_t dimensions_ = 0;
   // The context's n_ctx (the model's own trained context window — 512 for
   // bge-small-en-v1.5), captured at construction. embed() throws a real,

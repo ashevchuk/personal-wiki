@@ -8,8 +8,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <cmath>
 #include <sstream>
+#include <thread>
+#include <vector>
 
 using namespace wikicore::embeddings;
 
@@ -122,4 +125,56 @@ TEST_CASE("LocalEmbeddingProvider: a text exceeding the model's context "
   // documents).
   const auto ok = provider.embed("A short sentence.");
   REQUIRE(ok.size() == provider.dimensions());
+}
+
+TEST_CASE("LocalEmbeddingProvider: concurrent embed() calls on the SAME "
+          "provider instance from multiple threads don't corrupt each "
+          "other's results or crash",
+          "[LocalEmbeddingProvider][real-model]") {
+  // Real bug, found live while ARM-cross-compiling for a production
+  // deploy (docs/embeddings.md): IndexUpdater::upsertOne() deliberately
+  // calls provider_->embed() OUTSIDE any lock (so a slow embed doesn't
+  // block other threads' document saves) — and main.cpp shares ONE
+  // LocalEmbeddingProvider instance across every IndexUpdater in the
+  // process (the HTTP-request one AND VaultWatcher's own). Nothing was
+  // serializing two threads calling embed() on that same instance at the
+  // same time, because llama_context's mutable KV-cache/sequence state
+  // (touched by llama_memory_clear/llama_decode) isn't reentrant.
+  // Reproduced live under qemu-arm-static as a hard SIGSEGV with just two
+  // threads racing one embed() call each — not a hypothetical, a real
+  // crash caught before a production deploy. Fixed with a mutex owned by
+  // LocalEmbeddingProvider itself (embedMutex_) rather than pushing the
+  // requirement onto every caller.
+  LocalEmbeddingProvider provider(WIKI_TEST_EMBEDDING_MODEL_PATH);
+
+  constexpr int kThreads = 8;
+  constexpr int kCallsPerThread = 3;
+  std::atomic<int> failures{0};
+  std::vector<std::thread> threads;
+
+  for (int t = 0; t < kThreads; ++t) {
+    threads.emplace_back([&provider, &failures, t] {
+      for (int i = 0; i < kCallsPerThread; ++i) {
+        try {
+          const auto v = provider.embed("Thread " + std::to_string(t) + " call " +
+                                         std::to_string(i) + ": the cat sat on the mat.");
+          if (v.size() != provider.dimensions()) {
+            ++failures;
+            continue;
+          }
+          for (float x : v) {
+            if (std::isnan(x) || std::isinf(x)) {
+              ++failures;
+              break;
+            }
+          }
+        } catch (...) {
+          ++failures;
+        }
+      }
+    });
+  }
+  for (auto& th : threads) th.join();
+
+  REQUIRE(failures.load() == 0);
 }

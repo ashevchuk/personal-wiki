@@ -114,6 +114,14 @@ LocalEmbeddingProvider::~LocalEmbeddingProvider() {
 }
 
 std::vector<float> LocalEmbeddingProvider::embed(const std::string& text) {
+  // See embedMutex_'s own comment in LocalEmbeddingProvider.h — this whole
+  // function, not just the llama_decode() call, runs under the lock: the
+  // model/vocab lookups below are read-only against model_ (safe to share),
+  // but everything from here on on touches ctx_'s mutable KV-cache/sequence
+  // state, and locking only part of the function would just move the race
+  // instead of removing it.
+  std::lock_guard<std::mutex> lock(embedMutex_);
+
   const llama_vocab* vocab = llama_model_get_vocab(model_);
 
   // First call sizes the token buffer; llama_tokenize returns a negative
