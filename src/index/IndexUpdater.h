@@ -80,9 +80,12 @@ class IndexUpdater {
   Database& db_;
   embeddings::EmbeddingProvider* provider_ = nullptr;
 
-  // Guards upsertOne/removeOne's BEGIN IMMEDIATE...COMMIT/ROLLBACK
-  // sequence. `db_` is a single sqlite3* connection shared by reference
-  // across every Drogon request-handling thread (see main.cpp — the SAME
+  // Guards EVERY BEGIN IMMEDIATE...COMMIT/ROLLBACK sequence this class
+  // (and its embedding step) runs against `db_` — documents/tags/FTS in
+  // upsertOne/removeOne, AND EmbeddingIndexer::ensureTable/upsertOne/
+  // recordEmbeddingSuccess/recordEmbeddingFailure's own transactions.
+  // `db_` is a single sqlite3* connection shared by reference across
+  // every Drogon request-handling thread (see main.cpp — the SAME
   // reasoning that already gave VaultWatcher its own separate connection,
   // documented right there: "two threads racing a BEGIN on the SAME
   // connection handle is a 'cannot start a transaction within a
@@ -96,24 +99,31 @@ class IndexUpdater {
   // ({"error":"statement failed: not an error"} — SQLite's error text at
   // the point our code reads it, already stomped by another thread's
   // subsequent call on the shared connection) under concurrent writes,
-  // not a hypothetical. read-only queries (allIndexedPaths,
-  // rowIdForPath, findPathByUuid) stay unguarded: each is a single
-  // prepare/step/destroy, not a multi-statement transaction, so there's
-  // no BEGIN/COMMIT window for another thread to land inside.
+  // not a hypothetical.
+  //
+  // An EARLIER version of this class used a SEPARATE embeddingMutex_ for
+  // the embedding step's own transactions, reasoning that provider_->
+  // embed() (slow — a network call for the cloud provider, real
+  // inference for local) shouldn't hold the SAME lock other threads'
+  // document/FTS saves need. That reasoning about embed() itself was
+  // right (see upsertOne()'s own comment — it still runs fully unlocked),
+  // but having TWO INDEPENDENT mutexes each individually guard their own
+  // BEGIN/COMMIT against the SAME underlying connection was a real,
+  // separate bug: neither mutex has any idea about the other, so a
+  // thread doing a document/FTS transaction (holding only mutex_) and
+  // another thread doing EmbeddingIndexer::ensureTable()'s own BEGIN
+  // (holding only the old embeddingMutex_) could still race a BEGIN on
+  // this same connection from two threads at once — reproduced live by
+  // tests/integration/stress_embeddings_concurrency.py as the exact same
+  // "cannot start a transaction within a transaction" error, just via a
+  // different pair of call sites than the one the comment above already
+  // documents. Fixed by consolidating onto this ONE mutex_ for every
+  // BEGIN/COMMIT sequence, embedding-related or not — only embed() ITSELF
+  // stays outside it. read-only queries (allIndexedPaths, rowIdForPath,
+  // findPathByUuid) stay unguarded: each is a single prepare/step/destroy,
+  // not a multi-statement transaction, so there's no BEGIN/COMMIT window
+  // for another thread to land inside.
   std::mutex mutex_;
-
-  // A SEPARATE mutex from mutex_ above, deliberately — not reused.
-  // provider_->embed() (a network call for the cloud provider, real
-  // inference for local) runs OUTSIDE both mutexes entirely, so one
-  // slow embedding call never blocks other threads' document/FTS saves
-  // (which only need mutex_) or other threads' own embedding writes.
-  // This one guards ONLY the EmbeddingIndexer's own
-  // BEGIN IMMEDIATE...COMMIT sequence against the exact same
-  // shared-connection race mutex_ exists to prevent above — two threads
-  // each finishing embed() around the same time and racing a BEGIN on
-  // this same db_ connection would reproduce that identical bug in the
-  // embeddings path if this weren't held around it.
-  std::mutex embeddingMutex_;
 };
 
 }  // namespace wikicore::index

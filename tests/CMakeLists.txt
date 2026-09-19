@@ -166,4 +166,21 @@ if(TARGET wiki-server)
             $<TARGET_FILE:wiki-server>
   )
   set_tests_properties(stress_resources PROPERTIES TIMEOUT 180 LABELS stress)
+
+  # Same gate as fts_search_hybrid_test / local_embedding_provider_test
+  # above: needs a real WIKI_ENABLE_LOCAL_EMBEDDINGS build AND a real GGUF
+  # model file — drives real concurrent embed() calls through a real
+  # wiki-server process (see stress_embeddings_concurrency.py's own module
+  # docstring for exactly what this proves that the isolated
+  # LocalEmbeddingProviderTest.cpp concurrency test doesn't).
+  if(WIKI_ENABLE_LOCAL_EMBEDDINGS AND WIKI_TEST_EMBEDDING_MODEL_PATH)
+    add_test(
+      NAME stress_embeddings_concurrency
+      COMMAND ${Python3_EXECUTABLE}
+              ${CMAKE_CURRENT_SOURCE_DIR}/integration/stress_embeddings_concurrency.py
+              $<TARGET_FILE:wiki-server> "${WIKI_TEST_EMBEDDING_MODEL_PATH}"
+    )
+    set_tests_properties(stress_embeddings_concurrency PROPERTIES
+      TIMEOUT 120 LABELS "stress;real-model")
+  endif()
 endif()

@@ -130,7 +130,8 @@ class Server:
     as security_e2e.py's main(), factored out so both stress scripts share
     it verbatim. Use as a context manager."""
 
-    def __init__(self, server_bin, threads=4, admin_password="SuperSecret123"):
+    def __init__(self, server_bin, threads=4, admin_password="SuperSecret123",
+                 embeddings_model_path=None):
         self.server_bin = os.path.abspath(server_bin)
         self.threads = threads
         self.admin_password = admin_password
@@ -139,9 +140,26 @@ class Server:
         self.sandbox = tempfile.mkdtemp(prefix="wiki-stress-")
         self.vault = os.path.join(self.sandbox, "vault")
         self.proc = None
+        # Optional: path to a real GGUF model — when set, the sandboxed
+        # server boots with a real, local EmbeddingProvider configured
+        # (provider="local"), for stress scripts that need to hammer real
+        # concurrent embed() calls rather than plain FTS. Only meaningful
+        # against a WIKI_ENABLE_LOCAL_EMBEDDINGS build — a plain build
+        # would fail to start with this set (EmbeddingProviderFactory's
+        # own "fail loudly" contract), which is exactly why the caller
+        # gates on that build flag before ever constructing a Server this
+        # way (see stress_embeddings_concurrency.py).
+        self.embeddings_model_path = embeddings_model_path
 
     def __enter__(self):
         os.makedirs(self.vault, exist_ok=True)
+        embeddings_toml = ""
+        if self.embeddings_model_path:
+            embeddings_toml = (
+                "\n[embeddings]\n"
+                'provider = "local"\n'
+                f'model_path = "{self.embeddings_model_path}"\n'
+            )
         with open(os.path.join(self.sandbox, "config.toml"), "w") as f:
             f.write(f"""
 [server]
@@ -156,7 +174,7 @@ db_path = "{self.sandbox}/index.db"
 scope = "admin"
 [log]
 level = "warn"
-""")
+{embeddings_toml}""")
         # static/shell.html + JS/CSS are read off disk relative to CWD
         # (PageRoutes.cpp) — same reasoning as security_e2e.py's copytree.
         project_root = os.path.dirname(

@@ -399,6 +399,66 @@ whole feature was built for, now provably correct for this failure mode too.
 an oversized text throws `std::runtime_error` (not a crash), and the SAME
 provider instance stays usable for a normal-length text immediately after.
 
+## Two more real concurrency bugs, found cross-compiling for a production deploy
+
+Both found the same way as the earlier bugs above: not by reasoning about the
+code, but by actually running it under load before shipping. Neither ever hit
+real production — both were caught in pre-flight verification.
+
+### A fifth real bug: concurrent `embed()` calls on the SAME provider instance SIGSEGV'd
+
+`IndexUpdater::upsertOne()` deliberately calls `provider_->embed()` outside any
+lock (a slow embed must never block other threads' document saves — see that
+method's own comment), and `main.cpp` shares ONE `LocalEmbeddingProvider`
+instance across every `IndexUpdater` in the process (the HTTP-request one AND
+`VaultWatcher`'s own separate one). Nothing was serializing two threads calling
+`embed()` on that same instance at once — `llama_context`'s mutable KV-cache/
+sequence state (`llama_memory_clear`/`llama_decode` both write into it) isn't
+reentrant. Reproduced live under `qemu-arm-static`: two threads each calling
+`embed()` once on one provider instance produced a hard `SIGSEGV` on the very
+first run, no flakiness needed to trigger it. Fixed with a mutex owned by
+`LocalEmbeddingProvider` itself (`embedMutex_`, guarding the WHOLE function,
+not just the `llama_decode()` call — the vocab/tokenize steps read `model_`,
+which is safe to share, but locking only part of the function would just move
+the race instead of removing it). `CloudEmbeddingProvider` needed no such fix
+— it constructs a fresh `httplib::Client` per call and touches no shared
+mutable state at all.
+
+### A sixth real bug: two INDEPENDENT mutexes guarding the SAME sqlite3 connection
+
+Fixing the fifth bug made the isolated provider safe, but a NEW stress test
+(`tests/integration/stress_embeddings_concurrency.py` — concurrent
+`POST`/`PUT /api/documents` against a real server with real local embeddings,
+proving the whole stack, not just the isolated provider class) still
+occasionally produced a real `500`:
+`{"error":"statement failed: cannot start a transaction within a transaction"}`
+— the exact same class of bug `IndexUpdater::mutex_` was already built to
+prevent (see that member's own comment, and `docs/architecture.md`'s
+`IndexUpdater` postmortem), just via a different pair of call sites. The
+embedding step had its OWN, separate `embeddingMutex_`, added specifically so
+a slow `embed()` call never blocks a document/FTS save waiting on `mutex_`.
+That reasoning about `embed()` itself was right — but `EmbeddingIndexer::
+ensureTable()` runs its OWN `BEGIN IMMEDIATE...COMMIT` (whenever the
+dimensions/model don't already match — i.e. the first document embedded
+against a fresh database, or right after a model swap), and having it guarded
+by a DIFFERENT mutex than the one guarding document/FTS transactions meant a
+thread mid-`ensureTable()` (holding `embeddingMutex_`) and a thread mid-
+document-save (holding `mutex_`) could both run `BEGIN` on the SAME `sqlite3*`
+connection at once — two independent mutexes, neither aware of the other,
+protecting the same underlying resource. Reproduced live: about 1 in 9 runs
+of the new concurrent-create stress test against a fresh sandbox database (the
+exact condition where `ensureTable()`'s `BEGIN` actually fires, rather than
+its usual no-op fast path). Fixed by consolidating onto ONE mutex
+(`IndexUpdater::mutex_`) for every `BEGIN`/`COMMIT` this class runs, embedding-
+related or not — `embeddingMutex_` was removed entirely. `provider_->embed()`
+itself is still the only thing that runs fully unlocked; every actual database
+write, whichever table it touches, now shares the same lock. Re-verified with
+15 consecutive clean runs of the stress test post-fix (zero failures, where
+pre-fix reproduction needed under 9 runs on average) — see
+`tests/integration/stress_embeddings_concurrency.py`'s own module docstring
+for exactly what it drives and why the isolated `LocalEmbeddingProviderTest.cpp`
+concurrency test alone wasn't enough to catch this second bug.
+
 ## Hybrid ranking — live end-to-end verification
 
 `FtsSearch::search()` (text-search mode only — browse mode has no query text to

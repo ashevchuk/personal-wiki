@@ -246,9 +246,11 @@ int main(int argc, char** argv) {
   // concurrent callers each assuming they own its transaction state.
   wikicore::index::Database watcherDb(cfg.dbPath);
   // Same embeddingProvider instance as the main indexUpdater above —
-  // this IndexUpdater's own, separate embeddingMutex_ member coordinates
-  // its EmbeddingIndexer calls against ITS OWN connection (watcherDb),
-  // the identical pattern already relied on for documents/FTS: distinct
+  // this IndexUpdater's own mutex_ member coordinates its EmbeddingIndexer
+  // calls (same one guarding its document/FTS transactions — see that
+  // member's own comment for why a formerly-separate embedding mutex was
+  // a real bug) against ITS OWN connection (watcherDb), the identical
+  // pattern already relied on for documents/FTS: distinct
   // sqlite3* connections to the same WAL-mode file coordinate correctly
   // at the file level (see the comment block above); a mutex only ever
   // needed to guard multiple callers sharing ONE connection, which this

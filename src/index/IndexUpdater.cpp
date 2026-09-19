@@ -211,7 +211,7 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
     std::string currentHash;
     bool needsEmbed = true;
     try {
-      std::lock_guard<std::mutex> embLock(embeddingMutex_);
+      std::lock_guard<std::mutex> lock(mutex_);
       EmbeddingIndexer indexer(db_.handle());
       indexer.ensureTable(provider_->dimensions(), provider_->modelIdentifier());
       currentHash = contentHashForEmbedding(entry.title, entry.body);
@@ -224,20 +224,22 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
     }
 
     if (needsEmbed) {
-      // Step 2: the actual embed() call — deliberately OUTSIDE
-      // embeddingMutex_ (and mutex_, already released above). A network
-      // call for the cloud provider, or real model inference for local,
-      // must never hold a lock other threads' document/FTS saves or
-      // their own embedding writes are waiting on.
+      // Step 2: the actual embed() call — deliberately OUTSIDE mutex_. A
+      // network call for the cloud provider, or real model inference for
+      // local, must never hold the lock other threads' document/FTS
+      // saves or their own embedding writes are waiting on (see mutex_'s
+      // own comment in the header for why this is the ONLY step that
+      // stays unlocked — every actual DB write, embedding-related or
+      // not, uses the same mutex_).
       try {
         const auto embedding = provider_->embed(entry.title + "\n\n" + entry.body);
-        std::lock_guard<std::mutex> embLock(embeddingMutex_);
+        std::lock_guard<std::mutex> lock(mutex_);
         EmbeddingIndexer indexer(db_.handle());
         indexer.upsertOne(rowId, embedding);
         indexer.recordEmbeddingSuccess(rowId, currentHash);
       } catch (const std::exception& e) {
         try {
-          std::lock_guard<std::mutex> embLock(embeddingMutex_);
+          std::lock_guard<std::mutex> lock(mutex_);
           EmbeddingIndexer(db_.handle()).recordEmbeddingFailure(rowId, e.what());
         } catch (...) {
           // Even recording the failure failed (a real sqlite error) —
@@ -248,7 +250,7 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
         }
       } catch (...) {
         try {
-          std::lock_guard<std::mutex> embLock(embeddingMutex_);
+          std::lock_guard<std::mutex> lock(mutex_);
           EmbeddingIndexer(db_.handle())
               .recordEmbeddingFailure(rowId, "unknown error (non-std::exception thrown)");
         } catch (...) {
@@ -319,7 +321,7 @@ void IndexUpdater::removeOne(const std::string& path) {
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
   if (provider_ != nullptr && rowId.has_value()) {
-    std::lock_guard<std::mutex> embLock(embeddingMutex_);
+    std::lock_guard<std::mutex> lock(mutex_);
     EmbeddingIndexer indexer(db_.handle());
     indexer.removeOne(*rowId);
   }

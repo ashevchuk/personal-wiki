@@ -46,7 +46,7 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
   // same pointer to the HTTP-request-handling IndexUpdater AND
   // VaultWatcher's own separate one — see main.cpp's own comment on
   // "same embeddingProvider instance"). IndexUpdater::upsertOne calls
-  // provider_->embed() deliberately OUTSIDE its own embeddingMutex_ (see
+  // provider_->embed() deliberately OUTSIDE its own mutex_ (see
   // that class's comment — a slow embed() must never hold the lock other
   // threads' document saves need), which means nothing outside this class
   // was serializing concurrent embed() calls on the SAME provider at
