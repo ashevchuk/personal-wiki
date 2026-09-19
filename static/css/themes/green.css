@@ -23,7 +23,14 @@
   --fg: #00ff00;
   --fg-dim: #009900;
   --fg-bright: #ccffcc;
-  --panel-bg: rgba(0, 20, 0, 0.55);
+  /* Neutral black, not green-tinted — the sidebar sits over the
+     matrix-rain canvas (z-index: -1, see #matrix-bg below), and a green
+     rgba() tint here stacked visibly on top of that animation, reading
+     as a persistent greenish wash rather than the intended "glass panel
+     over black" look. --panel-bg-2 (buttons/inputs/dropdowns) is
+     DELIBERATELY left green-tinted — this is a scoped fix for the
+     sidebar's own surface only, not a "de-green everything" pass. */
+  --panel-bg: rgba(0, 0, 0, 0.55);
   /* Secondary surface (inputs, dropdown menus, diff blocks) — one shade
      off --bg, distinct from --panel-bg (the translucent sidebar) so both
      can be tuned independently per theme. */
@@ -458,7 +465,12 @@ form p {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
-  background: var(--panel-bg-2);
+  /* Neutral black, NOT var(--panel-bg-2) — that variable is shared with
+     input/textarea/select/button/a.btn (see :root above), so changing
+     it would have de-greened every button along with this dropdown.
+     Scoped here instead: only this menu's own surface goes neutral,
+     buttons keep their existing --panel-bg-2 look untouched. */
+  background: #0a0a0a;
   border: 1px solid var(--border);
   box-shadow: var(--glow);
   padding: 0.5rem;
