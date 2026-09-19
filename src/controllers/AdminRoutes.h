@@ -16,7 +16,20 @@ namespace wikicore::controllers {
 // synchronously and returns {"documentsIndexed":N,"staleRowsRemoved":N}.
 // Manual recovery path for "the index doesn't match the vault" (external
 // edits made outside the app, or a deleted/corrupted index db) — the same
-// rescan also runs unconditionally at every wiki-server startup.
+// rescan also runs unconditionally (in the background — see main.cpp) at
+// every wiki-server startup.
+//
+// GET /api/admin/reindex-status - admin only, no CSRF (pure read of
+// in-memory atomics, mutates nothing). {"inProgress":bool,
+// "documentsIndexed":N} — N is a running count of how far the CURRENT (or
+// most recent) rescan got, updated live as it works through the vault.
+// Reflects whichever of the three rescan paths (this file's own
+// POST /api/admin/reindex, the CLI --reindex flag against a different
+// process invocation, or the background startup rescan) most recently
+// ran or is still running — see RescanProgress.h. Exists because a large
+// vault's first-ever embeddings rescan (or any --reindex on a big vault)
+// can take real, human-visible time, and "is it done yet" was previously
+// answerable only by tailing server logs.
 //
 // GET /api/admin/mcp-audit-log - admin only. Every recorded
 // create_document/update_document call an MCP client made (success or
@@ -94,6 +107,7 @@ void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::index::IndexBu
                           wikicore::index::McpAuditLog& mcpAuditLog,
                           wikicore::auth::McpRemoteConfig& mcpRemoteConfig,
                           const std::string& vaultPath, wikicore::index::Database& db,
-                          wikicore::embeddings::EmbeddingProvider* embeddingProvider);
+                          wikicore::embeddings::EmbeddingProvider* embeddingProvider,
+                          wikicore::index::RescanProgress& rescanProgress);
 
 }  // namespace wikicore::controllers

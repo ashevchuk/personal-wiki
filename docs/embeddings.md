@@ -541,6 +541,45 @@ synchronous on purpose — a caller that explicitly asked for a reindex wants
 to know when it's actually done, unlike this one-time startup pass nobody
 is blocking on.
 
+### Progress feedback: "is it done yet, and how far did it get"
+
+Running the rescan in the background solved the blocking problem, but
+introduced a new one: with no visible port-not-ready signal, "is it done
+yet" was answerable only by tailing server logs. `RescanProgress`
+(`src/index/RescanProgress.h`) is a tiny all-atomic struct (`inProgress`,
+`documentsIndexed`) — no mutex needed, since each field is independently
+meaningful without needing to be read as a consistent snapshot together.
+`IndexBuilder::fullRescan()` takes an optional `RescanProgress*` (`nullptr`
+by default — the CLI `--reindex` path passes none, since it already prints
+its own final `RescanStats` synchronously and has no concurrent reader to
+report to), incrementing `documentsIndexed` after each file and clearing
+`inProgress` on the way out via an RAII guard (so a rescan that throws
+partway through doesn't leave the tracker permanently claiming "still
+running"). One `RescanProgress` instance in `main.cpp` is shared across
+all three rescan paths — the background startup rescan, `POST
+/api/admin/reindex`, and (implicitly, since it's the same process-wide
+instance) whichever one most recently ran.
+
+`GET /api/admin/reindex-status` (`AdminRoutes.cpp`, admin-only, no CSRF —
+a pure read of in-memory atomics) exposes it: `{"inProgress":bool,
+"documentsIndexed":N}`. The account page (`static/js/pages/account.js`)
+polls it every 1.5s and shows a single self-hiding status line —
+`"Reindexing in progress — N document(s) so far."` — only while
+`inProgress` is true, adding no visual noise the overwhelming majority of
+the time a restart's background rescan has already finished before anyone
+loads the page. Registered on every build (unlike the embeddings-status
+section below it), since a full-vault rescan is relevant with or without
+embeddings configured.
+
+Verified live: polling `GET /api/admin/reindex-status` once every ~0.4s
+during a real 30-document background startup rescan showed
+`documentsIndexed` climbing (`1 → 5 → 9 → 14 → 18 → 22 → 26 → 30`) with
+`inProgress:true` throughout, then `inProgress:false` exactly once it hit
+30 — a real, live-updating count, not a static placeholder. A subsequent
+`POST /api/admin/reindex` against the same (now fully indexed) vault
+correctly reported `documentsIndexed:30` in both its own synchronous
+response and the progress endpoint immediately after.
+
 ## Hybrid ranking — live end-to-end verification
 
 `FtsSearch::search()` (text-search mode only — browse mode has no query text to

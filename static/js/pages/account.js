@@ -262,6 +262,48 @@ window.WikiPages = window.WikiPages || {};
   // broken controls for a feature that isn't compiled in. Same
   // apply-immediately convention as the Remote MCP section above — no
   // "Save" button, every control fires its own request on change/click.
+  // Reindex progress — GET /api/admin/reindex-status (AdminRoutes.h),
+  // registered on every build (not gated behind WIKI_ENABLE_SQLITE_VEC
+  // like the embeddings section below — a full-vault rescan is relevant
+  // with or without embeddings configured). Hidden entirely whenever
+  // nothing is running, so this adds no visual noise the overwhelming
+  // majority of the time a restart's background rescan has already
+  // finished by the time anyone loads this page.
+  function wireReindexStatusSection(container) {
+    var el = document.createElement("p");
+    el.id = "reindex-status";
+    el.hidden = true;
+    container.appendChild(el);
+
+    var pollTimer = null;
+    function poll() {
+      fetch(basePath() + "/api/admin/reindex-status", { credentials: "same-origin" })
+        .then(function (r) {
+          return r.json();
+        })
+        .then(function (status) {
+          if (status.inProgress) {
+            el.hidden = false;
+            el.textContent =
+              "Reindexing in progress — " + status.documentsIndexed + " document(s) so far.";
+            if (!pollTimer) pollTimer = setInterval(poll, 1500);
+          } else {
+            el.hidden = true;
+            if (pollTimer) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+            }
+          }
+        })
+        .catch(function () {
+          // Transient fetch failure — not worth surfacing as an error for
+          // a purely informational, self-hiding status line; the next
+          // poll (or the next page load) will just try again.
+        });
+    }
+    poll();
+  }
+
   var embeddingsSectionHtml =
     "<h2>Semantic search (embeddings)</h2>" +
     '<p id="embeddings-error" style="color:#ff5555"></p>' +
@@ -474,6 +516,7 @@ window.WikiPages = window.WikiPages || {};
 
     wireBackupSection();
     wireRemoteMcpSection();
+    wireReindexStatusSection(container);
     wireEmbeddingsSection(container);
 
     var errorEl = document.getElementById("account-error");

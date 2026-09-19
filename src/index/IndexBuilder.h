@@ -1,6 +1,7 @@
 #pragma once
 
 #include "index/IndexUpdater.h"
+#include "index/RescanProgress.h"
 #include "vault/VaultRepository.h"
 
 #include <cstdint>
@@ -31,7 +32,13 @@ class IndexBuilder {
   IndexBuilder(vault::VaultRepository& vault, IndexUpdater& indexUpdater)
       : vault_(vault), indexUpdater_(indexUpdater) {}
 
-  RescanStats fullRescan();
+  // `progress`: optional (nullptr — the default — means no progress
+  // reporting, e.g. the CLI --reindex path, which prints its own final
+  // RescanStats when done and has no concurrent reader to report to
+  // anyway). When given, set inProgress=true for the duration and
+  // documentsIndexed is incremented after each file — see
+  // RescanProgress.h's own comment for who reads this and why.
+  RescanStats fullRescan(RescanProgress* progress = nullptr);
 
   // Re-derives the index row for exactly one document from whatever's on
   // disk right now, the same parse/fallback-title/stat/upsert logic

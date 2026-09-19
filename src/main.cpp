@@ -261,8 +261,14 @@ int main(int argc, char** argv) {
   // filling in as the rescan progresses — rather than the site being
   // entirely unreachable until it finishes, which is strictly better,
   // not a new kind of incompleteness.
-  std::thread startupRescanThread([&indexBuilder] {
-    const wikicore::index::RescanStats stats = indexBuilder.fullRescan();
+  // Shared with AdminRoutes.cpp's GET /api/admin/reindex-status (below) and
+  // reused for the synchronous --reindex/POST /api/admin/reindex paths too
+  // — one tracker answers "is a rescan running right now, and how far did
+  // it get" regardless of which of the three ways triggered it. See
+  // RescanProgress.h's own comment on why this needs no mutex.
+  wikicore::index::RescanProgress rescanProgress;
+  std::thread startupRescanThread([&indexBuilder, &rescanProgress] {
+    const wikicore::index::RescanStats stats = indexBuilder.fullRescan(&rescanProgress);
     LOG_INFO << "startup reindex: " << stats.documentsIndexed << " document(s), "
              << stats.staleRowsRemoved << " stale row(s) removed";
   });
@@ -468,7 +474,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog,
                                               remoteMcpConfig, cfg.vaultPath, db,
-                                              embeddingProvider.get());
+                                              embeddingProvider.get(), rescanProgress);
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
   wikicore::controllers::registerVersionRoutes(drogon::app(), indexUpdater, snapshotStore,
                                                 documentService);

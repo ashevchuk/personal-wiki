@@ -66,7 +66,21 @@ bool IndexBuilder::reindexOneFile(const std::string& relativePath) {
   return true;
 }
 
-RescanStats IndexBuilder::fullRescan() {
+RescanStats IndexBuilder::fullRescan(RescanProgress* progress) {
+  if (progress != nullptr) {
+    progress->documentsIndexed = 0;
+    progress->inProgress = true;
+  }
+  // Always clear inProgress on the way out, success or exception — a
+  // rescan that throws partway through must not leave the progress
+  // tracker permanently claiming "still running" forever.
+  struct ProgressGuard {
+    RescanProgress* p;
+    ~ProgressGuard() {
+      if (p != nullptr) p->inProgress = false;
+    }
+  } progressGuard{progress};
+
   RescanStats stats;
   const fs::path root = vault_.pathGuard().root();
   std::unordered_set<std::string> seenPaths;
@@ -93,6 +107,7 @@ RescanStats IndexBuilder::fullRescan() {
     if (reindexOneFile(relativePath)) {
       seenPaths.insert(relativePath);
       ++stats.documentsIndexed;
+      if (progress != nullptr) progress->documentsIndexed = stats.documentsIndexed;
     }
   }
 

@@ -76,22 +76,44 @@ std::string backupFilename() {
 void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
                           McpAuditLog& mcpAuditLog, McpRemoteConfig& mcpRemoteConfig,
                           const std::string& vaultPath, [[maybe_unused]] Database& db,
-                          [[maybe_unused]] EmbeddingProvider* embeddingProvider) {
+                          [[maybe_unused]] EmbeddingProvider* embeddingProvider,
+                          RescanProgress& rescanProgress) {
   app.registerHandler(
       "/api/admin/reindex",
-      [&indexBuilder](const HttpRequestPtr& req,
-                       std::function<void(const HttpResponsePtr&)>&& callback) {
+      [&indexBuilder, &rescanProgress](const HttpRequestPtr& req,
+                                        std::function<void(const HttpResponsePtr&)>&& callback) {
         if (auto rejection = requireAdminApi(req)) {
           callback(*rejection);
           return;
         }
-        const RescanStats stats = indexBuilder.fullRescan();
+        const RescanStats stats = indexBuilder.fullRescan(&rescanProgress);
         Json::Value body;
         body["documentsIndexed"] = static_cast<Json::Int64>(stats.documentsIndexed);
         body["staleRowsRemoved"] = static_cast<Json::Int64>(stats.staleRowsRemoved);
         callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  // GET, no CSRF — a pure read of in-memory atomics, mutates nothing (same
+  // convention as GET /api/admin/mcp-audit-log below). Answers "is a
+  // rescan running right now, and how far did it get" for whichever of
+  // the three rescan paths (startup, --reindex, this same POST above)
+  // most recently ran or is still running — see RescanProgress.h.
+  app.registerHandler(
+      "/api/admin/reindex-status",
+      [&rescanProgress](const HttpRequestPtr& req,
+                         std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        Json::Value body;
+        body["inProgress"] = rescanProgress.inProgress.load();
+        body["documentsIndexed"] =
+            static_cast<Json::Int64>(rescanProgress.documentsIndexed.load());
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
 
   app.registerHandler(
       "/api/admin/mcp-audit-log",
