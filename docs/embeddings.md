@@ -459,6 +459,59 @@ pre-fix reproduction needed under 9 runs on average) — see
 for exactly what it drives and why the isolated `LocalEmbeddingProviderTest.cpp`
 concurrency test alone wasn't enough to catch this second bug.
 
+## Non-blocking startup rescan
+
+`IndexBuilder::fullRescan()` (unconditional at every `wiki-server` startup —
+see the storage-model section of `docs/architecture.md`) now runs on a
+background `std::thread` instead of blocking `main()` before the HTTP
+listener opens. `main()` joins it after `drogon::app().run()` returns (i.e.
+on shutdown), so a still-running rescan finishes cleanly instead of racing
+process teardown.
+
+**Why this matters less than it sounds, most of the time.** Skip-if-unchanged
+content-hash tracking (above) already makes a routine restart with no real
+content changes fast on its own — measured: 20 unchanged documents took 3.1s
+cold (first-ever migration) vs 0.2s warm (zero `embed()` calls, every hash
+matched). The real, still-slow case is narrower: the first-ever enable of
+embeddings on an existing vault, a model swap (clears every document's
+tracked state), or a bulk import while the server was down — genuine,
+per-document model inference with nothing to skip. On the real ARM
+production target that's measured in tens of seconds, not milliseconds —
+which used to mean blocking the HTTP listener (and therefore every route)
+behind it, a real `nginx 502` window for anyone hitting the site during a
+routine embeddings rollout.
+
+**Why running it concurrently with live HTTP traffic is safe, not just
+convenient.** The background rescan uses the SAME `indexUpdater`/`db` that
+HTTP request handlers (`DocumentService` et al.) already share —
+`IndexUpdater::mutex_` (see "Two more real concurrency bugs" above)
+serializes every `BEGIN`/`COMMIT` this class runs against that connection
+regardless of which thread calls it, so a document saved over HTTP while the
+rescan is still mid-vault just gets indexed immediately by that save; the
+rescan either confirms the same row again when it gets there, or never
+touches a document that didn't exist yet when it started walking the vault
+— the identical incremental behavior `VaultWatcher` already provides today,
+just for the startup case too. Search results are correspondingly
+incremental during this window (visibly filling in as the rescan
+progresses) rather than the whole site being unreachable until it
+finishes — strictly better, not a new kind of incompleteness.
+
+Verified live, both locally and under `qemu-arm-static`: HTTP port opens in
+well under a second even with dozens of documents queued for real embedding
+in the background (previously would have blocked for the full embedding
+duration); a document created over HTTP WHILE the background rescan is still
+running succeeds cleanly (`201`, no error, no crash); once the rescan
+finishes, `GET /api/admin/embeddings-status` reports zero documents needing
+attention — every one, rescan-created and HTTP-created alike, ended up
+correctly embedded; a `SIGTERM` sent immediately after startup still shuts
+down cleanly (the join waits for the in-flight rescan rather than tearing
+down `indexBuilder`/`db` out from under it).
+
+`--reindex` (the CLI flag) and `POST /api/admin/reindex` both stay fully
+synchronous on purpose — a caller that explicitly asked for a reindex wants
+to know when it's actually done, unlike this one-time startup pass nobody
+is blocking on.
+
 ## Hybrid ranking — live end-to-end verification
 
 `FtsSearch::search()` (text-search mode only — browse mode has no query text to

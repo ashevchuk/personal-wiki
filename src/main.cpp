@@ -46,6 +46,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <thread>
 
 namespace {
 
@@ -227,12 +228,44 @@ int main(int argc, char** argv) {
   // The db is a disposable cache, never assumed correct on faith — rescan
   // unconditionally at every startup so the index reflects whatever's
   // actually on disk (including edits made outside the app since the last
-  // run). Cheap at personal-wiki scale; `--reindex` / POST /api/admin/reindex
-  // exist for re-running this without a restart.
-  const wikicore::index::RescanStats startupRescan = indexBuilder.fullRescan();
-  LOG_INFO << "startup reindex: " << startupRescan.documentsIndexed
-           << " document(s), " << startupRescan.staleRowsRemoved
-           << " stale row(s) removed";
+  // run). Cheap at personal-wiki scale for FTS/tags alone; `--reindex` /
+  // POST /api/admin/reindex exist for re-running this without a restart
+  // (both stay fully SYNCHRONOUS — a caller that explicitly asked to
+  // reindex wants to know when it's actually done, unlike this one-time
+  // startup pass).
+  //
+  // Runs in the BACKGROUND, not blocking app().run() below, specifically
+  // because of the embedding step: content-hash skip-if-unchanged
+  // (docs/embeddings.md) already makes a normal restart with no real
+  // changes fast (measured: 20 unchanged documents, 3.1s cold vs 0.2s
+  // warm, zero embed() calls on the warm path) — but the FIRST-ever
+  // enable of embeddings on an existing vault, a model swap (clears
+  // every document's tracked state), or a bulk import while the server
+  // was down all still mean every document's embedding is genuinely
+  // due, and that's real per-document model inference with nothing to
+  // skip. On the actual ARM production target that's measured in tens
+  // of seconds, not milliseconds — blocking every route registration
+  // and the HTTP listener behind it turns a routine embeddings rollout
+  // into a real nginx 502 window for anyone hitting the site meanwhile.
+  // Safe to run concurrently with HTTP request handlers already sharing
+  // `indexUpdater`/`db`: IndexUpdater::mutex_ (see that member's own
+  // comment on why a formerly-separate embedding mutex was a real,
+  // found-live bug) already serializes every BEGIN/COMMIT this class
+  // runs against this connection, regardless of which thread calls it —
+  // a document saved over HTTP while this rescan is still mid-vault
+  // just gets indexed immediately by that save, same as VaultWatcher's
+  // existing incremental behavior; the rescan either confirms the same
+  // row again when it gets there or never touches it if the file didn't
+  // exist yet when the rescan started walking the vault. FTS/search
+  // results are correspondingly incremental during this window — visibly
+  // filling in as the rescan progresses — rather than the site being
+  // entirely unreachable until it finishes, which is strictly better,
+  // not a new kind of incompleteness.
+  std::thread startupRescanThread([&indexBuilder] {
+    const wikicore::index::RescanStats stats = indexBuilder.fullRescan();
+    LOG_INFO << "startup reindex: " << stats.documentsIndexed << " document(s), "
+             << stats.staleRowsRemoved << " stale row(s) removed";
+  });
 
   // VaultWatcher runs on its own background thread and gets its OWN
   // sqlite3 connection to the same db file, rather than sharing `db` with
@@ -447,6 +480,15 @@ int main(int argc, char** argv) {
       .addListener(cfg.listenAddr, cfg.port)
       .setThreadNum(static_cast<size_t>(cfg.threads))
       .run();
+
+  // app().run() blocks until a real shutdown (SIGINT/SIGTERM) and returns
+  // only then — join the background startup rescan here rather than
+  // detaching it, so a still-running rescan (a huge vault, or a slow
+  // embedding pass) finishes cleanly instead of racing process teardown
+  // against indexBuilder/indexUpdater/db being destroyed out from under
+  // it. In the overwhelmingly common case this is already finished long
+  // before shutdown and join() returns immediately.
+  if (startupRescanThread.joinable()) startupRescanThread.join();
 
   return 0;
 }
