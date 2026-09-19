@@ -88,9 +88,23 @@ class FtsSearch {
   // it, a small vault's "nearest neighbors" is effectively the whole
   // vault, and every one of them gets a nonzero RRF score regardless of
   // actual relevance). Found live on real production content.
+  //
+  // maxSemanticCandidates: a hard cap on how many of the nearest
+  // neighbors (already sorted nearest-first, already past the distance
+  // cutoff above) are even allowed to become RRF candidates — see
+  // AppConfig::embeddingsSemanticTopK's own comment for why the distance
+  // cutoff alone isn't enough: a multi-word query's embedding can sit at
+  // a "blurry" distance from MANY unrelated documents at once on a small
+  // vault, all of them individually under the cutoff, and RRF has no way
+  // to reject a candidate once it's in the list, only rank it. Found
+  // live re-checking the distance-cutoff fix against other real
+  // production queries.
   explicit FtsSearch(Database& db, embeddings::EmbeddingProvider* provider = nullptr,
-                      double maxSemanticDistance = 0.5)
-      : db_(db), provider_(provider), maxSemanticDistance_(maxSemanticDistance) {}
+                      double maxSemanticDistance = 0.5, int maxSemanticCandidates = 5)
+      : db_(db),
+        provider_(provider),
+        maxSemanticDistance_(maxSemanticDistance),
+        maxSemanticCandidates_(maxSemanticCandidates) {}
 
   std::vector<SearchResultItem> search(const SearchQuery& query) const;
 
@@ -125,6 +139,7 @@ class FtsSearch {
   Database& db_;
   embeddings::EmbeddingProvider* provider_ = nullptr;
   double maxSemanticDistance_ = 0.5;
+  int maxSemanticCandidates_ = 5;
 };
 
 }  // namespace wikicore::index

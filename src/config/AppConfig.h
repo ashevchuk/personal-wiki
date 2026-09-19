@@ -140,6 +140,19 @@ struct AppConfig {
   // (4 words) while including short-but-real content (an 8-word test
   // sentence stays eligible) — see docs/embeddings.md.
   int embeddingsMinContentWords = 6;
+  // Local/cloud — a hard cap on how many of the nearest neighbors are
+  // even allowed into the semantic candidate list RRF blends with BM25,
+  // on TOP of the distance cutoff above, not instead of it. Found live
+  // re-checking the distance-cutoff fix against more real production
+  // queries: a multi-word query's embedding can sit at a uniformly
+  // "blurry" distance from MANY unrelated documents at once on a small
+  // vault, each individually still under embeddingsMaxDistance — RRF has
+  // no way to reject a candidate once it's in the ranked list, only rank
+  // it (see FtsSearch.h's own comment), so a threshold alone can't bound
+  // how many mediocre matches flood in for that kind of query. Default
+  // (5) chosen against the same real measurements as the distance cutoff
+  // — see docs/embeddings.md.
+  int embeddingsSemanticTopK = 5;
 
   // [log]
   std::string logLevel = "info";

@@ -387,9 +387,19 @@ std::optional<std::vector<SearchResultItem>> FtsSearch::tryHybridSearch(
   // ever sees these rowids, is what actually keeps irrelevant documents
   // out of hybrid results — RRF itself has no way to reject a candidate
   // once it's in a ranked list, only rank it.
+  //
+  // maxSemanticCandidates_ additionally hard-caps the COUNT, on top of
+  // the distance cutoff — see its own comment in FtsSearch.h. nearest()
+  // is documented to return neighbors already sorted nearest-first, so
+  // stopping once the cap is reached keeps exactly the closest ones,
+  // same as the distance cutoff would eventually exclude the rest of
+  // anyway, just without depending on the cutoff being tight enough on
+  // its own for a query whose embedding sits at a uniformly "blurry"
+  // distance from many documents at once.
   std::vector<int64_t> semanticCandidates;
   for (const auto& neighbor : indexer.nearest(queryEmbedding, kCandidatePoolSize)) {
     if (neighbor.distance > maxSemanticDistance_) continue;
+    if (static_cast<int>(semanticCandidates.size()) >= maxSemanticCandidates_) break;
     semanticCandidates.push_back(neighbor.documentRowId);
   }
 

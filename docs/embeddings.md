@@ -751,6 +751,67 @@ nothing on every subsequent save). `tests/unit/IndexUpdaterEmbeddingTest.cpp`
 has a permanent regression test processing a too-short document first, then
 a real one, and asserting the short document's state survives.
 
+### A fifth root cause, found re-checking the SAME bug on more real queries again: a distance threshold alone can't bound a MULTI-word query's blurriness either
+
+A further round of live verification (real prod queries — "markdown backlinks
+wiki", "unique_ptr shared_ptr raii", "peer to peer networking keys", among
+others) still found too many results for several multi-word queries, all
+with `snippetIsHighlighted: false`, even with `welcome.md` correctly excluded
+by the fix above. First suspected as a repeat of the same "weak document
+vector" root cause, or possibly a BM25 lexical false-positive (`FtsSearch.cpp`'s
+`buildMatchExpression()` treats a multi-word query as AND-of-prefix-terms
+across title/body/tags, not OR — ruled out by inspection, since none of the
+leaking documents contained all query words as prefixes anywhere).
+
+The actual cause only showed up after a local reproduction was made to
+match the real document text BYTE FOR BYTE (title + `"\n\n"` + body, the
+same concatenation `IndexUpdater::upsertOne()` embeds) — an earlier,
+paraphrased/truncated local reconstruction (missing markdown tables, code
+blocks, and even a `[[wiki-link]]` in one document) had measured several
+genuinely unrelated documents ABOVE `max_distance` when their real, complete
+text measured just under it:
+
+| document | measured distance for "markdown backlinks wiki" |
+|---|---|
+| wiki-links-note-b (relevant) | 0.2329 |
+| wiki-links-note-a (relevant) | 0.2851 |
+| architecture-notes (relevant) | 0.3172 |
+| tag-style-check-1 (marginal) | 0.3695 |
+| smart-pointers (unrelated) | 0.4190 |
+| wireguard (unrelated) | 0.4729 |
+| systemd-timers (unrelated) | 0.4797 |
+| asyncio (unrelated) | 0.4904 |
+| move-semantics (unrelated) | 0.4925 |
+
+All nine sit under `max_distance` (0.5) — a genuine, reproducible property of
+this query against this vault on this model, not a filtering bug. A
+three-word query whose words point at three fairly independent concepts
+("markdown", "backlinks", "wiki") produces an embedding that's an averaged,
+"blurry" point roughly equidistant from many topically unrelated documents at
+once, on a small (23-document) vault with a small model. No single global
+`max_distance` value serves both this query shape and a single, sharp
+technical term like "stabilize" well at the same time — tightening the
+threshold enough to exclude `move-semantics` here would risk re-excluding
+genuinely relevant results for other, sharper queries (the same
+tightening-a-shared-threshold risk already noted for `welcome.md` above).
+
+**The fix**: cap the semantic candidate list by COUNT, not just distance.
+`FtsSearch::tryHybridSearch()` now stops admitting neighbors into the
+semantic candidate list once `embeddings.semantic_top_k` (default `5`) of
+them have passed the distance cutoff — `EmbeddingIndexer::nearest()` is
+documented to return neighbors already sorted nearest-first, so this keeps
+exactly the closest ones. This targets the actual defect directly: RRF (see
+`reciprocalRankFusion()`'s own comment) has no way to reject a candidate once
+it's admitted to a ranked list, only rank it, so bounding admission is the
+only place a fix like this can live — a looser rank-fusion weighting scheme
+wouldn't help, since the leak happens before fusion ever sees these rowids.
+`tests/unit/FtsSearchHybridTest.cpp` has a permanent regression test: five
+documents, a query with zero lexical overlap with any of them (isolating the
+semantic side, same technique the "stabilize" test uses), `max_distance` set
+wide open (so distance alone would admit all five), and asserts exactly
+`semantic_top_k` results come back with the one genuinely relevant document
+among them.
+
 ## Why two provider kinds, not one
 
 A personal wiki has fail-safe-private documents by default (see `architecture.md`). A
@@ -893,6 +954,9 @@ provider = "none"        # "none" | "local" | "cloud"
                           # shown even if commented out (see same section)
 # min_content_words = 6  # skip embedding entirely below this many words — default
                           # shown even if commented out (see same section)
+# semantic_top_k = 5      # hard cap on semantic candidates, on TOP of max_distance —
+                          # default shown even if commented out (see "A fifth root
+                          # cause" above)
 ```
 
 ## Phased rollout

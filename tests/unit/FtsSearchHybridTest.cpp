@@ -221,3 +221,52 @@ TEST_CASE("FtsSearch: a genuinely unrelated document does NOT appear in "
   REQUIRE_FALSE(containsPath(results, "recipes/borscht.md"));
   REQUIRE_FALSE(containsPath(results, "welcome.md"));
 }
+
+TEST_CASE("FtsSearch: maxSemanticCandidates caps how many semantic matches "
+          "flood in, even when every single one is individually under the "
+          "distance cutoff",
+          "[FtsSearch][real-model]") {
+  // A second, distinct real bug found re-checking the distance-cutoff fix
+  // above against more real production queries: a MULTI-word query's
+  // embedding can sit at a uniformly "blurry" distance from several
+  // unrelated documents at once on a small vault — each one individually
+  // still under maxSemanticDistance, so the cutoff alone lets all of them
+  // through. RRF has no way to reject a candidate once it's admitted to a
+  // ranked list, only rank it (see FtsSearch.h's own comment) — so the fix
+  // has to happen at admission, via a hard count cap on top of the
+  // distance cutoff, not instead of it. See docs/embeddings.md.
+  TempDb env;
+  LocalEmbeddingProvider provider(
+      WIKI_TEST_EMBEDDING_MODEL_PATH,
+      "Represent this sentence for searching relevant passages: ");
+  IndexUpdater updater(env.db(), &provider);
+  updater.upsertOne(makeEntry("notes/cat.md", "About cats", "The cat sat on the mat."));
+  updater.upsertOne(
+      makeEntry("notes/finance.md", "Finance", "Quarterly financial report for the fiscal year."));
+  updater.upsertOne(makeEntry("recipes/borscht.md", "Borscht",
+                               "Beets, cabbage, potato, carrot, onion. Simmer broth with beef."));
+  updater.upsertOne(
+      makeEntry("notes/systemd.md", "Systemd", "systemd timers are great for scheduling."));
+  updater.upsertOne(makeEntry("notes/move.md", "Move Semantics",
+                               "std::move casts an lvalue to an rvalue reference."));
+
+  // maxSemanticDistance deliberately wide open (cosine distance never
+  // exceeds 2.0) so every one of the 5 documents above is a valid semantic
+  // candidate on distance alone — isolates the count cap as the only thing
+  // doing any filtering here, same isolation technique as the "stabilize"
+  // test above isolates the distance cutoff by using its own default.
+  FtsSearch search(env.db(), &provider, /*maxSemanticDistance=*/1.9,
+                    /*maxSemanticCandidates=*/2);
+  SearchQuery q;
+  q.text = "A small feline animal";  // shares zero words with any stored text —
+                                      // BM25 contributes nothing, isolating the
+                                      // semantic side exactly like the earlier
+                                      // "cat" tests above.
+  q.includePrivate = true;
+  const auto results = search.search(q);
+
+  REQUIRE(results.size() == 2);
+  // The one genuinely relevant document must still be the nearest
+  // neighbor and survive the cap.
+  REQUIRE(containsPath(results, "notes/cat.md"));
+}

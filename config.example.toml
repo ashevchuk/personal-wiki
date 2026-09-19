@@ -150,6 +150,21 @@ write_access = false
 # that exact real measured stub page (4 words) while keeping short-but-
 # real content eligible — see docs/embeddings.md.
 # min_content_words = 6
+#
+# Local/cloud — a hard cap on how many of the nearest neighbors are even
+# allowed into the semantic candidate list, on TOP of max_distance above,
+# not instead of it. Without this, a MULTI-word query's embedding can sit
+# at a uniformly "blurry" distance from many unrelated documents at once
+# on a small vault — each individually still under max_distance — and
+# hybrid search's rank-fusion step has no way to reject a candidate once
+# it's in the list, only rank it. Found live re-checking the max_distance
+# fix above against more real production queries: several genuinely
+# unrelated documents (a networking note, a C++ note, a systemd note) all
+# measured just under the 0.5 cutoff for one multi-word query, flooding
+# results despite the cutoff working exactly as designed. 5 (the default,
+# used even if this line is left commented out) was chosen against the
+# same real bge-small-en-v1.5 measurements — see docs/embeddings.md.
+# semantic_top_k = 5
 
 [log]
 level = "info"   # trace | debug | info | warn | error
