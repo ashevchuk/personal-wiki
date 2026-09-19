@@ -45,8 +45,13 @@ class IndexUpdater {
   // remain the authoritative, always-succeeding search path, and a
   // missed embedding self-heals on the next `--reindex` once it's wired
   // up there.
-  explicit IndexUpdater(Database& db, embeddings::EmbeddingProvider* provider = nullptr)
-      : db_(db), provider_(provider) {}
+  // minEmbeddingWords: a document whose title+body combined has FEWER
+  // words than this never gets a real embed() call at all — see
+  // upsertOne()'s own comment for why. Irrelevant when provider is
+  // nullptr.
+  explicit IndexUpdater(Database& db, embeddings::EmbeddingProvider* provider = nullptr,
+                         int minEmbeddingWords = 6)
+      : db_(db), provider_(provider), minEmbeddingWords_(minEmbeddingWords) {}
 
   // Swaps the embedding provider after construction — used by wiki-mcp
   // (mcp/McpServer.cpp) to lazily construct a real provider only on the
@@ -92,6 +97,7 @@ class IndexUpdater {
  private:
   Database& db_;
   embeddings::EmbeddingProvider* provider_ = nullptr;
+  int minEmbeddingWords_ = 6;
 
   // Guards EVERY BEGIN IMMEDIATE...COMMIT/ROLLBACK sequence this class
   // (and its embedding step) runs against `db_` — documents/tags/FTS in

@@ -122,24 +122,27 @@ TEST_CASE("AppConfig::load: embeddings.api_key_env is read verbatim as a name, "
   REQUIRE(cfg.embeddingsApiKeyEnv == "WIKI_EMBEDDINGS_API_KEY");
 }
 
-TEST_CASE("AppConfig::load: embeddings.max_distance defaults to 0.5 when not "
-          "set in config.toml",
+TEST_CASE("AppConfig::load: embeddings.max_distance/min_content_words default "
+          "when not set in config.toml",
           "[AppConfig]") {
   TempConfigFile file("[vault]\npath = \"./vault_data\"\n");
   const AppConfig cfg = AppConfig::load(file.path().string());
   REQUIRE(cfg.embeddingsMaxDistance == 0.5);
+  REQUIRE(cfg.embeddingsMinContentWords == 6);
   REQUIRE(cfg.embeddingsQueryPrefix.empty());
 }
 
-TEST_CASE("AppConfig::load: embeddings.query_prefix/max_distance are read "
-          "verbatim when set",
+TEST_CASE("AppConfig::load: embeddings.query_prefix/max_distance/"
+          "min_content_words are read verbatim when set",
           "[AppConfig]") {
   TempConfigFile file(
       "[embeddings]\nprovider = \"local\"\n"
       "query_prefix = \"Represent this sentence for searching relevant passages: \"\n"
-      "max_distance = 0.42\n");
+      "max_distance = 0.42\n"
+      "min_content_words = 10\n");
   const AppConfig cfg = AppConfig::load(file.path().string());
   REQUIRE(cfg.embeddingsQueryPrefix ==
           "Represent this sentence for searching relevant passages: ");
   REQUIRE(cfg.embeddingsMaxDistance == 0.42);
+  REQUIRE(cfg.embeddingsMinContentWords == 10);
 }

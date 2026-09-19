@@ -138,6 +138,18 @@ write_access = false
 # bge-small-en-v1.5 measurements, not guessed — tune it if a different
 # model gives a different useful range.
 # max_distance = 0.5
+#
+# Local/cloud — a document whose title+body combined has FEWER
+# whitespace-separated words than this never gets a real embed() call at
+# all. Distance thresholds alone can't fix a document whose OWN vector
+# doesn't carry a strong enough semantic signal — found live: a near-empty
+# document (a title plus just an image link, no real prose) measured
+# BELOW max_distance for several genuinely unrelated real queries,
+# flooding results regardless of the threshold fix above. 6 (the default,
+# used even if this line is left commented out) was chosen to exclude
+# that exact real measured stub page (4 words) while keeping short-but-
+# real content eligible — see docs/embeddings.md.
+# min_content_words = 6
 
 [log]
 level = "info"   # trace | debug | info | warn | error

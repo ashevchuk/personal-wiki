@@ -44,7 +44,8 @@ int main() {
   db.migrate();
 
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
-  wikicore::index::IndexUpdater indexUpdater(db);
+  wikicore::index::IndexUpdater indexUpdater(db, /*provider=*/nullptr,
+                                              cfg.embeddingsMinContentWords);
   // Only actually exercised (snapshots_.record called) when
   // [mcp].write_access is on and update_document runs — DocumentService
   // itself doesn't know or care which caller (HTTP or MCP) is driving it.

@@ -6,6 +6,7 @@
 #ifdef WIKI_ENABLE_SQLITE_VEC
 #include "index/EmbeddingIndexer.h"
 
+#include <cctype>
 #include <functional>
 #include <iomanip>
 #include <sstream>
@@ -49,6 +50,25 @@ std::string contentHashForEmbedding(const std::string& title, const std::string&
   std::ostringstream out;
   out << std::hex << std::setfill('0') << std::setw(sizeof(std::size_t) * 2) << h;
   return out.str();
+}
+
+// Whitespace-separated token count — deliberately not a "real" word count
+// (no attempt to strip markdown syntax, punctuation, etc.), same spirit as
+// contentHashForEmbedding()'s own "good enough, not adversarial" bar. Used
+// ONLY to decide "is there enough text here to bother embedding at all" —
+// see upsertOne()'s own comment on why this check exists.
+int wordCount(const std::string& text) {
+  int count = 0;
+  bool inWord = false;
+  for (char c : text) {
+    if (std::isspace(static_cast<unsigned char>(c))) {
+      inWord = false;
+    } else if (!inWord) {
+      inWord = true;
+      ++count;
+    }
+  }
+  return count;
 }
 #endif
 
@@ -203,6 +223,59 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
   // rather than the only visibility being "semantic search silently
   // doesn't find this one document".
   if (provider_ != nullptr) {
+    // Step 0: is there even enough text here to embed MEANINGFULLY?
+    // Found live from a real user report on real production content: a
+    // document with essentially no prose (a title plus, say, just an
+    // image link — "# Welcome\n\n![pic.webp](...)") produces a vector
+    // that doesn't carry a strong-enough semantic signal to land
+    // reliably far from unrelated queries. Measured against real
+    // bge-small-en-v1.5 output: that exact document's cosine distance
+    // to several genuinely unrelated real queries landed BELOW
+    // FtsSearch's own relevance threshold for most of them — a stub
+    // page effectively flooding results for whatever the model's
+    // "default" region of the embedding space happens to be near. This
+    // is a distinct problem from that threshold fix (docs/embeddings.md
+    // covers both): no distance cutoff fixes a document whose vector
+    // itself doesn't carry a strong enough signal to BE reliably far
+    // from things it doesn't relate to. Skipping the embed() call
+    // entirely for a too-short document is the correct fix — there's
+    // nothing here worth vectorizing, and FTS5 already finds this
+    // document just fine for anyone actually searching its own words
+    // ("welcome").
+    if (wordCount(entry.title) + wordCount(entry.body) < minEmbeddingWords_) {
+      // Not a failure — record success-with-no-vector so this document
+      // never shows up in the admin "needing attention" list (that list
+      // means "something's broken", not "this is fine, just short") and
+      // so a later edit that adds enough real content re-triggers a real
+      // embed via the normal content-hash mismatch. Also clean up any
+      // STALE vector from a PREVIOUS, longer version of this same
+      // document — EmbeddingIndexer::removeOne() is a safe no-op if
+      // there was never one.
+      try {
+        std::lock_guard<std::mutex> lock(mutex_);
+        EmbeddingIndexer indexer(db_.handle());
+        // MUST run even on this skip path — found live: without it, a
+        // too-short document processed BEFORE any "normal" one leaves
+        // index_meta's dimensions/model completely unset; the next
+        // document's own ensureTable() call then sees "no recorded
+        // dimensions" as a model MISMATCH (the same signal a real model
+        // swap gives) and wipes the ENTIRE document_embedding_state
+        // table — including the row this exact skip path is about to
+        // write — as a side effect of establishing the schema, not of
+        // anything actually changing. ensureTable() is cheap (a no-op
+        // once dimensions/model already match), so calling it here too
+        // costs nothing on every subsequent save.
+        indexer.ensureTable(provider_->dimensions(), provider_->modelIdentifier());
+        indexer.removeOne(rowId);
+        indexer.recordEmbeddingSuccess(rowId, contentHashForEmbedding(entry.title, entry.body));
+      } catch (...) {
+        // A real sqlite error recording this — leave it alone; the next
+        // rescan/save re-evaluates from scratch, same as any other
+        // failure-to-record path in this function.
+      }
+      return rowId;
+    }
+
     // Step 1: is an embed() call even worth attempting? ensureTable()
     // must run first (cheap — a no-op when nothing changed) because a
     // provider/model swap since the last run clears

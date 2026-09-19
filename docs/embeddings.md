@@ -690,6 +690,67 @@ welcome/demo document was excluded. `tests/unit/LocalEmbeddingProviderTest.cpp`
 and `tests/unit/FtsSearchHybridTest.cpp` both have permanent regression tests
 built on these same real measurements.
 
+### A third root cause, found re-checking the SAME bug on more real queries: a distance threshold alone doesn't fix a document whose OWN vector is weak
+
+The two fixes above shipped, then a follow-up check against other real
+production queries ("concurrent coroutines", "ownership pointer memory",
+"simmer soup", "scheduled cron automation" — none related to the original
+"stabilize" report) found `welcome.md` STILL leaking into results for several
+of them. Measuring the real `welcome.md` content
+(`"# Welcome\n\n![Brizon060.webp](...)"` — a title plus an image link, four
+words total) against those exact queries with the query-prefix fix already
+applied:
+
+| query | welcome.md distance |
+|---|---|
+| stabilize | 0.5254 (correctly excluded) |
+| concurrent coroutines | 0.4921 (leaked) |
+| ownership pointer memory | 0.4975 (leaked) |
+| simmer soup | 0.4951 (leaked) |
+| scheduled cron automation | 0.4807 (leaked) |
+
+A document with almost no prose doesn't carry a strong enough semantic signal
+to land reliably far from an arbitrary unrelated query — its vector sits in
+an uninformative middle region of the embedding space that happens to fall
+under `max_distance` for SOME queries and not others, essentially at random.
+No amount of tuning the threshold fixes this: the problem isn't where the
+cutoff sits, it's that the vector itself doesn't carry enough information to
+be reliably on one side of any cutoff.
+
+**The fix**: `IndexUpdater::upsertOne()` now skips the `embed()` call
+entirely for a document whose title+body combined has fewer than
+`embeddings.min_content_words` (default `6`, whitespace-separated tokens —
+chosen to exclude the real 4-word `welcome.md` stub while keeping an 8-word
+test sentence like "About cats" / "The cat sat on the mat." eligible) — see
+`AppConfig::embeddingsMinContentWords`. Skipped, not failed: it records
+success-with-no-vector (so it never shows up in the admin "needing attention"
+list — that list means "something's broken", not "this is fine, just
+short") and removes any STALE vector from a previous, longer version of the
+same document. A later edit that adds enough real content re-triggers a real
+embed via the normal content-hash mismatch — this self-heals exactly like
+every other skip-if-unchanged case in this file.
+
+**A fourth bug, found building the THIRD fix, caught before shipping**: the
+first version of the skip path recorded success directly, without calling
+`EmbeddingIndexer::ensureTable()` first. If a too-short document was the
+FIRST one ever processed (a real, easy-to-hit ordering — filesystem
+directory iteration makes no ordering guarantee), `index_meta`'s
+dimensions/model stay completely unset at that point. The next REAL
+document's own `ensureTable()` call then sees "no recorded dimensions" as a
+model MISMATCH — the identical signal a genuine model swap gives — and wipes
+the ENTIRE `document_embedding_state` table as a side effect of establishing
+the schema for the first time, silently erasing the too-short document's
+row that had just been written. Reproduced live: a two-document sandbox
+(`welcome.md` first, a real document second) showed the too-short document's
+`document_embedding_state` row present immediately after being written, then
+gone by the time the second document finished processing — caught by adding
+temporary diagnostic logging around the exact write, not by guessing. Fixed
+by having the skip path call `ensureTable()` too, same as the real-embed
+path (cheap — a no-op once dimensions/model already match, so this costs
+nothing on every subsequent save). `tests/unit/IndexUpdaterEmbeddingTest.cpp`
+has a permanent regression test processing a too-short document first, then
+a real one, and asserting the short document's state survives.
+
 ## Why two provider kinds, not one
 
 A personal wiki has fail-safe-private documents by default (see `architecture.md`). A
@@ -829,6 +890,8 @@ provider = "none"        # "none" | "local" | "cloud"
 # query_prefix = "..."   # local only — prepended to search queries only, not
                           # documents (see "A real relevance bug" above)
 # max_distance = 0.5     # cosine-distance cutoff for a semantic match — default
+                          # shown even if commented out (see same section)
+# min_content_words = 6  # skip embedding entirely below this many words — default
                           # shown even if commented out (see same section)
 ```
 

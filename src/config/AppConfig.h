@@ -129,6 +129,17 @@ struct AppConfig {
   // real bge-small-en-v1.5 measurements — see docs/embeddings.md — not
   // guessed; tune per-model if a different one is configured.
   double embeddingsMaxDistance = 0.5;
+  // Local/cloud — a document whose title+body combined has FEWER
+  // whitespace-separated words than this never gets a real embed() call
+  // at all (IndexUpdater::upsertOne()) — found live: a near-empty
+  // document (a title plus just an image link, no real prose) produces a
+  // vector whose semantic signal is too weak to reliably land far from
+  // queries it has nothing to do with, and no distance threshold alone
+  // fixes a document whose OWN vector doesn't carry a strong enough
+  // signal. Default (6) chosen to exclude a real measured stub page
+  // (4 words) while including short-but-real content (an 8-word test
+  // sentence stays eligible) — see docs/embeddings.md.
+  int embeddingsMinContentWords = 6;
 
   // [log]
   std::string logLevel = "info";

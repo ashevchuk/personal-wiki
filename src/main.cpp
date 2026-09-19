@@ -112,7 +112,8 @@ int runReindex(const wikicore::config::AppConfig& cfg, wikicore::index::Database
                wikicore::embeddings::EmbeddingProvider* embeddingProvider) {
   std::filesystem::create_directories(cfg.vaultPath);
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
-  wikicore::index::IndexUpdater indexUpdater(db, embeddingProvider);
+  wikicore::index::IndexUpdater indexUpdater(db, embeddingProvider,
+                                              cfg.embeddingsMinContentWords);
   wikicore::index::IndexBuilder builder(vault, indexUpdater);
 
   const wikicore::index::RescanStats stats = builder.fullRescan();
@@ -198,7 +199,8 @@ int main(int argc, char** argv) {
   }
 
   wikicore::vault::VaultRepository vault(cfg.vaultPath);
-  wikicore::index::IndexUpdater indexUpdater(db, activeEmbeddingProvider);
+  wikicore::index::IndexUpdater indexUpdater(db, activeEmbeddingProvider,
+                                              cfg.embeddingsMinContentWords);
   wikicore::index::SnapshotStore snapshotStore(db);
   wikicore::vault::DocumentService documentService(vault, indexUpdater, snapshotStore);
   // config.toml's [attachments] table REPLACES the built-in defaults
@@ -296,7 +298,8 @@ int main(int argc, char** argv) {
   // one has to itself. Without this, a document changed by an external
   // editor/git pull would stay findable via FTS but never gain a
   // semantic embedding until the next --reindex.
-  wikicore::index::IndexUpdater watcherIndexUpdater(watcherDb, activeEmbeddingProvider);
+  wikicore::index::IndexUpdater watcherIndexUpdater(watcherDb, activeEmbeddingProvider,
+                                                     cfg.embeddingsMinContentWords);
   wikicore::index::IndexBuilder watcherIndexBuilder(vault, watcherIndexUpdater);
   wikicore::index::VaultWatcher vaultWatcher(
       cfg.vaultPath,

@@ -83,6 +83,8 @@ AppConfig AppConfig::load(const std::string& path) {
         (*embeddings)["query_prefix"].value_or(cfg.embeddingsQueryPrefix);
     cfg.embeddingsMaxDistance =
         (*embeddings)["max_distance"].value_or(cfg.embeddingsMaxDistance);
+    cfg.embeddingsMinContentWords =
+        (*embeddings)["min_content_words"].value_or(cfg.embeddingsMinContentWords);
   }
   if (auto* log = root["log"].as_table()) {
     cfg.logLevel = (*log)["level"].value_or(cfg.logLevel);
