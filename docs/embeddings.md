@@ -870,6 +870,49 @@ a counting embedding-provider wrapper: asserts a second identical query
 makes zero additional `embed()` calls, and a genuinely different query
 still makes one.
 
+## Tag/type filters silently bypassed by the semantic candidate path
+
+Real bug, reported live: searching `soup` with `tags:cpp` + `type:note`
+filters active still returned an unrelated recipe document — the filters
+appeared to do nothing for a hybrid (BM25 + semantic) search.
+
+Root cause: `bm25CandidateRowIds()` correctly applies
+`appendCommonFilterSql()` (tag/docType/folderPrefix), so the BM25 side of
+a hybrid search was never the problem. `EmbeddingIndexer::nearest()` — the
+semantic candidate source — has no concept of these filters at all; its
+whole signature is `nearest(queryEmbedding, limit)`, a plain k-NN query
+against the `document_embeddings` vec0 table with nothing to join against
+`document_tags`/`doc_type`. A document admitted to the merged RRF result
+ONLY through the semantic side (exactly what happens for a query that's a
+near-perfect semantic match for its own content, like `soup` against a
+soup recipe) skipped the filter entirely. `fetchByRowIds()` — the one place
+both candidate sources converge before being returned to the caller — only
+re-checked `visibility`, never tag/docType/folder, so nothing caught this
+downstream either.
+
+**The fix**: `fetchByRowIds()` now takes the full `SearchQuery` (not just
+`includePrivate`) and applies `appendCommonFilterSql()`/`bindCommonFilters()`
+— the same shared helper `bm25CandidateRowIds()` already used — to both of
+its SELECT statements (the snippet-eligible path and the excerpt-only
+path). A semantic-only candidate that fails the filter is now excluded at
+the one point where it would otherwise have leaked into results.
+`tests/unit/FtsSearchHybridTest.cpp` has a permanent regression test: a
+`soup` document tagged `python`, searched for its own exact title word
+with `tags:cpp` active — asserts it's found with no filter (proving this
+isn't a "model can't find soup" test artifact) and absent with the filter
+on.
+
+**Known, accepted limitation, not fixed here**: filtering happens AFTER
+`tryHybridSearch()` already sliced `query.limit`/`query.offset` out of the
+merged RRF list — a semantic candidate that fails the filter is dropped
+from its page rather than backfilled from further down the ranked list, so
+an active filter can return fewer than `query.limit` results even when
+more real matches exist deeper in the list. Not a correctness problem (no
+wrong document is ever shown, which is what was actually reported), just a
+completeness nuance — fixing it properly would mean joining
+`document_tags`/`doc_type` into the semantic candidate query itself, before
+the RRF merge, not worth that restructure on a vault this size.
+
 ## Why two provider kinds, not one
 
 A personal wiki has fail-safe-private documents by default (see `architecture.md`). A

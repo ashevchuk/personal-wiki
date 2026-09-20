@@ -133,9 +133,18 @@ class FtsSearch {
   // that came from the BM25 side (real FTS5 MATCH context), the stored
   // excerpt for rowids found ONLY via semantic search (snippet() has no
   // defined result for a row that never matched the FTS5 query).
+  //
+  // Takes the full `query`, not just `includePrivate` — the tag/docType/
+  // folderPrefix filters (appendCommonFilterSql()) MUST be re-applied
+  // here too, not just in bm25CandidateRowIds() above. Found live: a
+  // document admitted ONLY via the semantic candidate list (indexer.
+  // nearest() has no concept of tag/docType/folder filters at all — see
+  // EmbeddingIndexer::nearest()'s own signature) bypassed an active
+  // tags/type filter entirely, since this was the one place both
+  // candidate sources converge before being returned to the caller.
   std::vector<SearchResultItem> fetchByRowIds(
       const std::vector<int64_t>& orderedRowIds,
-      const std::unordered_set<int64_t>& snippetEligibleRowIds, bool includePrivate) const;
+      const std::unordered_set<int64_t>& snippetEligibleRowIds, const SearchQuery& query) const;
 #endif
 
   Database& db_;

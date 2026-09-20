@@ -293,6 +293,47 @@ TEST_CASE("FtsSearch: maxSemanticCandidates caps how many semantic matches "
   REQUIRE(containsPath(results, "notes/cat.md"));
 }
 
+TEST_CASE("FtsSearch: an active tag filter excludes a document that only "
+          "matches through the SEMANTIC candidate path, not just the BM25 "
+          "one",
+          "[FtsSearch][real-model]") {
+  // Real bug, reported live: searching "soup" with tags:cpp + type:note
+  // filters active still found a genuinely unrelated recipe document.
+  // Root cause: EmbeddingIndexer::nearest() (the semantic candidate
+  // source) has no concept of tag/docType/folder filters at all —
+  // bm25CandidateRowIds() applied them correctly, but a document
+  // admitted ONLY through the semantic side skipped the filter entirely,
+  // and fetchByRowIds() — where both candidate sources converge before
+  // being returned to the caller — never re-checked it either. See
+  // FtsSearch.h's own comment on fetchByRowIds() for the full writeup.
+  TempDb env;
+  LocalEmbeddingProvider provider(WIKI_TEST_EMBEDDING_MODEL_PATH);
+  IndexUpdater updater(env.db(), &provider);
+
+  auto soup = makeEntry("recipes/soup.md", "Soup",
+                         "A hearty vegetable soup recipe for cold days.");
+  soup.tags = {"python"};
+  updater.upsertOne(soup);
+
+  FtsSearch search(env.db(), &provider);
+
+  // Baseline: no filter — the soup document IS findable (proves this
+  // isn't a "the model can't find soup" test artifact).
+  SearchQuery unfiltered;
+  unfiltered.text = "soup";
+  unfiltered.includePrivate = true;
+  REQUIRE(containsPath(search.search(unfiltered), "recipes/soup.md"));
+
+  // With an ACTIVE tags:cpp filter — the document isn't tagged cpp, so
+  // it must NOT appear, regardless of how strongly "soup" matches it
+  // semantically or lexically.
+  SearchQuery filtered;
+  filtered.text = "soup";
+  filtered.tag = "cpp";
+  filtered.includePrivate = true;
+  REQUIRE_FALSE(containsPath(search.search(filtered), "recipes/soup.md"));
+}
+
 TEST_CASE("FtsSearch: a repeated identical query does NOT call embedQuery() "
           "again — the whole point of caching it",
           "[FtsSearch][real-model]") {

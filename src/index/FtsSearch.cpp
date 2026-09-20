@@ -270,8 +270,9 @@ std::vector<int64_t> FtsSearch::bm25CandidateRowIds(const SearchQuery& query,
 
 std::vector<SearchResultItem> FtsSearch::fetchByRowIds(
     const std::vector<int64_t>& orderedRowIds,
-    const std::unordered_set<int64_t>& snippetEligibleRowIds, bool includePrivate) const {
+    const std::unordered_set<int64_t>& snippetEligibleRowIds, const SearchQuery& query) const {
   if (orderedRowIds.empty()) return {};
+  const bool includePrivate = query.includePrivate;
 
   std::unordered_map<int64_t, SearchResultItem> byRowId;
 
@@ -287,7 +288,9 @@ std::vector<SearchResultItem> FtsSearch::fetchByRowIds(
         << "FROM documents_fts JOIN documents d ON d.rowid_id = documents_fts.rowid "
         << "WHERE d.rowid_id IN (";
     for (size_t i = 0; i < snippetIds.size(); ++i) sql << (i == 0 ? "?" : ",?");
-    sql << ") AND (? = 1 OR d.visibility = 'public');";
+    sql << ") AND (? = 1 OR d.visibility = 'public')";
+    appendCommonFilterSql(sql, query);
+    sql << ";";
 
     Statement stmt(db_.handle(), sql.str());
     int idx = 1;
@@ -295,6 +298,7 @@ std::vector<SearchResultItem> FtsSearch::fetchByRowIds(
     stmt.bind(idx++, std::string(1, kSnippetMatchEnd));
     for (auto id : snippetIds) stmt.bind(idx++, id);
     stmt.bind(idx++, static_cast<int64_t>(includePrivate ? 1 : 0));
+    bindCommonFilters(stmt, idx, query);
 
     while (stmt.step()) {
       const int64_t rowId = stmt.columnInt64(0);
@@ -317,12 +321,15 @@ std::vector<SearchResultItem> FtsSearch::fetchByRowIds(
         << kTagsSubquery << ", d.excerpt "
         << "FROM documents d WHERE d.rowid_id IN (";
     for (size_t i = 0; i < excerptIds.size(); ++i) sql << (i == 0 ? "?" : ",?");
-    sql << ") AND (? = 1 OR d.visibility = 'public');";
+    sql << ") AND (? = 1 OR d.visibility = 'public')";
+    appendCommonFilterSql(sql, query);
+    sql << ";";
 
     Statement stmt(db_.handle(), sql.str());
     int idx = 1;
     for (auto id : excerptIds) stmt.bind(idx++, id);
     stmt.bind(idx++, static_cast<int64_t>(includePrivate ? 1 : 0));
+    bindCommonFilters(stmt, idx, query);
 
     while (stmt.step()) {
       const int64_t rowId = stmt.columnInt64(0);
@@ -439,8 +446,19 @@ std::optional<std::vector<SearchResultItem>> FtsSearch::tryHybridSearch(
   const std::vector<int64_t> page(merged.begin() + static_cast<long>(start),
                                    merged.begin() + static_cast<long>(end));
 
+  // NOTE (accepted, not fixed here): tag/docType/folderPrefix filtering
+  // happens INSIDE fetchByRowIds(), which runs AFTER this page slice is
+  // already cut from `merged` — a semantic candidate that fails the
+  // filter is silently dropped from its page rather than backfilled from
+  // further down `merged`, so an active filter can return fewer than
+  // `query.limit` results even when more real matches exist deeper in
+  // the ranked list. Not a correctness bug (no wrong document is ever
+  // shown, which is what was actually reported and fixed) — a page
+  // running short is a separate completeness nuance, not worth the
+  // bigger restructure (filtering semantic candidates against
+  // document_tags/doc_type BEFORE the RRF merge) on a vault this size.
   const std::unordered_set<int64_t> bm25Set(bm25Candidates.begin(), bm25Candidates.end());
-  return fetchByRowIds(page, bm25Set, query.includePrivate);
+  return fetchByRowIds(page, bm25Set, query);
 }
 
 #endif  // WIKI_ENABLE_SQLITE_VEC
