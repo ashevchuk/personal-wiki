@@ -79,7 +79,7 @@ window.WikiPages = window.WikiPages || {};
       '<label class="visibility-toggle"><input type="checkbox" id="f-visibility"> Public</label>' +
       "</div>" +
       '<div id="editor"></div>' +
-      '<div class="field-row">' +
+      '<div class="field-row" id="edit-actions-row">' +
       '<button type="submit" id="f-save">Save</button>' +
       '<button type="button" id="f-attach-btn">Attach file</button>' +
       '<input type="file" id="f-attach" hidden>' +
@@ -159,9 +159,29 @@ window.WikiPages = window.WikiPages || {};
     var siteTheme = document.documentElement.getAttribute("data-theme");
     var editorTheme = siteTheme === "classic" ? "light" : "dark";
 
+    // Fill whatever vertical space is actually left in the viewport below
+    // the editor's own top (path/title/tags fields above it) instead of a
+    // fixed height that leaves a big dead gap on a tall screen and forces
+    // a second, page-level scrollbar on a short one. Measured live, not
+    // guessed: everything below #editor (the Save/Attach/Delete row) is
+    // already in the DOM by this point (built in one innerHTML= call
+    // above), so its real height is known before Toast UI Editor ever
+    // mounts. 300px floor covers a very short viewport (e.g. a phone in
+    // landscape) where the arithmetic would otherwise go negative.
+    var actionsRow = document.getElementById("edit-actions-row");
+    function computeEditorHeight() {
+      var top = document.getElementById("editor").getBoundingClientRect().top;
+      var actionsHeight = actionsRow ? actionsRow.getBoundingClientRect().height : 0;
+      // 32px: the same breathing room #editor's own margin-bottom (see
+      // edit.css) already reserves below it, plus a little more so the
+      // action row never sits flush against the editor's own border.
+      var available = window.innerHeight - top - actionsHeight - 32;
+      return Math.max(available, 300) + "px";
+    }
+
     var editor = new toastui.Editor({
       el: document.getElementById("editor"),
-      height: "500px",
+      height: computeEditorHeight(),
       initialEditType: "wysiwyg",
       previewStyle: "tab",
       theme: editorTheme,
@@ -191,6 +211,22 @@ window.WikiPages = window.WikiPages || {};
       customHTMLRenderer: {
         image: window.WikiYouTubeEmbedPreview.customImageRenderer,
       },
+    });
+
+    // Re-fit on viewport resize (window resize, or a mobile browser's
+    // address bar showing/hiding changing innerHeight) -- debounced since
+    // a drag-resize fires this dozens of times a second and setHeight()
+    // forces Toast UI Editor to redo its own internal layout each call.
+    // No listener cleanup needed: this app does a real full browser
+    // navigation on every page change (see router.js's own comment), so
+    // this whole JS context — this listener included — is torn down by
+    // the browser itself the moment the user navigates away.
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        editor.setHeight(computeEditorHeight());
+      }, 150);
     });
 
     document.getElementById("doc-form").addEventListener("submit", function (evt) {
