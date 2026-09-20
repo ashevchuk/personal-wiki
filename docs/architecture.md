@@ -1416,6 +1416,66 @@ page, appearing right after the backlinks list — this document plus its
 discipline the backlinks list right above it already follows) when the
 document genuinely has no neighbors at all.
 
+## Print/Download/Upload buttons, and a real dead-route bug found building them
+
+Three small, purely additive UI actions: the view page's "Print" button
+(renamed from "Print / Export PDF" — the button never generated a PDF
+itself, `window.print()` just hands off to the browser's own print
+dialog, so the old label overpromised) gained a "Download" button right
+next to it, and the edit page's "Attach file" button gained an "Upload"
+button right next to it. Both new buttons are deliberately thin:
+
+- **Download** (`static/js/pages/view.js`) fetches
+  `GET /api/documents/{path}/raw`, wraps the response in a `Blob`, and
+  drives a throwaway `<a download>` — no server-side "export" endpoint
+  needed, `/raw` already returns the exact on-disk bytes (front-matter
+  included) with the same fail-safe-private gating as every other read
+  route.
+- **Upload** (`static/js/pages/edit.js`) is the reverse: `FileReader`
+  reads a locally-picked `.md` file, a new small `parseFrontMatterClientSide`
+  helper splits it into front-matter fields + body (deliberately NOT a
+  general YAML parser — it only understands the exact flat shape
+  `FrontMatter::serializeFrontMatter`, src/vault/FrontMatter.cpp, actually
+  writes: scalar `title`/`type`/`visibility`, `tags` as a flow-sequence
+  `[a, b]`), populates the matching form fields, and replaces the editor's
+  content with the body. Nothing touches the network — the file only
+  ever reaches the server if the user hits Save afterward. If the editor
+  already has non-empty content, a `window.confirm` guards against
+  silently discarding unsaved work; a brand-new empty document skips the
+  prompt entirely.
+
+**A real, previously-shipped bug found and fixed building Download, not
+hypothetical**: `GET /api/documents/{path}/raw` (`DocumentRoutes.cpp`)
+already existed — but was completely unreachable, on every single
+request, since the route was first added. Drogon's
+`registerHandlerViaRegex` matches regex handlers in REGISTRATION order,
+first match wins; the general `GET /api/documents/{path...}` handler's
+own `"^/api/documents/(.*)$"` was registered BEFORE the more specific
+`"^/api/documents/(.*)/raw$"`, and `(.*)` is greedy enough to swallow a
+trailing `/raw` as part of its own capture group. Every request to
+`/raw` matched the general handler first, which then 404'd (no document
+literally named `notes/foo.md/raw` exists), and the dedicated `/raw`
+handler below it never ran at all. Caught immediately when Download's
+own `fetch()` came back 404 for a document confirmed to exist — fixed by
+moving the `/raw` handler's registration above the general one (order
+between DIFFERENT regex handlers matters here the same way filter
+registration order already mattered elsewhere in this codebase, just a
+different Drogon mechanism). A comment at the new registration site now
+explains why the order can never be swapped back.
+
+**Verification**: two new `security_e2e.py` checks (anon gets the
+literal public document's on-disk bytes including its `---` front-matter
+block, not JSON; anon gets `404` for a private document's raw bytes;
+admin gets the private document's raw bytes) — this is an HTTP-routing
+bug, not a unit-testable one, so `QueryBlocksTest`-style C++ tests
+wouldn't have caught it either way. Live-verified afterward: `curl` against
+the real `/raw` route returned the expected front-matter + body for a
+real document; the Upload path was verified end-to-end in a real browser
+(a hand-crafted `.md` file with `title`/`tags: [drink, strong, party]`/
+`type: recipe`/`visibility: private` front-matter correctly populated
+every form field and the editor body, and the resulting Save round-tripped
+correctly — confirmed via the saved document's own tag cloud entries).
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
