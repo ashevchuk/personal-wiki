@@ -42,6 +42,16 @@ underneath, so a fourth theme later is just a new file, not a refactor.
 - **Full-text search that's actually good.** FTS5 with prefix matching (`time` finds
   "Systemd Timers"), `bm25()`-ranked column weighting, and multiselect tag/type
   filters.
+- **Optional semantic search on top of FTS5, not instead of it.** Finds
+  `recipes/dinner/borscht.md` from a query like `beet soup` with zero words in common,
+  by blending FTS5's `bm25()` ranking with cosine similarity over embeddings
+  (Reciprocal Rank Fusion) — `sqlite-vec` storage, off by default
+  (`[embeddings].provider = "none"`), switchable at runtime to either a local
+  in-process model (`llama.cpp`, no document ever leaves the machine) or a cloud API
+  (OpenAI `text-embedding-3-small`), both build-time-optional so an SBC build stays
+  light unless you opt in. Admin panel exposes re-embed/re-embed-all with the same
+  audit trail as everything else. See [`docs/embeddings.md`](docs/embeddings.md) for
+  the full design, the real bugs found building it, and production numbers.
 - **`[[wiki-links]]` and automatic backlinks**, Obsidian-style — link two notes,
   see the connection from both ends without touching either file's `tags`.
 - **Namespaced tags, filterable.** A tag containing `/` (`lang/cpp`, `project/wiki`)
@@ -200,6 +210,8 @@ of real bugs caught by an actual E2E test, not just theory) live in
 | Config | [toml++](https://github.com/marzer/tomlplusplus) |
 | WYSIWYG editor | [Toast UI Editor](https://github.com/nhn/tui.editor) (vendored, committed) |
 | MCP protocol | [hkr04/cpp-mcp](https://github.com/hkr04/cpp-mcp) (vendored via `FetchContent`) |
+| Vector storage | [sqlite-vec](https://github.com/asg017/sqlite-vec) (vendored via `FetchContent`) — build-time-optional |
+| Local embeddings | [llama.cpp](https://github.com/ggml-org/llama.cpp) (vendored via `FetchContent`) — build-time-optional |
 | Tests | [Catch2](https://github.com/catchorg/Catch2) (unit) + a stdlib-only Python HTTP suite (integration) |
 | Package manager | [vcpkg](https://github.com/microsoft/vcpkg), manifest mode |
 | Cross-compilation | [zig](https://ziglang.org/) → static `arm-linux-musleabihf`, for old/weak ARM targets |
@@ -213,8 +225,9 @@ document versioning, `[[wiki-links]]` backlinks, Cmd-K quick-open, vault backup,
 YouTube embeds, a Docker build, and a filterable/namespaced tag tree in the sidebar.
 Deployed and verified running on real ARM hardware via cross-compilation; see
 [`docs/deployment.md`](docs/deployment.md) for the exact, current verification status.
-Semantic search (`sqlite-vec` + embeddings) is the one deliberately-deferred item — no
-embedding-source decision made yet.
+Semantic search (`sqlite-vec` + embeddings, hybrid FTS5/cosine ranking) — originally
+the one deliberately-deferred item — is done and live on the real production
+instance; see [`docs/embeddings.md`](docs/embeddings.md).
 
 ## License
 
