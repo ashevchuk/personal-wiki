@@ -32,12 +32,48 @@ Save the document, view it, and the block becomes a real table: Title / Tags
 | `sort` | One of `title`, `updated`, `created`, `path` (default: `title`) | `sort: updated` |
 | `order` | `asc` or `desc` — defaults to `desc` for `updated`/`created`, `asc` for `title`/`path` | `order: asc` |
 | `limit` | 1–100 (default: 20) | `limit: 10` |
+| `search` | Free text — full-text search, same engine as the main search page | `search: beet soup` |
 
 Combine as many as you want — each line is a separate filter, all ANDed
 together. Unrecognized keys, a key repeated on two lines, or a value outside
 its own allowed range (e.g. `limit: 0` or `sort: nonsense`) render a plain
 red error line in place of the table instead of silently showing nothing or
 the wrong thing — if a block looks broken, check for a typo first.
+
+## Full-text search with `search:`
+
+`search:` turns a query block from a structured filter into a real
+full-text search box, embedded on the page — the SAME search engine behind
+the site's own search page, hybrid semantic ranking included when the
+instance has embeddings configured (see `docs/embeddings.md`). A one-word
+`search: systemd` behaves like typing "systemd" into the search box; a
+longer phrase like `search: beet soup` benefits from semantic matching even
+when the exact words "beet soup" don't appear verbatim in the target
+document.
+
+`tag`, `type`, `folder`, and `limit` all still apply as filters on top of a
+`search:` query — for example, `search: beet` plus `type: recipe` plus
+`folder: recipes/` narrows a full-text match down to just the recipes
+folder. `sort`, `order`, and `orphans`, however, have no meaning once
+results are relevance-ranked — combining any of them with `search:` is a
+parse error rather than one silently overriding the other:
+
+````
+```query
+search: beet soup
+sort: title
+```
+````
+
+renders a red error line ("search: results are always relevance-ranked --
+sort/order can't be combined with search") instead of a table.
+
+**A real example** — a full-text search box embedded right in a document:
+````
+```query
+search: beet soup
+```
+````
 
 ## Real examples
 

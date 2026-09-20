@@ -1265,6 +1265,45 @@ listing, dinner-only tag filter, a real orphans list, a deliberately
 typo'd block rendering a visible red error line instead of a blank
 table) — see the deployment memory note for the exact queries run.
 
+**`search:` — delegating to `FtsSearch` instead of reimplementing it.**
+A follow-up added a `search:` key giving a query block real full-text
+(and, when embeddings are configured, hybrid semantic) search — turning
+it from a structured filter into an embedded search box. Rather than
+duplicating FTS5 MATCH/BM25/RRF logic a second time inside
+`QueryBlocks.cpp`, `search:` builds a `FtsSearch::SearchQuery` and calls
+the SAME `FtsSearch&` instance `/api/search` already uses (passed into
+`QueryBlocks`'s constructor in `main.cpp`, where it's already
+constructed first) — getting the exact same ranking, query-embedding
+cache, and distance/candidate-count tuning `/search` has, for free, with
+zero duplicated logic. `SearchQuery`'s own `tags`/`docTypes`/
+`folderPrefix`/`includePrivate`/`limit` fields already matched
+`QueryBlocks`'s own `tag`/`type`/`folder`/visibility/`limit` semantics
+closely enough that the mapping is closer to a straight field copy than
+a translation layer.
+
+`sort`, `order`, and `orphans` have no defined meaning once results come
+back relevance-ranked instead of DB-ordered — `FtsSearch` has no
+backlink concept at all, and "sort by title" doesn't compose with "sort
+by relevance." Combining either with `search:` is a parse error (checked
+right after the DSL parsing loop, before the normal sort-default
+resolution that would otherwise run unconditionally), not one silently
+winning over the other — the same explicit-refusal discipline this
+file's own key-parsing already applies to an unknown/duplicate key.
+
+**Verification**: five more unit tests (search finds via FTS5 body
+text, visibility gating holds through the delegation in both
+directions, `tag`/`type`/`folder` still apply as AND filters on top of
+`search:`, `search:` combined with `sort`/`order`/`orphans` is a parse
+error, an empty `search:` value is rejected) plus two more
+`security_e2e.py` checks (visibility gating over real HTTP, the
+search+sort conflict producing a `400` with an `error` field). Live-
+verified against real production content: `search: beet soup` matched
+`recipes/dinner/borscht.md` and `recipes/breakfast/pancakes.md` via the
+hybrid semantic path even though neither document contains that exact
+phrase, and `search: beet soup` combined with `sort: title` rendered the
+expected error instead of a table — see the deployment memory note for
+the exact queries run.
+
 ## Heading-level "zoom"/focus mode — experimental, isolated in its own commit
 
 Inspired by the same survey of other self-hosted PKM tools as the

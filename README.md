@@ -75,9 +75,11 @@ underneath, so a fourth theme later is just a new file, not a refactor.
 - **` ```query ` blocks — a live, auto-updating table of documents**, right inside a
   page. `tag: cpp` / `type: recipe` / `folder: recipes/` / `orphans: true`, sorted and
   limited — re-run server-side on every view, so a recipe index or project list never
-  goes stale. No raw SQL: a small whitelisted DSL, every value a bound parameter, never
-  concatenated into a query string. An unknown key or bad value is a clear error, never
-  a silently empty result.
+  goes stale. `search: <text>` embeds a real full-text (and, with embeddings
+  configured, hybrid semantic) search box instead, delegating to the same engine as
+  the site's own search page. No raw SQL: a small whitelisted DSL, every value a bound
+  parameter, never concatenated into a query string. An unknown key or bad value is a
+  clear error, never a silently empty result.
 - **Heading-level "zoom" / focus mode** *(experimental)* — click "Zoom" next to any h2-h6
   to hide everything outside that section, useful on a long document; a shareable
   `#zoom=<slug>` link lands already focused. Client-side only, no true block-level
