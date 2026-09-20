@@ -1476,6 +1476,55 @@ real document; the Upload path was verified end-to-end in a real browser
 every form field and the editor body, and the resulting Save round-tripped
 correctly — confirmed via the saved document's own tag cloud entries).
 
+## Type/Tags typeahead on the edit form
+
+The edit form's `Type` and `Tags` fields used to be plain `<input
+type="text">` boxes with zero discoverability of what already exists in
+the vault — a typo (`recipie` instead of `recipe`) silently created a
+new, disconnected type/tag rather than erroring or suggesting the real
+one. Both fields gained a typeahead: suggestions from the SAME already-
+existing, already-visibility-gated `GET /api/nav/types`/`GET /api/nav/
+tags` endpoints the tag cloud and search page's own filter already use,
+filtered client-side as you type.
+
+**Deliberately NOT search.js's `createMultiSelect`** (the checkbox
+popover backing the search page's tag/type filters), even though the
+data source is identical — that widget assumes a CLOSED set (you can
+only ever filter by a tag/type that already exists). `Type`/`Tags` are
+free text on this form; the first document of a genuinely new type, or
+the first use of a new tag, has to stay possible. So `edit.js`'s new
+`createTypeahead` is a plain text input with a suggestions dropdown
+layered on top — pick one, or keep typing your own value, either always
+works. Two modes: `"single"` (Type) replaces the whole field; `"token"`
+(Tags) only replaces the comma-separated segment currently being typed,
+so picking a suggestion for the second tag doesn't clobber the first one
+already written — and already-picked tags are excluded from their own
+field's suggestion list, so the dropdown never tempts a duplicate.
+
+Deliberately caret-position-agnostic for `"token"` mode: always treats
+the LAST comma-separated segment as "what's being typed right now",
+regardless of where the text cursor actually sits. Covers the
+overwhelmingly common case (typing new tags onto the end of the list)
+with far less code than real caret-aware token editing — editing a tag
+in the middle of an existing list just won't get suggestions scoped to
+it, a deliberate simplicity trade-off matching this codebase's "write it
+ourselves when small" pattern, not an oversight.
+
+CSS follows the exact same split `.ms-select`/`.ms-menu` (search.js's
+own dropdown) already established: layout-only rules (position,
+sizing, the `[hidden]`-vs-author-rule specificity override — see that
+existing rule's own comment for why an explicit `.typeahead-menu[hidden]
+{ display: none; }` is required, not optional) live once in `edit.css`
+since they're identical regardless of active theme; colors get their own
+small block in each of the three `css/themes/*.css` files, matching
+that file's own palette.
+
+Live-verified in a real browser on both the green and classic themes:
+typing a substring filters the dropdown, Arrow keys + Enter navigate and
+pick a suggestion, a picked Type/Tag value lands in the field correctly,
+and typing a second tag after picking the first one correctly excludes
+that first tag from its own suggestion list.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
