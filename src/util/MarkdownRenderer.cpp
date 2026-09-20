@@ -150,6 +150,52 @@ std::string substituteMermaidBlocks(std::string html) {
   return out;
 }
 
+// Same technique as substituteMermaidBlocks immediately above, for
+// ` ```query ... ``` ` blocks instead — see that function's own comment
+// for why this needs no pre-parse rewrite and why the (already
+// HTML-escaped) content is copied through untouched. The actual query
+// execution happens server-side too, but NOT here: this function only
+// ever produces a `<pre class="query">` placeholder holding the raw DSL
+// text; static/js/query-block.js reads it client-side and calls
+// GET /api/query (index::QueryBlocks::parseAndRun, src/controllers/
+// QueryRoutes.cpp) to get live, visibility-gated results on every page
+// view — MarkdownRenderer has no database handle at all (see
+// docs/architecture.md's two-binary layout: wikicore's markdown
+// rendering is deliberately DB-free), and a query embedded in a
+// document must re-run on every view anyway, not freeze at save time,
+// for it to be useful as a live index/dashboard rather than a snapshot.
+std::string substituteQueryBlocks(std::string html) {
+  constexpr std::string_view kOpenMarker = "<pre><code class=\"language-query\">";
+  constexpr std::string_view kOpenReplacement = "<pre class=\"query\">";
+  constexpr std::string_view kCloseMarker = "</code></pre>";
+  constexpr std::string_view kCloseReplacement = "</pre>";
+
+  std::string out;
+  out.reserve(html.size());
+  size_t pos = 0;
+  while (true) {
+    const size_t open = html.find(kOpenMarker, pos);
+    if (open == std::string::npos) {
+      out.append(html, pos, std::string::npos);
+      break;
+    }
+    out.append(html, pos, open - pos);
+
+    const size_t contentStart = open + kOpenMarker.size();
+    const size_t close = html.find(kCloseMarker, contentStart);
+    if (close == std::string::npos) {
+      out.append(html, open, std::string::npos);
+      break;
+    }
+
+    out.append(kOpenReplacement);
+    out.append(html, contentStart, close - contentStart);
+    out.append(kCloseReplacement);
+    pos = close + kCloseMarker.size();
+  }
+  return out;
+}
+
 }  // namespace
 
 std::string renderMarkdownToHtml(std::string_view markdown) {
@@ -173,7 +219,8 @@ std::string renderMarkdownToHtml(std::string_view markdown) {
   if (rc != 0) {
     throw std::runtime_error("markdown rendering failed");
   }
-  return substituteMermaidBlocks(substituteYouTubeEmbeds(std::move(html)));
+  return substituteQueryBlocks(
+      substituteMermaidBlocks(substituteYouTubeEmbeds(std::move(html))));
 }
 
 }  // namespace wikicore::util

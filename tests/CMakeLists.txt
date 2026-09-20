@@ -11,6 +11,7 @@ add_executable(unit_tests
   unit/FolderServiceTest.cpp
   unit/FtsSearchTest.cpp
   unit/NavQueriesTest.cpp
+  unit/QueryBlocksTest.cpp
   unit/IndexBuilderTest.cpp
   unit/VaultWatcherTest.cpp
   unit/WikiLinksTest.cpp

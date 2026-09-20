@@ -84,3 +84,13 @@ TEST_CASE("renderMarkdownToHtml: a fence info string that only STARTS WITH "
   REQUIRE(html.find("pre class=\"mermaid\"") == std::string::npos);
   REQUIRE(html.find("<code class=\"language-mermaidjs\">") != std::string::npos);
 }
+
+TEST_CASE("renderMarkdownToHtml: a ```query fenced block becomes pre.query, "
+          "raw DSL text preserved for the client to send to /api/query",
+          "[MarkdownRenderer]") {
+  const std::string html = renderMarkdownToHtml("```query\ntag: cpp\nlimit: 5\n```");
+  REQUIRE(html.find("<pre class=\"query\">") != std::string::npos);
+  REQUIRE(html.find("<code class=\"language-query\">") == std::string::npos);
+  REQUIRE(html.find("tag: cpp") != std::string::npos);
+  REQUIRE(html.find("limit: 5") != std::string::npos);
+}

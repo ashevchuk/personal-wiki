@@ -887,6 +887,40 @@ pre code[class*="language-"] {
   font-style: italic;
 }
 
+/* Query-block results (static/js/query-block.js renders this in
+   place of <pre class="query">, GET /api/query -- see
+   src/index/QueryBlocks.cpp). Plain table, no card/border chrome --
+   reads as part of the document's own content, not a widget bolted
+   onto it. */
+.query-block {
+  margin: 0.8rem 0;
+  overflow-x: auto;
+}
+.query-results {
+  width: 100%;
+  border-collapse: collapse;
+}
+.query-results th,
+.query-results td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.query-results th {
+  color: var(--fg-dim);
+  font-weight: normal;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+}
+.query-empty {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+.query-error {
+  color: var(--error);
+}
+
 /* Print / "Export PDF" — identical across all three themes, deliberately:
    a printed page should always come out readable on paper regardless of
    which screen theme was active when the reader clicked print. See

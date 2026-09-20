@@ -370,6 +370,33 @@ def run_checks(sandbox, vault):
           anon_tags.get("e2e", 0) == 1 and admin_tags.get("e2e", 0) == 2,
           f"anon={anon_tags} admin={admin_tags}")
 
+    # --- 6b. /api/query (```query block engine) -------------------------
+    status, _, body = anon.get_json("/api/query?q=" + urllib.parse.quote("tag: e2e"))
+    paths = [r["path"] for r in body["rows"]]
+    check("anon query: public found, private not leaked",
+          "notes/public.md" in paths and "notes/private.md" not in paths, f"paths={paths}")
+    status, _, body = admin.get_json("/api/query?q=" + urllib.parse.quote("tag: e2e"))
+    paths = [r["path"] for r in body["rows"]]
+    check("admin query: sees both", "notes/private.md" in paths, f"paths={paths}")
+
+    # A typo'd key must be a clear 400 error, never a silently empty or
+    # unfiltered 200 -- see QueryBlocks.h's own reasoning for why.
+    status, _, body = admin.get_json("/api/query?q=" + urllib.parse.quote("tags: e2e"))
+    check("query: unknown key -> 400 with an error field, not a silent empty result",
+          status == 400 and "error" in body, f"status={status} body={body}")
+
+    # A tag value shaped like a SQL injection attempt must be treated as
+    # an inert literal (bound parameter), never concatenated into SQL --
+    # the endpoint must still respond normally (200, no match), not 500.
+    injection = "tag: x'; DROP TABLE documents; --"
+    status, _, body = admin.get_json("/api/query?q=" + urllib.parse.quote(injection))
+    check("query: SQL-injection-shaped tag value is inert, not a 500",
+          status == 200 and body["rows"] == [], f"status={status} body={body}")
+    # The documents table must still be intact and queryable afterward.
+    status, _, body = admin.get_json("/api/query?q=" + urllib.parse.quote("tag: e2e"))
+    check("query: documents table still intact after the injection attempt",
+          status == 200 and len(body["rows"]) == 2, f"status={status} body={body}")
+
     # --- 7. Attachments: visibility follows the OWNING document --------
     # No extension policy on upload anymore (see AttachmentService) — an
     # extension that would have been rejected before (.exe) now succeeds;
