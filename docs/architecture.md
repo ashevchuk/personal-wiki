@@ -1519,11 +1519,65 @@ since they're identical regardless of active theme; colors get their own
 small block in each of the three `css/themes/*.css` files, matching
 that file's own palette.
 
-Live-verified in a real browser on both the green and classic themes:
-typing a substring filters the dropdown, Arrow keys + Enter navigate and
-pick a suggestion, a picked Type/Tag value lands in the field correctly,
-and typing a second tag after picking the first one correctly excludes
-that first tag from its own suggestion list.
+**Two real bugs found and fixed via user-reported screenshots, not caught
+in the first round of testing**: a user screenshot showed the dropdown's
+lower rows visually overlapping the document body text beneath it, and
+the `Public` checkbox sitting noticeably higher than its neighboring
+Title/Tags inputs on the same row.
+
+The checkbox misalignment turned out to be pre-existing, unrelated to
+this feature specifically — `.field-row`'s `align-items: center`
+centers each label's own BOX within the row, but a text+input label
+(column layout: label text ABOVE its input) is taller than the
+single-row `.visibility-toggle` (checkbox + "Public", nothing above
+it), so centering the shorter box against the taller one leaves the
+checkbox sitting above the actual input baseline it's meant to line up
+with — confirmed via `getBoundingClientRect()`: Title's own input and
+the checkbox had a ~10px vertical CENTER mismatch even before this
+session touched anything. Fixed by switching `.field-row` to
+`align-items: flex-end` instead — every label's BOTTOM edge lines up
+now (an input's bottom edge sits right at its own label's bottom;
+nothing below it in the column), regardless of how many lines of label
+text sit above it.
+
+The overlap bug took considerably more digging, and the eventual root
+cause was NOT the first several things suspected (max-height/overflow
+clipping, incorrect auto-height calculation, missing z-index — all
+ruled out one at a time via `getComputedStyle()`/`getBoundingClientRect()`
+checks that came back looking entirely correct). The actual cause,
+found by walking the WYSIWYG canvas's own ancestor chain: Toast UI
+Editor's `#editor` nests SEVERAL of its own `position: relative`/
+`absolute` containers several layers deep (`.toastui-editor-main`,
+`.toastui-editor-main-container`, the ProseMirror root itself) —
+deep enough that giving `.field-row` its own explicit
+`position: relative; z-index: 1` reliably beat the editor's plain
+(unpositioned) TOOLBAR, but not consistently the WYSIWYG body text
+several positioned layers further in. Rather than keep chasing
+z-index numbers against an unpredictable nested stacking nightmare,
+`createTypeahead`'s dropdown is now rendered as a **portal**: appended
+directly to `document.body` (not nested inside `.typeahead-wrap`) with
+`position: fixed` and its `top`/`left`/`min-width` computed from the
+input's own `getBoundingClientRect()` (`positionMenu()`, re-run on
+every open/re-render — `getBoundingClientRect()` is already
+viewport-relative, the same coordinate space `position: fixed` uses, so
+no scroll-offset math is needed). This sidesteps ancestor
+stacking-context interaction with the editor entirely: the menu's
+stacking rank is compared directly against `#editor` at the same
+(body-level) depth, never nested three layers inside it — the standard,
+well-established fix for "a dropdown trapped by a sibling's z-index
+games", used throughout real-world component libraries for exactly this
+class of problem.
+
+Live-verified in a real browser on both the green and classic themes,
+against the SAME document that originally reproduced the bug (a long
+real-world body — `Load .TAP`/`Load .SNA` documentation with a table —
+tall enough for the dropdown's full row count to reach into the body
+text below the editor toolbar): all 4 matching tag suggestions now
+render fully, with an unbroken border/background, on top of the
+document's own heading text; Arrow-key navigation + Enter correctly
+picks a suggestion and appends it to the Tags field with a trailing
+comma-space, ready for the next tag; the `Public` checkbox now sits
+flush with the Title/Type/Tags inputs on the same row.
 
 ## Two-binary layout
 
