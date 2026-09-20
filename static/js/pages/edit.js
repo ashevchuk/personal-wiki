@@ -149,10 +149,39 @@ window.WikiPages = window.WikiPages || {};
     input.parentNode.insertBefore(wrap, input);
     wrap.appendChild(input);
 
+    // Appended to document.body, NOT wrap -- a "portal", the standard
+    // fix for exactly this class of problem. Toast UI Editor's own
+    // WYSIWYG canvas (#editor) turns out to nest SEVERAL of its own
+    // position:relative/absolute containers (.toastui-editor-main,
+    // .toastui-editor-main-container, the ProseMirror root itself) --
+    // found live via getComputedStyle walking that ancestor chain, not
+    // guessed. That nesting made the dropdown's stacking order relative
+    // to the editor's body text UNRELIABLE even after giving .field-row
+    // its own explicit position+z-index (which reliably beat the
+    // editor's plain TOOLBAR, itself unpositioned, but not consistently
+    // the WYSIWYG canvas text several positioned layers deep inside
+    // #editor). Rendering the menu as a direct child of <body> instead,
+    // with `position: fixed` and JS-computed coordinates (positionMenu
+    // below), sidesteps ancestor stacking-context interactions with the
+    // editor entirely -- the menu's own stacking rank is then compared
+    // directly against #editor at the SAME (body-level) stacking depth,
+    // not nested three layers inside it.
     var menu = document.createElement("div");
     menu.className = "typeahead-menu";
     menu.hidden = true;
-    wrap.appendChild(menu);
+    document.body.appendChild(menu);
+
+    // input.getBoundingClientRect() is already viewport-relative -- the
+    // exact same coordinate space `position: fixed` uses, so no
+    // scroll-offset math is needed. Re-run before every render (not just
+    // once on open) since fixed positioning doesn't auto-follow the
+    // input if the page scrolls or resizes while the dropdown is open.
+    function positionMenu() {
+      var r = input.getBoundingClientRect();
+      menu.style.top = (r.bottom + 4) + "px";
+      menu.style.left = r.left + "px";
+      menu.style.minWidth = r.width + "px";
+    }
 
     fetch(basePath() + optionsUrl, { credentials: "same-origin" })
       .then(function (resp) { return resp.ok ? resp.json() : []; })
@@ -249,6 +278,7 @@ window.WikiPages = window.WikiPages || {};
         return q === "" || v.indexOf(q) !== -1;
       });
       activeIndex = -1;
+      if (filtered.length > 0) positionMenu();
       renderMenu();
     }
 

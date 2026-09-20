@@ -53,12 +53,43 @@
   color: #eee;
 }
 
+/* flex-end, not center -- a text+input label (".field-row label", column
+   layout: label text ABOVE its input) is taller than the single-row
+   ".visibility-toggle" (checkbox + "Public" text, nothing above it), so
+   center-aligning the two ends up centering the SHORTER checkbox row
+   against the TALLER label's overall box, not against its own input --
+   the checkbox visibly sits noticeably higher than every actual text
+   input beside it. Found live (getBoundingClientRect, not guessed):
+   Title's own input and the Public checkbox had a ~10px vertical CENTER
+   mismatch despite "aligned" via center -- pre-existing since this
+   form's very first version, unrelated to any one specific field, just
+   never reported before Type/Tags' own dropdown made someone actually
+   look closely at this row. flex-end aligns every label's BOTTOM edge
+   instead -- an input's bottom edge sits right at its own label's
+   bottom (nothing below it in the column), and the checkbox row's
+   bottom is its own single line's bottom -- so every actual control's
+   bottom edge lines up on one row, regardless of how many lines of
+   label text sit above it.
+
+   position/z-index: so a positioned descendant (.typeahead-wrap below,
+   and therefore its absolutely-positioned .typeahead-menu) reliably
+   paints above the #editor sibling that follows this row in the DOM --
+   a positioned ancestor with an explicit (non-auto) z-index always
+   paints above a non-positioned sibling, regardless of what stacking
+   context Toast UI Editor's own internal WYSIWYG canvas establishes
+   internally. Found live: without this, the Type/Tags typeahead
+   dropdown's lower rows visibly showed the document's own heading text
+   bleeding through -- confirmed via a real screenshot on a document
+   with body text tall enough to reach the dropdown's own vertical
+   extent, not a synthetic repro. */
 .field-row {
   display: flex;
   gap: 1rem;
   flex-wrap: wrap;
   margin-bottom: 0.75rem;
-  align-items: center;
+  align-items: flex-end;
+  position: relative;
+  z-index: 1;
 }
 .field-row label {
   display: flex;
@@ -80,24 +111,39 @@
    createTypeahead) -- layout only, lives here rather than per-theme
    since it's the SAME shape regardless of active theme (see
    css/themes/*.css for the colors, same split as .ms-select/.ms-menu
-   already uses for the search page's own dropdown). display:inline-block
-   (not the span's default inline) so position:relative actually
-   contains the absolutely-positioned menu below it without the wrapper
-   itself breaking the input's own inline flow inside .field-row label. */
-.typeahead-wrap {
-  position: relative;
-  display: inline-block;
-}
+   already uses for the search page's own dropdown).
+
+   .typeahead-wrap is now purely structural (groups the input for the
+   form's own layout) -- it does NOT position the menu, see below.
+
+   .typeahead-menu is a "portal": appended directly to document.body
+   (pages/edit.js) rather than nested inside .typeahead-wrap, with
+   `position: fixed` and its top/left/min-width set from JS
+   (positionMenu(), computed from the input's own getBoundingClientRect()
+   on every open/re-render). Found live, not guessed: Toast UI Editor's
+   own WYSIWYG canvas (#editor) nests SEVERAL of its own
+   position:relative/absolute containers several layers deep
+   (.toastui-editor-main, .toastui-editor-main-container, the
+   ProseMirror root) -- deep enough that even giving .field-row its own
+   explicit position+z-index only reliably beat the editor's plain
+   (unpositioned) toolbar, not the WYSIWYG body text several positioned
+   layers further in. A body-level portal sidesteps ALL of that: the
+   menu's stacking rank is compared directly against #editor at the same
+   (body-level) depth, never nested three layers inside it. */
 .typeahead-menu {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 0.25rem);
-  left: 0;
-  min-width: 100%;
-  max-height: 220px;
-  overflow-y: auto;
+  position: fixed;
+  /* 20, not 5 -- comfortably above ordinary page content, with headroom
+     to spare below Toast UI Editor's OWN internal popups
+     (.toastui-editor-tooltip: 40, .toastui-editor-dropdown-toolbar: 30 --
+     found live via getComputedStyle on the vendored bundle) -- this
+     dropdown never needs to outrank those, they're never open at the
+     same time as this one, just needs enough margin that a future
+     Toast UI bundle update bumping ITS OWN internal values slightly
+     doesn't silently flip the ordering back. */
+  z-index: 20;
   padding: 0.3rem;
-  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
 }
 /* Same [hidden]-vs-author-rule specificity trap .ms-menu[hidden] already
    documents (css/themes/green.css) -- an attribute selector and this
