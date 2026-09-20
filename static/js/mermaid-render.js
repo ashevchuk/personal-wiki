@@ -41,12 +41,39 @@ window.WikiMermaid = (function () {
     return scriptLoadPromise;
   }
 
-  // Same light/dark split edit.js already uses for Toast UI Editor's own
-  // theme option: "classic" is the one light theme, everything else
-  // (green terminal, plain dark) reads as dark for mermaid's palette too.
-  function mermaidTheme() {
-    var theme = document.documentElement.getAttribute("data-theme");
-    return theme === "classic" ? "default" : "dark";
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  // mermaid's own built-in "dark"/"default" themes have THEIR OWN fixed
+  // palette (grey node fills, white borders for "dark") -- picking one
+  // per site theme (as an earlier version of this file did) still leaves
+  // diagrams looking like a generic mermaid dark theme bolted onto the
+  // page, not this site's own green-terminal/dark/classic palette. Using
+  // `theme: "base"` + explicit `themeVariables` instead pulls the SAME
+  // CSS custom properties every other themed element on the page already
+  // uses, read live via getComputedStyle -- one source of truth (the
+  // active css/themes/*.css file), not a second copy of these colors
+  // hand-maintained here.
+  //
+  // Deliberately only --bg/--fg/--fg-dim/--fg-bright/--panel-bg, never
+  // --border: mermaid's theming engine only recognizes hex colors (its
+  // own docs are explicit about this, confirmed against the vendored
+  // 12.0.0 bundle), and green.css's own --border is `rgba(0, 255, 0,
+  // 0.35)`, not hex, unlike the other two themes -- --fg-dim (hex in
+  // every theme) stands in for node borders/lines instead of
+  // special-casing the one theme where --border wouldn't work.
+  function mermaidThemeConfig() {
+    return {
+      theme: "base",
+      themeVariables: {
+        primaryColor: cssVar("--panel-bg"),
+        primaryTextColor: cssVar("--fg"),
+        primaryBorderColor: cssVar("--fg-dim"),
+        lineColor: cssVar("--fg-dim"),
+        background: cssVar("--panel-bg"),
+      },
+    };
   }
 
   // Renders every pre.mermaid element inside `container` in place. No-op,
@@ -57,7 +84,9 @@ window.WikiMermaid = (function () {
 
     loadScript()
       .then(function () {
-        window.mermaid.initialize({ startOnLoad: false, theme: mermaidTheme() });
+        var config = mermaidThemeConfig();
+        config.startOnLoad = false;
+        window.mermaid.initialize(config);
         return window.mermaid.run({ nodes: nodes });
       })
       .catch(function (err) {

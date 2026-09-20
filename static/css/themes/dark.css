@@ -801,7 +801,6 @@ a.btn:focus {
    diagram's own node/edge colors. */
 pre.mermaid {
   background: var(--panel-bg);
-  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.8rem;
   margin: 0.8rem 0;
@@ -827,7 +826,6 @@ pre.mermaid svg {
 pre code[class*="language-"] {
   display: block;
   background: var(--panel-bg);
-  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 0.8rem;
   margin: 0.8rem 0;
