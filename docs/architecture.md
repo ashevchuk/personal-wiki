@@ -1143,6 +1143,30 @@ visually clash with. Also the first real on-screen container styling
 this, a plain fenced code block rendered as an unstyled browser-default
 box on every theme.
 
+**Follow-up, same day**: two more small fixes to this same styling.
+`border` dropped from both `pre.mermaid` and `pre code[class*="language-"]`
+in every theme file (background/padding/radius kept) — a plain user
+preference, no functional reason behind it.
+
+More substantively: mermaid diagrams originally used mermaid's own
+built-in `"dark"`/`"default"` theme, picked per site theme the same way
+Toast UI Editor's own theme option is. Looked wrong live — mermaid's
+built-in dark theme has ITS OWN fixed palette (grey node fills, white
+borders) with zero connection to this app's actual green-terminal/dark/
+classic colors, so a diagram looked like a generic mermaid widget bolted
+onto the page rather than matching it. Fixed by switching to
+`theme: "base"` with explicit `themeVariables`, read LIVE via
+`getComputedStyle(document.documentElement)` against this app's own CSS
+custom properties — `--panel-bg` for node fill, `--fg` for text,
+`--fg-dim` for borders/lines — so a diagram always uses exactly the
+active theme's real palette, with no second, hand-maintained copy of
+these colors sitting in JS to drift out of sync with the CSS. `--border`
+deliberately excluded from this: mermaid's theming engine only
+recognizes hex colors (confirmed against its own docs, not assumed), and
+`green.css`'s own `--border` is `rgba(0, 255, 0, 0.35)` — not hex, unlike
+the other two themes' `--border` — so `--fg-dim` (hex in all three)
+stands in for node borders/lines instead of special-casing one theme.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
