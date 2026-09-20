@@ -1167,6 +1167,104 @@ recognizes hex colors (confirmed against its own docs, not assumed), and
 the other two themes' `--border` — so `--fg-dim` (hex in all three)
 stands in for node borders/lines instead of special-casing one theme.
 
+## ```query blocks — a whitelisted live index/dashboard, no raw SQL
+
+Inspired by looking at how other self-hosted PKM tools (SiYuan's `/sql`
+embed blocks, Obsidian's Bases) solve the same real problem this
+project's own users hit: a hand-maintained list of links (a recipe
+index, a project roadmap) goes stale the moment a new document is added
+and nobody remembers to update the list. A ` ```query ` fenced block
+solves it by re-querying the actual document index on every page view
+instead.
+
+**Rendering pipeline mirrors mermaid/YouTube exactly**:
+`MarkdownRenderer::substituteQueryBlocks` is the same post-substitution
+technique as `substituteMermaidBlocks` — md4c already parses a fenced
+block's info string for free, so `<pre><code class="language-query">`
+becomes `<pre class="query">` holding the raw (already HTML-escaped) DSL
+text, nothing more. One deliberate difference from mermaid: this can't
+be a pure client-side render, because it needs a database. wikicore
+(where `MarkdownRenderer` lives) has no database handle at all by
+design — see "Two-binary layout" below — and a query needs to re-run on
+every view to be a *live* dashboard rather than a snapshot frozen at
+save time. So `static/js/query-block.js` reads the placeholder's text
+client-side and calls `GET /api/query`, which re-parses and re-runs the
+DSL fresh, every single page load.
+
+**Security model — the actual point of this feature, not an
+afterthought**: `index::QueryBlocks::parseAndRun` (src/index/
+QueryBlocks.cpp) never builds SQL from a query block's TEXT, structurally,
+not just "carefully": the grammar is a fixed set of `key: value` lines
+(`tag`, `type`, `folder`, `orphans`, `sort`, `order`, `limit`), and every
+recognized key maps to one hardcoded SQL fragment already written into
+this file. A value only ever reaches SQLite as a bound parameter (tag
+names, a type string, a folder prefix, the limit) or gets looked up
+against a small in-code whitelist and substituted for the corresponding
+literal, hardcoded string (`sort: updated` → the literal column name
+`d.updated_at`, never the caller's own spelling) — there's no code path
+where document text becomes part of the SQL string at all, let alone an
+unescaped one.
+
+Visibility gating reuses the exact fail-safe-private mechanism
+`NavQueries`/`FtsSearch` already established: `includePrivate` comes
+only from the caller's own session (`GET /api/query`'s handler calls
+`isAuthenticated(req)`, same as every other read-only route), never
+anything a query block's own text can influence. This matters
+concretely: a query block embedded in a PUBLIC document must never let
+an anonymous visitor discover a private document's title/path just
+because the ADMIN who wrote the block could see it themselves at
+authoring time. `orphans: true` (documents with zero incoming
+`[[wiki-link]]` backlinks) applies the same direction to the backlink
+check itself — a private document's own outgoing link never counts
+toward making a target look "not orphaned" for an anonymous caller,
+mirroring `NavQueries::backlinks`'s own documented behavior exactly.
+
+An unknown key, a duplicate key, or an out-of-range value (`limit: 0`,
+`sort: nonsense`) is a `400` parse error with a clear message, never a
+silently empty or unfiltered result — the same "don't let a helper's
+failure read as a normal, if wrong, result" discipline `~/.claude/
+CLAUDE.md`'s own global rule states for shelled-out scripts, applied
+here to a hand-written DSL parser instead: a typo'd `tags:` instead of
+`tag:` must be visibly wrong, not silently return everything (or
+nothing) with no signal anything went sideways.
+
+**A real bug found and fixed before this ever shipped, not
+hypothetical**: the first working version implemented `orphans: true` as
+a `LEFT JOIN document_links ... LEFT JOIN documents src ON ... AND
+(?N = 1 OR ...)` with an EXPLICITLY NUMBERED placeholder, positioned in
+the SQL text (the `FROM`/`JOIN` clause) ahead of the `WHERE` clause's own
+plain, unnumbered `?` placeholders. SQLite's actual rule for a plain `?`:
+it gets assigned the next number after the LARGEST parameter number
+already seen, in TEXT-PARSE ORDER — not in whatever order the C++ code
+happened to construct fragments in. Because the numbered `?N` appeared
+earlier in the final SQL text than the WHERE clause's own anonymous `?`s,
+every one of those silently got bumped to the WRONG bind position —
+`type`'s value could land bound to the slot meant for `folder`, for
+example. Caught by actually reasoning through SQLite's numbering rule
+before shipping, not by a test failure (the bug is silent — wrong values
+in the wrong slots, not a crash). Fixed by rewriting `orphans` as a
+`NOT EXISTS` subquery living entirely inside `WHERE`, so every
+parameterized condition is appended to the same list, in the same order
+its binder is pushed — text order and construction order become the
+same order by construction, closing off the whole bug class rather than
+just this one instance of it.
+
+**Verification**: 12 unit tests (`QueryBlocksTest.cpp`) — AND semantics
+for multiple `tag:` values (not OR), a `folder:` value containing literal
+`%`/`_` matched literally rather than as a SQL wildcard, `orphans`
+visibility gating checked in BOTH directions (an anonymous caller not
+crediting a private linker, an admin correctly seeing one), and a tag
+value shaped like `x'; DROP TABLE documents; --` proving it's treated as
+an inert literal — the documents table is confirmed intact and queryable
+in the same test, right after. Four more checks in `security_e2e.py`
+exercise the same properties over a real HTTP server (anon/admin split,
+`400` on a typo'd key with an `error` field, the injection-shaped value
+producing a normal `200` with zero rows rather than a `500`). Live-
+verified against real production content afterward (`recipes/` folder
+listing, dinner-only tag filter, a real orphans list, a deliberately
+typo'd block rendering a visible red error line instead of a blank
+table) — see the deployment memory note for the exact queries run.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

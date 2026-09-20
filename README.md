@@ -72,6 +72,12 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   editor's Markdown Preview panel too, not just after saving.
 - **Syntax-highlighted code blocks** on every document view (Prism.js, lazily
   loaded, per-theme colors — not the editor; editing stays plain text on purpose).
+- **` ```query ` blocks — a live, auto-updating table of documents**, right inside a
+  page. `tag: cpp` / `type: recipe` / `folder: recipes/` / `orphans: true`, sorted and
+  limited — re-run server-side on every view, so a recipe index or project list never
+  goes stale. No raw SQL: a small whitelisted DSL, every value a bound parameter, never
+  concatenated into a query string. An unknown key or bad value is a clear error, never
+  a silently empty result.
 - **Document history.** Every edit is snapshotted; diff any two versions, restore any
   of them (which itself snapshots first — restoring is undoable too).
 - **Fail-safe-private visibility.** Missing or malformed front-matter defaults to
