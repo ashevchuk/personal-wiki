@@ -43,7 +43,17 @@ window.WikiGraphRender = (function () {
 
     var REPULSION = 6000;
     var SPRING = 0.02;
-    var SPRING_LENGTH = 90;
+    // 90 was too short: each node's own label is text-anchor:middle,
+    // centered directly under it (see render()'s own comment on that
+    // choice) -- a typical document-title label (a few words) at this
+    // theme's own font-size/font-family runs 80-110px wide on its own,
+    // so two directly-connected nodes at the OLD 90px rest length left
+    // literally no room for either label without the two overlapping.
+    // Found live on real vault content (two linked short-title
+    // documents), not a synthetic worst case -- 150 gives enough margin
+    // for realistic multi-word titles without visibly stretching out
+    // small graphs that don't need it.
+    var SPRING_LENGTH = 150;
     var DAMPING = 0.85;
     var CENTER_PULL = 0.01;
     var ITERATIONS = 250;
