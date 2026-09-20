@@ -68,7 +68,10 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   flowcharts, sequence diagrams, anything [mermaid](https://mermaid.js.org/) supports.
   Rendered entirely client-side, lazily: the ~5.3 MiB mermaid.js bundle only loads on
   a document that actually contains one, never from every page load. Follows the
-  active site theme's light/dark palette.
+  active site theme's light/dark palette, and shows a live preview right in the
+  editor's Markdown Preview panel too, not just after saving.
+- **Syntax-highlighted code blocks** on every document view (Prism.js, lazily
+  loaded, per-theme colors — not the editor; editing stays plain text on purpose).
 - **Document history.** Every edit is snapshotted; diff any two versions, restore any
   of them (which itself snapshots first — restoring is undoable too).
 - **Fail-safe-private visibility.** Missing or malformed front-matter defaults to
@@ -218,6 +221,7 @@ of real bugs caught by an actual E2E test, not just theory) live in
 | Vector storage | [sqlite-vec](https://github.com/asg017/sqlite-vec) (vendored via `FetchContent`) — build-time-optional |
 | Local embeddings | [llama.cpp](https://github.com/ggml-org/llama.cpp) (vendored via `FetchContent`) — build-time-optional |
 | Diagrams | [mermaid.js](https://mermaid.js.org/) (vendored, ~5.3 MiB) — loaded client-side, lazily, only on documents that use it |
+| Syntax highlighting | [Prism.js](https://prismjs.com/) (vendored, custom bundle) — view page only, lazily loaded |
 | Tests | [Catch2](https://github.com/catchorg/Catch2) (unit) + a stdlib-only Python HTTP suite (integration) |
 | Package manager | [vcpkg](https://github.com/microsoft/vcpkg), manifest mode |
 | Cross-compilation | [zig](https://ziglang.org/) → static `arm-linux-musleabihf`, for old/weak ARM targets |

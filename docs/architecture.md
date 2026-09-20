@@ -1067,6 +1067,82 @@ inside (background/border/padding, matching each theme's own `--panel-bg`/
 `--border` variables) — confirmed live in both a dark and a light theme via
 a real rendered diagram screenshot in each, not just by reading the CSS.
 
+## Mermaid editor preview, syntax highlighting, and a real display:none bug
+
+Two follow-ups to the mermaid work above, shipped together since both
+needed a container styling pass anyway.
+
+**Editor preview**: `static/js/mermaid-editor-preview.js` plugs Toast UI
+Editor's `customHTMLRenderer.codeBlock` hook — the same technique
+`youtube-embed-preview.js` uses for `image` nodes — to turn a
+` ```mermaid ` block into the same `<pre class="mermaid">` shape the
+server-side renderer produces, then reuses `mermaid-render.js`'s
+lazy-loader against it rather than a second copy of that logic.
+Empirically confirmed (a throwaway sandbox loading the real vendored
+3.2.2 bundle directly, not this app, before writing any of this) that
+`node.info` carries the fence's bare language string, `node.literal` the
+raw content, and `type: "text"` content is HTML-escaped by the library
+itself — tested with a live `<img src=x onerror=alert(1)>` payload,
+which rendered as inert text, never executed. Also confirmed the one
+hard limit this hook has: its return value is honored ONLY by the
+Markdown-mode "Preview" panel (`.toastui-editor-md-preview`) — the
+WYSIWYG canvas always keeps a code block as its own editable widget,
+this hook's return value silently discarded, the same ProseMirror
+collapse-to-default behavior `youtube-embed-preview.js` already
+documents for an inline image node, just for a block node this time.
+Live-scoped syntax highlighting was explicitly ruled OUT of the editor
+entirely (a deliberate scope decision, not an oversight) — only the
+document view page gets Prism.js (below).
+
+**A real bug found shipping the preview, not a hypothetical**: the first
+version rendered flowchart diagrams as a real `<svg>` with NO console
+error, but at ~0px visible height — permanently. Root-caused by actually
+measuring, not guessing: `getBoundingClientRect().height` was ~59px for
+a broken flowchart vs. ~434px for a correctly-sized sequence diagram
+pulled from the exact same page. mermaid's dagre-based flowchart layout
+engine calls `getBBox()` on the live DOM to size nodes, which every
+Chromium/WebKit browser returns as all-zero for anything inside a
+`display:none` ancestor — Toast UI's Preview panel IS `display:none`
+whenever the "Write" tab is active instead of "Preview". `sequenceDiagram`
+was unaffected because its layout is computed, not DOM-measured — which
+is exactly why this looked like a diagram-type-specific bug at first,
+until the actual pixel measurements ruled that out. Worse: it never
+self-healed even after switching to the now-visible Preview tab, because
+mermaid marks a code block "already processed" and silently skips it on
+every later `mermaid.run()` call — the broken zero-height render was
+permanent, not transient.
+
+Fixed two ways together: `refreshPreview()` now checks
+`getComputedStyle(el).display !== "none"` before rendering at all, and a
+`MutationObserver` (`watchPreviewVisibility()`, installed once per editor
+mount) watches for the Preview panel's own `display` flipping to catch
+the render Toast UI's Write/Preview tab toggle needs — confirmed
+empirically that this toggle fires NO public editor event at all
+(`editor.on("changeMode", ...)` only fires for the separate markdown/
+wysiwyg switch, never a bare Write/Preview tab click), so without the
+observer nothing would ever trigger the deferred first render. Re-verified
+post-fix with the same `getBoundingClientRect()` measurement: both
+diagrams on the same real production document now report their full,
+correct height.
+
+**Syntax highlighting**: `static/js/prism-highlight.js` lazy-loads a
+custom Prism.js 1.30.0 bundle (`static/js/prism/`, core + a fixed
+language set — see that directory's own `VENDORED.md` for the exact list
+and why it's not vendored with any theme CSS) on the document VIEW page
+only, following the exact same "don't fetch anything nobody asked for"
+discipline as mermaid's own lazy-loader: a no-op unless the page actually
+contains a `<pre><code class="language-X">` block md4c already produces
+for free from a fenced block's info string. `.token.*` colors are
+hand-written per `css/themes/*.css` file — classic gets a GitHub-Light-
+style palette, dark a GitHub-Dark-style one, green deliberately stays
+inside its own green-family hues (amber/cyan as the only two accent
+colors, differentiated mostly by BRIGHTNESS rather than hue) rather than
+bolting a generic multi-hue theme onto a green-terminal identity it would
+visually clash with. Also the first real on-screen container styling
+`<pre><code>` blocks ever had on this app outside `@media print` — before
+this, a plain fenced code block rendered as an unstyled browser-default
+box on every theme.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.
