@@ -848,6 +848,82 @@ pre.mermaid svg {
   height: auto;
 }
 
+/* Fenced code blocks (```cpp etc.) had NO screen-mode styling at all
+   before this -- only @media print touched pre/code -- so on-screen they
+   were plain browser-default black-on-white boxes regardless of theme.
+   Fixed here alongside adding syntax highlighting (static/js/prism-highlight.js,
+   view page only -- never the editor, a deliberate scope choice) since
+   both needed the same container treatment. Token colors below are a
+   GitHub-Light-style palette chosen to fit this theme's own light,
+   MediaWiki-ish look -- not Prism's own default theme CSS, which isn't
+   vendored at all (see static/js/prism/VENDORED.md) specifically so each
+   theme can pick colors that actually match its own palette instead of a
+   generic one bolted on top. */
+pre code[class*="language-"] {
+  display: block;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.8rem;
+  margin: 0.8rem 0;
+  overflow-x: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: var(--fg-dim);
+}
+.token.punctuation {
+  color: var(--fg-dim);
+}
+.token.property,
+.token.tag,
+.token.boolean,
+.token.number,
+.token.constant,
+.token.symbol,
+.token.deleted {
+  color: #005cc5;
+}
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: #22863a;
+}
+.token.operator,
+.token.entity,
+.token.url {
+  color: var(--fg);
+}
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: #d73a49;
+}
+.token.function,
+.token.class-name {
+  color: #6f42c1;
+}
+.token.regex,
+.token.important,
+.token.variable {
+  color: #e36209;
+}
+.token.important,
+.token.bold {
+  font-weight: bold;
+}
+.token.italic {
+  font-style: italic;
+}
+
 /* Print / "Export PDF" — identical across all three themes, deliberately:
    a printed page should always come out readable on paper regardless of
    which screen theme was active when the reader clicked print. See

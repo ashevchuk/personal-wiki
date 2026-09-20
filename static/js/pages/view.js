@@ -116,6 +116,9 @@ window.WikiPages = window.WikiPages || {};
         if (window.WikiMermaid) {
           window.WikiMermaid.renderIn(container);
         }
+        if (window.WikiPrismHighlight) {
+          window.WikiPrismHighlight.highlightIn(container);
+        }
 
         var deleteBtn = document.getElementById("doc-delete-btn");
         if (deleteBtn && window.WikiDocument) {

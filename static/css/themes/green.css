@@ -997,6 +997,87 @@ pre.mermaid svg {
   height: auto;
 }
 
+/* Fenced code blocks (```cpp etc.) had NO screen-mode styling at all
+   before this -- only @media print touched pre/code -- so on-screen they
+   were plain browser-default boxes regardless of theme. Fixed here
+   alongside adding syntax highlighting (static/js/prism-highlight.js,
+   view page only -- never the editor, a deliberate scope choice) since
+   both needed the same container treatment.
+   Deliberately NOT a rainbow palette here -- a generic multi-hue Prism
+   theme would clash hard with this theme's whole green-terminal identity.
+   Amber (keywords) and cyan (functions) are the two accent colors that
+   read as "extra CRT phosphor," not "wrong theme leaked in" -- everything
+   else stays inside the same green family as the rest of the page,
+   differentiated by BRIGHTNESS (--fg-dim for comments/punctuation,
+   --fg-bright for strings) rather than hue. Not Prism's own default theme
+   CSS, which isn't vendored at all (see static/js/prism/VENDORED.md)
+   specifically so each theme can pick colors that actually match its own
+   palette. */
+pre code[class*="language-"] {
+  display: block;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.8rem;
+  margin: 0.8rem 0;
+  overflow-x: auto;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+.token.comment,
+.token.prolog,
+.token.doctype,
+.token.cdata {
+  color: var(--fg-dim);
+}
+.token.punctuation {
+  color: var(--fg-dim);
+}
+.token.property,
+.token.tag,
+.token.boolean,
+.token.number,
+.token.constant,
+.token.symbol,
+.token.deleted {
+  color: #66ffcc;
+}
+.token.selector,
+.token.attr-name,
+.token.string,
+.token.char,
+.token.builtin,
+.token.inserted {
+  color: var(--fg-bright);
+}
+.token.operator,
+.token.entity,
+.token.url {
+  color: var(--fg);
+}
+.token.atrule,
+.token.attr-value,
+.token.keyword {
+  color: #ffcc00;
+}
+.token.function,
+.token.class-name {
+  color: #00ffff;
+}
+.token.regex,
+.token.important,
+.token.variable {
+  color: #ffcc00;
+}
+.token.important,
+.token.bold {
+  font-weight: bold;
+}
+.token.italic {
+  font-style: italic;
+}
+
 /* Print / "Export PDF" (view.js's #doc-print-btn just calls window.print()
    — real PDF generation is the browser's own "Save as PDF" print
    destination, not a server-side renderer; see the button's own comment

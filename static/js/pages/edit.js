@@ -208,10 +208,49 @@ window.WikiPages = window.WikiPages || {};
       // this hook the editor's own markdown engine would just try to
       // load the YouTube page URL as a normal <img> and show a broken
       // image icon while editing.
+      //
+      // codeBlock: same idea, for ```mermaid blocks -- see
+      // mermaid-editor-preview.js for what it actually renders and its
+      // one real limitation (Markdown-mode Preview panel only, never the
+      // WYSIWYG canvas -- confirmed empirically, not assumed).
       customHTMLRenderer: {
         image: window.WikiYouTubeEmbedPreview.customImageRenderer,
+        codeBlock: window.WikiMermaidEditorPreview.customCodeBlockRenderer,
       },
     });
+
+    // Re-render mermaid diagrams in the Markdown-mode Preview panel after
+    // every content change and mode switch (both debounced -- a diagram
+    // re-render isn't free, and `change` fires on every single keystroke).
+    // See mermaid-editor-preview.js's own comment for why this can only
+    // ever affect the Preview panel, never the WYSIWYG canvas. No listener
+    // cleanup needed here either, same reasoning as the resize listener
+    // above: this app does a real full browser navigation on every page
+    // change, so this whole JS context is torn down by the browser itself
+    // when the user navigates away.
+    var mermaidPreviewTimer = null;
+    function scheduleMermaidPreviewRefresh() {
+      if (mermaidPreviewTimer) clearTimeout(mermaidPreviewTimer);
+      mermaidPreviewTimer = setTimeout(function () {
+        window.WikiMermaidEditorPreview.refreshPreview();
+      }, 300);
+    }
+    editor.on("change", scheduleMermaidPreviewRefresh);
+    editor.on("changeMode", scheduleMermaidPreviewRefresh);
+    // Also cover the initial mount: an existing document opened straight
+    // into Markdown mode (or with a saved user preference -- editType
+    // isn't currently persisted, but this costs nothing to be correct
+    // either way) should show its diagrams immediately, not only after
+    // the first edit.
+    scheduleMermaidPreviewRefresh();
+    // Also watch for the Write/Preview tab toggle specifically -- a bare
+    // tab click fires neither `change` nor `changeMode` (confirmed
+    // empirically), so without this, a diagram typed while on the Write
+    // tab would never actually render once the user switches to Preview.
+    // See mermaid-editor-preview.js's own comment for the real,
+    // previously-live bug (flowchart diagrams silently breaking) this
+    // also fixes as a side effect.
+    window.WikiMermaidEditorPreview.watchPreviewVisibility();
 
     // Re-fit on viewport resize (window resize, or a mobile browser's
     // address bar showing/hiding changing innerHeight) -- debounced since

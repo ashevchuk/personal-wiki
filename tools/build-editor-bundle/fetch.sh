@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Re-vendors the static/js frontend bundles: Toast UI Editor and mermaid
-# (htmx was vendored here too until the frontend moved to a JSON API +
-# client-side rendering, see docs/architecture.md, which left it with
-# nothing to do). This is a build-time-only step (per docs/architecture.md
-# — "Frontend"): nothing here runs on the deployed server, and Node/npm
-# are NOT a runtime dependency. Re-run this only when deliberately
-# bumping a version.
+# Re-vendors the static/js frontend bundles: Toast UI Editor, mermaid, and
+# Prism.js (htmx was vendored here too until the frontend moved to a JSON
+# API + client-side rendering, see docs/architecture.md, which left it
+# with nothing to do). This is a build-time-only step (per
+# docs/architecture.md — "Frontend"): nothing here runs on the deployed
+# server, and Node/npm are NOT a runtime dependency. Re-run this only when
+# deliberately bumping a version.
 set -euo pipefail
 
 STATIC_JS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../static/js" && pwd)"
@@ -137,6 +137,49 @@ cat > "${STATIC_JS}/mermaid/VENDORED.md" <<EOF
 Re-vendor with \`tools/build-editor-bundle/fetch.sh\`. Bump \$MERMAID_VERSION
 in that script deliberately, not silently — verify the new checksum
 before committing.
+EOF
+
+PRISM_VERSION="1.30.0"
+# Custom bundle: core + a fixed language set (see static/js/prism/VENDORED.md
+# for why this set and not Prism's full list), concatenated in DEPENDENCY
+# order -- cpp needs c needs clike already defined at execution time, same
+# for typescript needing javascript and go/c/javascript all needing clike.
+# No theme CSS vendored alongside this -- .token.* rules are hand-written
+# per css/themes/*.css file instead, matching this app's existing
+# each-theme-is-self-sufficient convention.
+PRISM_BASE="https://cdn.jsdelivr.net/npm/prismjs@${PRISM_VERSION}/components"
+PRISM_LANGS="core clike c cpp markup css javascript typescript python bash json yaml toml sql rust go"
+mkdir -p "${STATIC_JS}/prism"
+PRISM_TMP="$(mktemp -d)"
+for lang in ${PRISM_LANGS}; do
+  curl -sSf --max-time 30 -o "${PRISM_TMP}/prism-${lang}.min.js" \
+    "${PRISM_BASE}/prism-${lang}.min.js"
+done
+: > "${STATIC_JS}/prism/prism.min.js"
+for lang in ${PRISM_LANGS}; do
+  cat "${PRISM_TMP}/prism-${lang}.min.js" >> "${STATIC_JS}/prism/prism.min.js"
+done
+rm -rf "${PRISM_TMP}"
+sha256sum "${STATIC_JS}/prism/prism.min.js" \
+  | sed "s|${STATIC_JS}/prism/||" > "${STATIC_JS}/prism/SHA256SUMS"
+cat > "${STATIC_JS}/prism/VENDORED.md" <<EOF
+# Vendored: Prism.js (custom bundle)
+
+- Version: ${PRISM_VERSION}
+- Source: individual component files from
+  https://cdn.jsdelivr.net/npm/prismjs@${PRISM_VERSION}/components/
+  (jsdelivr's npm mirror), concatenated in dependency order:
+  ${PRISM_LANGS}
+- License: MIT (Prism.js / Lea Verou & contributors)
+- Checksums: see SHA256SUMS in this directory
+- Deliberately NO theme CSS vendored -- .token.* color rules are
+  hand-written directly in each css/themes/*.css file instead.
+- Loaded LAZILY, only on a document view with a recognized fenced code
+  block language -- see static/js/prism-highlight.js.
+
+Re-vendor with \`tools/build-editor-bundle/fetch.sh\`. Bump \$PRISM_VERSION
+or \$PRISM_LANGS in that script deliberately, not silently -- respect each
+new language's own "require" entry in prismjs's components.json.
 EOF
 
 echo "Done. Verify with: sha256sum -c <dest>/SHA256SUMS in each vendored dir."
