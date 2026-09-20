@@ -100,6 +100,54 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
                              DocumentService& documentService,
                              AttachmentService& attachmentService,
                              NavQueries& nav) {
+  // --- GET /api/documents/{path...}/raw — literal file bytes -------------
+  // Registered BEFORE the general "GET /api/documents/{path...}" handler
+  // right below on purpose: Drogon's registerHandlerViaRegex matches
+  // regex handlers in REGISTRATION order, first match wins, and the
+  // general handler's own "(.*)" is greedy enough to swallow a trailing
+  // "/raw" as part of its own docPath capture — registered first, it
+  // would shadow this one for every single request, the more specific
+  // route never actually reachable. Found live exactly that way: this
+  // route existed, compiled, had its own tests written against it in
+  // spirit, and returned 404 for literally every request, always,
+  // because the general handler always matched it first. Caught adding
+  // the document view page's own "Download" button (static/js/pages/
+  // view.js), the first real caller this route ever had.
+  //
+  // Same read/visibility-gating as the general handler below, minus the
+  // JSON/HTML render — the exact front-matter + body as stored on disk,
+  // for anything that wants the source (was in the original plan's route
+  // sketch as GET /api/documents/{id}/raw; built here keyed by path like
+  // every other /api/documents/* route, not a separate id-based lookup).
+  app.registerHandlerViaRegex(
+      "^/api/documents/(.*)/raw$",
+      [&vault](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback,
+               const std::string& docPath) {
+        std::string raw;
+        try {
+          raw = vault.readRaw(docPath);
+        } catch (const PathTraversalError&) {
+          callback(notFound());
+          return;
+        } catch (const std::filesystem::filesystem_error&) {
+          callback(notFound());
+          return;
+        }
+
+        const ParsedDocument parsed = parseFrontMatter(raw);
+        if (parsed.frontMatter.visibility != "public" && !isAuthenticated(req)) {
+          callback(notFound());
+          return;
+        }
+
+        auto resp = HttpResponse::newHttpResponse();
+        resp->setContentTypeCode(CT_TEXT_PLAIN);
+        resp->setBody(raw);
+        callback(resp);
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
   // --- GET /api/documents/{path...} — read --------------------------------
   // Backs BOTH the document view page and the edit page (client-side —
   // see static/js/pages/view.js and edit.js): the edit page treats a 404
@@ -149,41 +197,6 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         // anonymous caller.
         body["backlinks"] = backlinksToJson(nav.backlinks(docPath, authenticated));
         callback(HttpResponse::newHttpJsonResponse(body));
-      },
-      {Get, "wikicore::auth::AuthFilter"});
-
-  // --- GET /api/documents/{path...}/raw — literal file bytes -------------
-  // Same read/visibility-gating as above, minus the JSON/HTML render —
-  // the exact front-matter + body as stored on disk, for anything that
-  // wants the source (was in the original plan's route sketch as
-  // GET /api/documents/{id}/raw; built here keyed by path like every
-  // other /api/documents/* route, not a separate id-based lookup).
-  app.registerHandlerViaRegex(
-      "^/api/documents/(.*)/raw$",
-      [&vault](const HttpRequestPtr& req,
-               std::function<void(const HttpResponsePtr&)>&& callback,
-               const std::string& docPath) {
-        std::string raw;
-        try {
-          raw = vault.readRaw(docPath);
-        } catch (const PathTraversalError&) {
-          callback(notFound());
-          return;
-        } catch (const std::filesystem::filesystem_error&) {
-          callback(notFound());
-          return;
-        }
-
-        const ParsedDocument parsed = parseFrontMatter(raw);
-        if (parsed.frontMatter.visibility != "public" && !isAuthenticated(req)) {
-          callback(notFound());
-          return;
-        }
-
-        auto resp = HttpResponse::newHttpResponse();
-        resp->setContentTypeCode(CT_TEXT_PLAIN);
-        resp->setBody(raw);
-        callback(resp);
       },
       {Get, "wikicore::auth::AuthFilter"});
 

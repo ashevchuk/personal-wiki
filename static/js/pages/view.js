@@ -77,8 +77,16 @@ window.WikiPages = window.WikiPages || {};
         // print stylesheet already blanket-hides every .doc-actions/
         // .folder-actions button row (Edit/Delete/this one alike; none
         // of them belong in a print-out).
+        //
+        // Download reuses GET /api/documents/{path}/raw (DocumentRoutes.cpp)
+        // — the literal on-disk bytes, front-matter included, same
+        // fail-safe-private gating as every other read route. No separate
+        // server-side "export" endpoint needed, this is exactly that file.
         var printBar =
-          '<div class="doc-actions"><button type="button" id="doc-print-btn">Print / Export PDF</button></div>';
+          '<div class="doc-actions">' +
+          '<button type="button" id="doc-print-btn">Print</button>' +
+          '<button type="button" id="doc-download-btn">Download</button>' +
+          "</div>";
 
         var chrome = "";
         if (session.authenticated) {
@@ -181,6 +189,37 @@ window.WikiPages = window.WikiPages || {};
         if (printBtn) {
           printBtn.addEventListener("click", function () {
             window.print();
+          });
+        }
+
+        var downloadBtn = document.getElementById("doc-download-btn");
+        if (downloadBtn) {
+          downloadBtn.addEventListener("click", function () {
+            fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath) + "/raw", {
+              credentials: "same-origin",
+            })
+              .then(function (resp) {
+                if (!resp.ok) throw new Error("HTTP " + resp.status);
+                return resp.blob();
+              })
+              .then(function (blob) {
+                // basename only, not the full vault-relative path -- a
+                // path with slashes isn't a valid single filename, and
+                // the browser's own Save dialog already lets the user
+                // rename/relocate it anyway.
+                var filename = docPath.split("/").pop() || "document.md";
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement("a");
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+              })
+              .catch(function () {
+                alert("Download failed.");
+              });
           });
         }
       })

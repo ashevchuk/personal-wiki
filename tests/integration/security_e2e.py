@@ -347,6 +347,25 @@ def run_checks(sandbox, vault):
     status, _, _ = admin.get("/api/documents/notes/private.md")
     check("admin sees private doc", status == 200, f"got {status}")
 
+    # --- 6a2. /api/documents/{path}/raw (literal on-disk bytes) -----------
+    # This route sat behind a general "^/api/documents/(.*)$" handler
+    # registered earlier in DocumentRoutes.cpp -- Drogon matches regex
+    # handlers in registration order, and the general handler's own
+    # "(.*)" greedily swallowed a trailing "/raw" as part of its own
+    # docPath, so this route was 100% unreachable until the ordering was
+    # fixed. Real bug, not hypothetical -- caught building the document
+    # view page's "Download" button, this route's first real caller.
+    status, _, body = anon.get("/api/documents/notes/public.md/raw")
+    text = body.decode("utf-8")
+    check("anon raw: public doc returns literal file bytes (front-matter + body), not JSON",
+          status == 200 and "systemd public content" in text and text.lstrip().startswith("---"),
+          f"status={status} body={text[:120]!r}")
+    status, _, _ = anon.get("/api/documents/notes/private.md/raw")
+    check("anon raw: private doc -> 404 (not 403)", status == 404, f"got {status}")
+    status, _, body = admin.get("/api/documents/notes/private.md/raw")
+    check("admin raw: sees private doc's literal bytes",
+          status == 200 and "systemd private content" in body.decode("utf-8"), f"status={status}")
+
     status, _, body = anon.get_json("/api/search?q=systemd")
     paths = [r["path"] for r in body["results"]]
     check("anon search: public found, private not leaked",
