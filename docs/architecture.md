@@ -1265,6 +1265,51 @@ listing, dinner-only tag filter, a real orphans list, a deliberately
 typo'd block rendering a visible red error line instead of a blank
 table) — see the deployment memory note for the exact queries run.
 
+## Heading-level "zoom"/focus mode — experimental, isolated in its own commit
+
+Inspired by the same survey of other self-hosted PKM tools as the
+`\`\`\`query` blocks above: SiYuan (and Notion/Roam/LogSeq) let you "zoom"
+into a single block, temporarily hiding everything else so you can focus
+on just that block's own subtree. This app's content model is a plain
+markdown file, not individually addressable blocks, so a true block-level
+version isn't on the table without a real architecture change — but a
+HEADING-scoped version costs nothing: the rendered document already has
+real h2-h6 structure, `static/js/section-zoom.js` just hides/shows DOM
+siblings around whichever heading was clicked. h1 excluded on purpose —
+a document's body conventionally opens with its own "# Title" h1, which
+already IS "the whole document."
+
+`pages/view.js` now wraps the title+rendered body in its own
+`<div id="doc-body">` — previously flattened into the same `innerHTML`
+as the breadcrumbs/action-button row/backlinks list, which would have
+meant "zoom into this section" also hiding the Edit/Delete buttons and
+breadcrumb trail sitting at the same DOM level. Every heading gets a
+stable `id` (slugified from its own text, de-duplicated per page) as a
+plain HTML anchor — useful on its own even without zoom — and the zoom
+STATE lives in a separate `#zoom=<slug>` hash (via `history.replaceState`,
+not a bare hash assignment, so the Back button doesn't step through
+every zoom click one at a time), so a shared link lands already focused.
+
+**Two real bugs caught live, not hypothetical**: (1) the "Focused on: X"
+banner label read `heading.textContent` AFTER the zoom button had
+already been appended as the heading's own DOM child — `textContent`
+walks every descendant's text, so the banner read "shared_ptrZoom"
+instead of "shared_ptr" the first time this was actually clicked. Fixed
+by capturing the heading's real text into `dataset.zoomLabel` before the
+button exists. (2) "restore zoom from a shared `#zoom=<slug>` link"
+looked broken on a second live check — the page loaded fully expanded
+despite the hash being present — but turned out to be the BROWSER
+serving a cached copy of the previous `section-zoom.js` across reloads,
+not an actual logic bug; a hard refresh (and a throwaway
+`console.error`-based trace, since this environment's console reader
+only surfaces error-level messages, not plain `console.log`) confirmed
+the restore logic was already correct. A lesson in not trusting a
+"looks broken" result without first ruling out stale caches.
+
+Marked experimental and kept in its own isolated commit (touches only
+`section-zoom.js`, `view.js`'s wrapper div, and each theme's CSS) on
+request — a clean `git revert` away if it doesn't earn its keep.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

@@ -78,6 +78,11 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   goes stale. No raw SQL: a small whitelisted DSL, every value a bound parameter, never
   concatenated into a query string. An unknown key or bad value is a clear error, never
   a silently empty result.
+- **Heading-level "zoom" / focus mode** *(experimental)* — click "Zoom" next to any h2-h6
+  to hide everything outside that section, useful on a long document; a shareable
+  `#zoom=<slug>` link lands already focused. Client-side only, no true block-level
+  reference model behind it (this app's content is plain markdown files, not
+  individually addressable blocks).
 - **Document history.** Every edit is snapshotted; diff any two versions, restore any
   of them (which itself snapshots first — restoring is undoable too).
 - **Fail-safe-private visibility.** Missing or malformed front-matter defaults to
