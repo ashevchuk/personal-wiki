@@ -1,4 +1,5 @@
 #include "index/Database.h"
+#include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
 #include "index/QueryBlocks.h"
 
@@ -31,7 +32,8 @@ class TempDb {
 
 DocumentIndexEntry makeEntry(std::string path, std::string visibility,
                               std::vector<std::string> tags, std::string docType = "",
-                              std::string updatedAt = "2026-01-01T00:00:00Z") {
+                              std::string updatedAt = "2026-01-01T00:00:00Z",
+                              std::string body = "") {
   DocumentIndexEntry e;
   e.uuid = path;
   e.path = std::move(path);
@@ -41,6 +43,8 @@ DocumentIndexEntry makeEntry(std::string path, std::string visibility,
   e.updatedAt = std::move(updatedAt);
   e.tags = std::move(tags);
   e.docType = std::move(docType);
+  e.body = body;
+  e.excerpt = body.substr(0, 100);
   return e;
 }
 
@@ -62,7 +66,8 @@ TEST_CASE("QueryBlocks: empty query lists all visible documents, visibility-gate
   updater.upsertOne(makeEntry("a.md", "public", {}));
   updater.upsertOne(makeEntry("b.md", "private", {}));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto anon = qb.parseAndRun("", false);
   REQUIRE(anon.ok);
   REQUIRE(anon.rows.size() == 1);
@@ -83,7 +88,8 @@ TEST_CASE("QueryBlocks: tag filter requires ALL listed tags (AND, not OR)",
   updater.upsertOne(makeEntry("cpp-only.md", "public", {"cpp"}));
   updater.upsertOne(makeEntry("cheatsheet-only.md", "public", {"cheatsheet"}));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto result = qb.parseAndRun("tag: cpp, cheatsheet", true);
   REQUIRE(result.ok);
   REQUIRE(result.rows.size() == 1);
@@ -99,7 +105,8 @@ TEST_CASE("QueryBlocks: type filter matches exactly, excludes everything else",
   updater.upsertOne(makeEntry("a.md", "public", {}, "recipe"));
   updater.upsertOne(makeEntry("b.md", "public", {}, "note"));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto result = qb.parseAndRun("type: recipe", true);
   REQUIRE(result.ok);
   REQUIRE(result.rows.size() == 1);
@@ -116,7 +123,8 @@ TEST_CASE("QueryBlocks: folder filter is a path PREFIX match, not substring",
   updater.upsertOne(makeEntry("recipes/breakfast/pancakes.md", "public", {}));
   updater.upsertOne(makeEntry("notes/recipes-are-not-here.md", "public", {}));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto result = qb.parseAndRun("folder: recipes/", true);
   REQUIRE(result.ok);
   REQUIRE(result.rows.size() == 2);
@@ -133,7 +141,8 @@ TEST_CASE("QueryBlocks: a folder value containing LIKE wildcard characters "
   updater.upsertOne(makeEntry("a%b/doc.md", "public", {}));
   updater.upsertOne(makeEntry("axxb/doc.md", "public", {}));  // would match if % were a wildcard
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto result = qb.parseAndRun("folder: a%b/", true);
   REQUIRE(result.ok);
   REQUIRE(result.rows.size() == 1);
@@ -148,7 +157,8 @@ TEST_CASE("QueryBlocks: sort/order with explicit values", "[QueryBlocks]") {
   updater.upsertOne(makeEntry("z.md", "public", {}, "", "2026-03-01T00:00:00Z"));
   updater.upsertOne(makeEntry("a.md", "public", {}, "", "2026-01-01T00:00:00Z"));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto byUpdatedDesc = qb.parseAndRun("sort: updated", true);  // default desc
   REQUIRE(byUpdatedDesc.ok);
   REQUIRE(byUpdatedDesc.rows.size() == 2);
@@ -173,7 +183,8 @@ TEST_CASE("QueryBlocks: limit clamps result count and rejects out-of-range value
     updater.upsertOne(makeEntry("doc" + std::to_string(i) + ".md", "public", {}));
   }
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto limited = qb.parseAndRun("limit: 2", true);
   REQUIRE(limited.ok);
   REQUIRE(limited.rows.size() == 2);
@@ -203,7 +214,8 @@ TEST_CASE("QueryBlocks: orphans finds documents with zero VISIBLE incoming "
   updater.upsertOne(
       withBody(makeEntry("secret-linker.md", "private", {}), "[[linked]]"));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto anonOrphans = qb.parseAndRun("orphans: true", false);
   REQUIRE(anonOrphans.ok);
   REQUIRE(hasPath(anonOrphans.rows, "orphan.md"));
@@ -224,7 +236,8 @@ TEST_CASE("QueryBlocks: an unknown key is a parse error, not a silently "
   IndexUpdater updater(database);
   updater.upsertOne(makeEntry("a.md", "public", {}));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   auto result = qb.parseAndRun("tags: cpp", true);  // typo: "tags" not "tag"
   REQUIRE_FALSE(result.ok);
   REQUIRE(result.error.find("unknown key") != std::string::npos);
@@ -237,7 +250,8 @@ TEST_CASE("QueryBlocks: a duplicate key is a parse error, not last-write-wins",
   database.migrate();
   IndexUpdater updater(database);
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   REQUIRE_FALSE(qb.parseAndRun("type: a\ntype: b", true).ok);
   REQUIRE_FALSE(qb.parseAndRun("tag: a\ntag: b", true).ok);
 }
@@ -248,7 +262,8 @@ TEST_CASE("QueryBlocks: an invalid sort/order value is a parse error",
   Database database(db.path());
   database.migrate();
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   REQUIRE_FALSE(qb.parseAndRun("sort: nonsense", true).ok);
   REQUIRE_FALSE(qb.parseAndRun("order: sideways", true).ok);
 }
@@ -262,7 +277,8 @@ TEST_CASE("QueryBlocks: a tag value that looks like a SQL injection attempt "
   IndexUpdater updater(database);
   updater.upsertOne(makeEntry("a.md", "public", {"real-tag"}));
 
-  QueryBlocks qb(database);
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
   // A tag name this weird can never legitimately exist -- proves the
   // value only ever reaches SQLite as a bound parameter (an exact,
   // literal match attempt), never concatenated into the query text
@@ -275,4 +291,97 @@ TEST_CASE("QueryBlocks: a tag value that looks like a SQL injection attempt "
   auto sane = qb.parseAndRun("", true);
   REQUIRE(sane.ok);
   REQUIRE(sane.rows.size() == 1);
+}
+
+TEST_CASE("QueryBlocks: search delegates to FtsSearch and finds by body text",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", {}, "note", "2026-01-01T00:00:00Z",
+                               "systemd timers are a great replacement for cron"));
+  updater.upsertOne(makeEntry("b.md", "public", {}, "note", "2026-01-01T00:00:00Z",
+                               "borscht recipe with beets"));
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+  auto result = qb.parseAndRun("search: systemd", true);
+  REQUIRE(result.ok);
+  REQUIRE(result.rows.size() == 1);
+  REQUIRE(result.rows[0].path == "a.md");
+}
+
+TEST_CASE("QueryBlocks: search respects fail-safe-private visibility gating",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("public.md", "public", {}, "note", "2026-01-01T00:00:00Z",
+                               "systemd public notes"));
+  updater.upsertOne(makeEntry("private.md", "private", {}, "note", "2026-01-01T00:00:00Z",
+                               "systemd private notes"));
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+  auto anon = qb.parseAndRun("search: systemd", false);
+  REQUIRE(anon.ok);
+  REQUIRE(anon.rows.size() == 1);
+  REQUIRE(anon.rows[0].path == "public.md");
+
+  auto admin = qb.parseAndRun("search: systemd", true);
+  REQUIRE(admin.ok);
+  REQUIRE(admin.rows.size() == 2);
+}
+
+TEST_CASE("QueryBlocks: search combines with tag/type/folder as AND filters",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("recipes/borscht.md", "public", {"soup"}, "recipe",
+                               "2026-01-01T00:00:00Z", "beet soup recipe"));
+  updater.upsertOne(makeEntry("recipes/other.md", "public", {}, "recipe",
+                               "2026-01-01T00:00:00Z", "beet salad recipe"));
+  updater.upsertOne(makeEntry("notes/beets.md", "public", {"soup"}, "note",
+                               "2026-01-01T00:00:00Z", "growing beets in the garden"));
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+  auto result = qb.parseAndRun("search: beet\ntag: soup\ntype: recipe\nfolder: recipes/", true);
+  REQUIRE(result.ok);
+  REQUIRE(result.rows.size() == 1);
+  REQUIRE(result.rows[0].path == "recipes/borscht.md");
+}
+
+TEST_CASE("QueryBlocks: search combined with sort, order, or orphans is a "
+          "parse error, not one silently winning over the other",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+  auto withSort = qb.parseAndRun("search: beet\nsort: title", true);
+  REQUIRE_FALSE(withSort.ok);
+  REQUIRE(withSort.error.find("search") != std::string::npos);
+
+  auto withOrder = qb.parseAndRun("search: beet\norder: asc", true);
+  REQUIRE_FALSE(withOrder.ok);
+
+  auto withOrphans = qb.parseAndRun("search: beet\norphans: true", true);
+  REQUIRE_FALSE(withOrphans.ok);
+}
+
+TEST_CASE("QueryBlocks: search needs a non-empty value", "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+  REQUIRE_FALSE(qb.parseAndRun("search:", true).ok);
 }

@@ -78,6 +78,19 @@ std::string escapeLikePattern(const std::string& s) {
 //   order: asc|desc                    (default: desc for updated/
 //                                        created, asc for title/path)
 //   limit: 1-100                       (default: 20)
+//   search: free text                 -- delegates to the SAME FtsSearch
+//                              engine /api/search uses (BM25 + hybrid
+//                              semantic ranking via RRF, when embeddings
+//                              are configured -- see docs/embeddings.md).
+//                              tag/type/folder/limit still apply as
+//                              filters on top; results come back
+//                              relevance-ranked, so `sort`/`order` and
+//                              `orphans` (no defined meaning against a
+//                              relevance ranking / no backlink concept in
+//                              FtsSearch at all) are parse errors when
+//                              combined with `search` -- explicit refusal
+//                              rather than silently ignoring one or the
+//                              other.
 //
 // EVERY key above maps to ONE fixed, hardcoded SQL fragment already
 // written into this file -- there is no code path where any part of a
@@ -101,6 +114,7 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
   bool orderExplicit = false;
   int limit = 20;
   bool orphansOnly = false;
+  std::string searchText;
 
   std::set<std::string> seenKeys;
 
@@ -163,6 +177,9 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
       } else {
         return {false, "order: must be 'asc' or 'desc'", {}};
       }
+    } else if (key == "search") {
+      if (value.empty()) return {false, "search: needs a value", {}};
+      searchText = value;
     } else if (key == "limit") {
       try {
         size_t consumed = 0;
@@ -176,12 +193,52 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
         return {false, "limit: must be a whole number between 1 and 100", {}};
       }
     } else {
-      return {false, "unknown key: " + key +
-                          " (expected one of: tag, type, folder, orphans, sort, order, limit)",
+      return {false,
+              "unknown key: " + key +
+                  " (expected one of: tag, type, folder, orphans, sort, order, limit, search)",
               {}};
     }
   }
-  (void)sortExplicit;
+
+  if (!searchText.empty()) {
+    // Explicit refusal, not "one silently wins" -- a relevance-ranked
+    // result set has no defined position for "sort by title" to slot
+    // into, and FtsSearch has no concept of backlinks/orphans at all
+    // (that's purely a document_links thing QueryBlocks itself owns).
+    // Silently ignoring sort/order/orphans here would be exactly the
+    // "helper's real behavior diverges from what the caller asked for,
+    // with no signal" failure this whole file's error-over-silence
+    // discipline exists to avoid.
+    if (sortExplicit || orderExplicit) {
+      return {false, "search: results are always relevance-ranked -- sort/order can't be combined with search", {}};
+    }
+    if (orphansOnly) {
+      return {false, "search: can't be combined with orphans (no relevance concept for a pure backlink filter)", {}};
+    }
+
+    SearchQuery sq;
+    sq.text = searchText;
+    sq.tags = tags;
+    if (!type.empty()) sq.docTypes.push_back(type);
+    if (!folder.empty()) sq.folderPrefix = folder;
+    sq.includePrivate = includePrivate;
+    sq.limit = limit;
+
+    const auto items = ftsSearch_.search(sq);
+    QueryBlockResult result;
+    result.ok = true;
+    result.rows.reserve(items.size());
+    for (const auto& item : items) {
+      std::string tagsFlat;
+      for (size_t i = 0; i < item.tags.size(); ++i) {
+        if (i) tagsFlat += ", ";
+        tagsFlat += item.tags[i];
+      }
+      result.rows.push_back(
+          QueryResultRow{item.path, item.title, item.visibility, item.updatedAt, tagsFlat});
+    }
+    return result;
+  }
 
   if (!orderExplicit) {
     // Recently-updated/created first by default (the common "what's

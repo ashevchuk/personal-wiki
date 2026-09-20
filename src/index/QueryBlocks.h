@@ -1,6 +1,7 @@
 #pragma once
 
 #include "index/Database.h"
+#include "index/FtsSearch.h"
 
 #include <string>
 #include <vector>
@@ -36,7 +37,14 @@ struct QueryBlockResult {
 // carefully."
 class QueryBlocks {
  public:
-  explicit QueryBlocks(Database& db) : db_(db) {}
+  // ftsSearch: the SAME FtsSearch instance /api/search already uses --
+  // not owned, must outlive this QueryBlocks (matches FtsSearch's own
+  // provider-pointer convention). Reused rather than a second copy of
+  // FTS5/hybrid-ranking logic: `search:` in the DSL below delegates
+  // straight to it, getting the exact same BM25 + semantic (RRF) ranking,
+  // query-embedding cache, and distance/candidate-count tuning /search
+  // already has, for free.
+  QueryBlocks(Database& db, FtsSearch& ftsSearch) : db_(db), ftsSearch_(ftsSearch) {}
 
   // `includePrivate` is the SAME fail-safe-private gate every other
   // read-only query in this codebase uses (see NavQueries) -- the
@@ -49,6 +57,7 @@ class QueryBlocks {
 
  private:
   Database& db_;
+  FtsSearch& ftsSearch_;
 };
 
 }  // namespace wikicore::index

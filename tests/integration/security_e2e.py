@@ -397,6 +397,24 @@ def run_checks(sandbox, vault):
     check("query: documents table still intact after the injection attempt",
           status == 200 and len(body["rows"]) == 2, f"status={status} body={body}")
 
+    # --- 6b2. /api/query `search:` (delegates to the same FtsSearch engine
+    # /api/search uses -- same visibility gating must hold through the
+    # delegation, not just in FtsSearch's own direct callers) -----------
+    status, _, body = anon.get_json("/api/query?q=" + urllib.parse.quote("search: systemd"))
+    paths = [r["path"] for r in body["rows"]]
+    check("anon query search: public found, private not leaked",
+          "notes/public.md" in paths and "notes/private.md" not in paths, f"paths={paths}")
+    status, _, body = admin.get_json("/api/query?q=" + urllib.parse.quote("search: systemd"))
+    paths = [r["path"] for r in body["rows"]]
+    check("admin query search: sees both", "notes/private.md" in paths, f"paths={paths}")
+
+    # search: combined with sort/order/orphans is an explicit parse error,
+    # not one silently overriding the other.
+    status, _, body = admin.get_json(
+        "/api/query?q=" + urllib.parse.quote("search: systemd\nsort: title"))
+    check("query: search+sort -> 400 with an error field",
+          status == 400 and "error" in body, f"status={status} body={body}")
+
     # --- 6c. /api/graph (full/local graph data source) -------------------
     status, _, _ = admin.post_json(
         "/api/documents",

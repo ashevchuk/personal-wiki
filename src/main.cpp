@@ -224,7 +224,7 @@ int main(int argc, char** argv) {
   wikicore::index::FtsSearch ftsSearch(db, activeEmbeddingProvider, cfg.embeddingsMaxDistance,
                                         cfg.embeddingsSemanticTopK);
   wikicore::index::NavQueries navQueries(db);
-  wikicore::index::QueryBlocks queryBlocks(db);
+  wikicore::index::QueryBlocks queryBlocks(db, ftsSearch);
   wikicore::index::GraphQueries graphQueries(db);
   // Read-only from wiki-server's side — write_access is a wiki-mcp-only
   // concept (see McpServer.cpp); this exists here purely to back the
