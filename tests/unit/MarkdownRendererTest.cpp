@@ -51,3 +51,36 @@ TEST_CASE("renderMarkdownToHtml: a normal image (not the youtube sentinel) rende
   REQUIRE(html.find("<img src=\"https://example.com/cat.png\" alt=\"a cat\">") !=
           std::string::npos);
 }
+
+TEST_CASE("renderMarkdownToHtml: a ```mermaid fenced block becomes pre.mermaid, "
+          "not a plain code block",
+          "[MarkdownRenderer]") {
+  const std::string html = renderMarkdownToHtml("```mermaid\ngraph TD;\n  A-->B;\n```");
+  REQUIRE(html.find("<pre class=\"mermaid\">") != std::string::npos);
+  // The intermediate md4c shape must never leak into the final output --
+  // same discipline as the YouTube marker test above.
+  REQUIRE(html.find("<code class=\"language-mermaid\">") == std::string::npos);
+  // Diagram source is preserved verbatim (still HTML-escaped, as md4c
+  // left it -- the browser decodes entities via .textContent before
+  // mermaid.js ever parses this).
+  REQUIRE(html.find("graph TD;") != std::string::npos);
+  REQUIRE(html.find("A--&gt;B;") != std::string::npos);
+}
+
+TEST_CASE("renderMarkdownToHtml: an ordinary fenced code block is untouched",
+          "[MarkdownRenderer]") {
+  const std::string html = renderMarkdownToHtml("```cpp\nint main() {}\n```");
+  REQUIRE(html.find("<pre><code class=\"language-cpp\">") != std::string::npos);
+  REQUIRE(html.find("pre class=\"mermaid\"") == std::string::npos);
+}
+
+TEST_CASE("renderMarkdownToHtml: a fence info string that only STARTS WITH "
+          "\"mermaid\" is not mistaken for an exact match",
+          "[MarkdownRenderer]") {
+  // Guards the exact-match discipline substituteMermaidBlocks documents:
+  // a language name that happens to share a prefix with "mermaid" must
+  // degrade to an ordinary code block, not a guessed diagram.
+  const std::string html = renderMarkdownToHtml("```mermaidjs\nnot a diagram\n```");
+  REQUIRE(html.find("pre class=\"mermaid\"") == std::string::npos);
+  REQUIRE(html.find("<code class=\"language-mermaidjs\">") != std::string::npos);
+}

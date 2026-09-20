@@ -792,6 +792,27 @@ a.btn:focus {
   content: "✓ ";
 }
 
+/* mermaid diagrams (static/js/mermaid-render.js swaps in real SVG
+   content here, scoped to pre.mermaid -- see
+   MarkdownRenderer::substituteMermaidBlocks for the server side of this).
+   mermaid.js is told which of "default"/"dark" to use for its OWN
+   internal diagram colors separately (mermaid-render.js's mermaidTheme())
+   -- this rule only styles the container the SVG lands inside, not the
+   diagram's own node/edge colors. */
+pre.mermaid {
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.8rem;
+  margin: 0.8rem 0;
+  overflow-x: auto;
+  text-align: center;
+}
+pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+
 /* Print / "Export PDF" — identical across all three themes, deliberately:
    a printed page should always come out readable on paper regardless of
    which screen theme was active when the reader clicked print. See

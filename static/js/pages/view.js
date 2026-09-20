@@ -113,6 +113,10 @@ window.WikiPages = window.WikiPages || {};
           doc.renderedHtml +
           backlinksHtml;
 
+        if (window.WikiMermaid) {
+          window.WikiMermaid.renderIn(container);
+        }
+
         var deleteBtn = document.getElementById("doc-delete-btn");
         if (deleteBtn && window.WikiDocument) {
           window.WikiDocument.wireDeleteButton(deleteBtn);

@@ -1017,6 +1017,56 @@ alerts dismissed (`won't fix` — vendored/upstream build output, not this
 project's code) after confirming none had a plausible connection to anything
 this project's own build steps or overlay ports touch.
 
+## Mermaid diagram rendering
+
+A ```` ```mermaid ```` fenced code block now renders as a real diagram instead of a
+plain code block, with no pre-parse rewrite needed the way `[[wiki-links]]` or
+YouTube embeds require — a fenced code block with an info string is already a
+first-class CommonMark/GFM construct md4c parses for free. `md4c-html.c`'s
+`render_open_code_block()` (read directly, not assumed) always emits exactly
+`<pre><code class="language-LANG">` for a fenced block with a known info
+string, HTML-escaping the code content. `MarkdownRenderer::substituteMermaidBlocks`
+is a pure post-substitution on that exact shape — same technique as
+`substituteYouTubeEmbeds`, on a disjoint HTML shape — swapping it for
+`<pre class="mermaid">`, the container mermaid.js's own default selector looks
+for. Requires an EXACT `class="language-mermaid"` match (nothing appended
+after `mermaid` in the fence's info string); anything else degrades to an
+ordinary code block rather than guessing at a partial match — covered by a
+dedicated test (`a fence info string that only STARTS WITH "mermaid"`).
+
+**Rendering itself happens entirely client-side, lazily.** This app's
+document content is injected via `fetch()` + `innerHTML` (`pages/view.js`),
+never present at initial page load for mermaid.js's own `startOnLoad` to
+catch — `static/js/mermaid-render.js`'s `renderIn(container)` is called right
+after that injection, calls `mermaid.run({ nodes })` scoped to whatever
+`pre.mermaid` elements are actually in the container. mermaid.js itself
+(`static/js/mermaid/mermaid.min.js`, vendored, MIT, version pinned — see
+`static/js/mermaid/VENDORED.md` and `tools/build-editor-bundle/fetch.sh`) is
+~5.3 MiB (~1.5 MiB gzipped) — roughly 10× the size of the vendored Toast UI
+Editor bundle, since it bundles its own layout engine per diagram type.
+Unlike Toast UI Editor (loaded unconditionally from `shell.html` on every
+page), this is deliberately NOT loaded from `shell.html`:
+`mermaid-render.js`'s `renderIn()` no-ops, fetching nothing, whenever a
+document has no `pre.mermaid` block at all — confirmed live via the browser's
+own network log, not assumed: a document without a diagram shows zero
+requests for `mermaid.min.js`; a document with one shows exactly one `200`.
+Paying ~1.5 MiB for every single page view, on a project whose deployment
+story explicitly includes weak SBC hardware over possibly slow links, for a
+feature the overwhelming majority of documents will never use, would be the
+wrong tradeoff.
+
+**Diagram palette follows the site theme, not just container chrome.**
+`mermaid-render.js`'s `mermaidTheme()` reads `<html data-theme>` (same
+mechanism `pages/edit.js` already uses to pick Toast UI Editor's own light/
+dark option) and passes mermaid.js `theme: "default"` for `classic`,
+`"dark"` for `green`/`dark` — mermaid.js has its own internal node/edge
+color scheme separate from any CSS, so this is a real, necessary config
+call, not just page styling. The `pre.mermaid` CSS rule added to each
+`css/themes/*.css` file only styles the container the resulting SVG lands
+inside (background/border/padding, matching each theme's own `--panel-bg`/
+`--border` variables) — confirmed live in both a dark and a light theme via
+a real rendered diagram screenshot in each, not just by reading the CSS.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

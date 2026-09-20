@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Re-vendors the static/js frontend bundles (Toast UI Editor — the only
-# one left; htmx was vendored here too until the frontend moved to a
-# JSON API + client-side rendering, see docs/architecture.md, which left
-# it with nothing to do). This
-# is a build-time-only step (per docs/architecture.md — "Frontend"):
-# nothing here runs on the deployed server, and Node/npm are NOT a runtime
-# dependency. Re-run this only when deliberately bumping a version.
+# Re-vendors the static/js frontend bundles: Toast UI Editor and mermaid
+# (htmx was vendored here too until the frontend moved to a JSON API +
+# client-side rendering, see docs/architecture.md, which left it with
+# nothing to do). This is a build-time-only step (per docs/architecture.md
+# — "Frontend"): nothing here runs on the deployed server, and Node/npm
+# are NOT a runtime dependency. Re-run this only when deliberately
+# bumping a version.
 set -euo pipefail
 
 STATIC_JS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../static/js" && pwd)"
@@ -100,6 +100,43 @@ in that script deliberately, not silently — verify the new checksums
 before committing, and sanity-check the fetched JS actually initializes
 (e.g. the tools/build-editor-bundle Node vm-based check used to catch this
 bug in the first place) before trusting a version bump.
+EOF
+
+MERMAID_VERSION="12.0.0"
+# UMD build (exposes window.mermaid via a plain <script> tag), not the ESM
+# build mermaid's own CDN docs demonstrate — this project has no bundler
+# and no `type="module"` script tags anywhere else, so UMD is the one
+# that actually fits how every other vendored bundle here gets loaded.
+# ~5.3 MiB unminified-by-nature (mermaid bundles its own layout engines
+# for every diagram type) — see static/js/mermaid/VENDORED.md for why
+# this is loaded lazily (static/js/mermaid-render.js), never from
+# shell.html directly.
+mkdir -p "${STATIC_JS}/mermaid"
+curl -sSf --max-time 60 -o "${STATIC_JS}/mermaid/mermaid.min.js" \
+  "https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.min.js"
+sha256sum "${STATIC_JS}/mermaid/mermaid.min.js" \
+  | sed "s|${STATIC_JS}/mermaid/||" > "${STATIC_JS}/mermaid/SHA256SUMS"
+cat > "${STATIC_JS}/mermaid/VENDORED.md" <<EOF
+# Vendored: mermaid
+
+- Version: ${MERMAID_VERSION}
+- Source: https://cdn.jsdelivr.net/npm/mermaid@${MERMAID_VERSION}/dist/mermaid.min.js
+  (jsdelivr's npm mirror — mermaid's own docs only demonstrate an ESM
+  build for CDN usage, but this project loads plain <script> tags
+  everywhere else, so the UMD dist/mermaid.min.js build is the one that
+  fits: a normal script tag load exposes window.mermaid, matching every
+  other vendored bundle here (Toast UI Editor included).
+- License: MIT (mermaid-js)
+- Checksums: see SHA256SUMS in this directory
+- Loaded LAZILY, not from shell.html: static/js/mermaid-render.js injects
+  this script tag only when a rendered document actually contains a
+  pre.mermaid block — this file alone is ~5.3 MiB (~1.5 MiB gzipped),
+  clearly too heavy to add to every page load on a project whose whole
+  deployment story includes weak SBC hardware over possibly slow links.
+
+Re-vendor with \`tools/build-editor-bundle/fetch.sh\`. Bump \$MERMAID_VERSION
+in that script deliberately, not silently — verify the new checksum
+before committing.
 EOF
 
 echo "Done. Verify with: sha256sum -c <dest>/SHA256SUMS in each vendored dir."
