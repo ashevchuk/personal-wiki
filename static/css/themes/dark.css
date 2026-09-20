@@ -926,6 +926,53 @@ pre code[class*="language-"] {
    which screen theme was active when the reader clicked print. See
    green.css's own comment on why this whole block exists and why
    `!important` is scoped to just the display:none list. */
+/* Heading-level "zoom"/focus mode (static/js/section-zoom.js) -- the
+   button only shows on hover of its own heading (kept out of the way
+   otherwise, matching how little other chrome this theme adds around
+   plain document content); the banner only appears while a section is
+   actually focused. Both stripped from print output above (same
+   discipline as .doc-actions/.folder-actions -- neither is real
+   document content). */
+.zoom-btn {
+  margin-left: 0.6rem;
+  font-size: 0.7rem;
+  font-weight: normal;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--fg-dim);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0.1rem 0.4rem;
+  cursor: pointer;
+  opacity: 0;
+  vertical-align: middle;
+}
+h2:hover > .zoom-btn,
+h3:hover > .zoom-btn,
+h4:hover > .zoom-btn,
+h5:hover > .zoom-btn,
+h6:hover > .zoom-btn {
+  opacity: 1;
+}
+.zoom-banner {
+  margin-bottom: 1rem;
+  padding: 0.5rem 0.8rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.9rem;
+}
+.zoom-exit {
+  background: none;
+  border: none;
+  color: var(--link);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: underline;
+}
+
 @media print {
   #matrix-bg,
   .sidebar,
@@ -933,7 +980,9 @@ pre code[class*="language-"] {
   .quick-open-overlay,
   .doc-actions,
   .folder-actions,
-  .breadcrumbs {
+  .breadcrumbs,
+  .zoom-btn,
+  .zoom-banner {
     display: none !important;
   }
 

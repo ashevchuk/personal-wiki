@@ -105,12 +105,20 @@ window.WikiPages = window.WikiPages || {};
           backlinksHtml += "</ul></div>";
         }
 
+        // #doc-body wraps ONLY the document's own title+content, not the
+        // breadcrumbs/action-row chrome around it or the backlinks list
+        // after it — WikiSectionZoom needs a container scoped to just
+        // the zoomable content, or "zoom into this section" would also
+        // hide the Edit/Delete buttons and breadcrumb trail along with
+        // everything else at the same DOM level.
         container.innerHTML =
           renderBreadcrumbs(docPath) +
           printBar +
           chrome +
+          '<div id="doc-body">' +
           titleHtml +
           doc.renderedHtml +
+          "</div>" +
           backlinksHtml;
 
         if (window.WikiMermaid) {
@@ -121,6 +129,9 @@ window.WikiPages = window.WikiPages || {};
         }
         if (window.WikiQueryBlock) {
           window.WikiQueryBlock.renderIn(container);
+        }
+        if (window.WikiSectionZoom) {
+          window.WikiSectionZoom.setup(container);
         }
 
         var deleteBtn = document.getElementById("doc-delete-btn");
