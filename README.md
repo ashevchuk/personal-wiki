@@ -181,6 +181,23 @@ allowlist, its own rate limiter, independent write-access toggle. Full protocol
 details, tool schemas, and the remote-transport security model:
 [`docs/mcp.md`](docs/mcp.md).
 
+## Writing ` ```query ` blocks
+
+A fenced code block with `query` as the language becomes a live, auto-updating
+table of documents right inside a page — filter by tag/type/folder, find
+orphaned documents, sort and limit — re-run on every view:
+
+````
+```query
+folder: recipes/dinner/
+sort: title
+```
+````
+
+Full syntax, every key, and real worked examples (a recipe index, a "what
+changed recently" digest, a cleanup list of documents nothing links to yet):
+[`docs/query-blocks.md`](docs/query-blocks.md).
+
 ## A few things worth knowing about the security model
 
 - **Path traversal** is centralized in one place (`PathGuard`) that every vault read/
