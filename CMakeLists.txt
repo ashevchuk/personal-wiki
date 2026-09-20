@@ -61,6 +61,7 @@ add_library(wikicore STATIC
   src/index/IndexBuilder.cpp
   src/index/FtsSearch.cpp
   src/index/McpAuditLog.cpp
+  src/index/GraphQueries.cpp
   src/index/NavQueries.cpp
   src/index/QueryBlocks.cpp
   src/index/SnapshotStore.cpp
@@ -127,6 +128,7 @@ add_executable(wiki-server
   src/controllers/RemoteMcpRoutes.cpp
   src/controllers/VersionRoutes.cpp
   src/controllers/QueryRoutes.cpp
+  src/controllers/GraphRoutes.cpp
 )
 target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
 

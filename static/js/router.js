@@ -97,6 +97,10 @@
         pages.renderFolder(content, "", session);
         return;
       }
+      if (path === "/graph" || path === "/graph/") {
+        pages.renderGraph(content, session);
+        return;
+      }
       if (path === "/account" || path === "/account/") {
         pages.renderAccount(content, session);
         return;

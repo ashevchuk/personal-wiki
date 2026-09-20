@@ -10,6 +10,40 @@ window.WikiPages = window.WikiPages || {};
   var escapeHtml = WikiCommon.escapeHtml;
   var renderBreadcrumbs = WikiCommon.renderBreadcrumbs;
 
+  // Local graph widget: this document plus its 1-hop [[wiki-link]]
+  // neighbors, rendered the same way the full graph page does (see
+  // graph-render.js). Fetches the SAME /api/graph payload the full
+  // graph page uses and filters client-side (WikiGraphRender.neighborsOf)
+  // rather than a dedicated server-side query — see GraphQueries.h's own
+  // comment on why that split isn't worth it at this app's real scale.
+  // Omitted entirely (same "don't show an empty section" discipline as
+  // the backlinks list right above it) when the document has no
+  // neighbors at all — a one-node graph with nothing connected to it
+  // isn't worth a widget.
+  function renderLocalGraph(docPath) {
+    var widgetContainer = document.getElementById("local-graph-container");
+    if (!widgetContainer) return;
+    fetch(basePath() + "/api/graph", { credentials: "same-origin" })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (data) {
+        var local = window.WikiGraphRender.neighborsOf(docPath, data.nodes, data.edges, 1);
+        if (local.nodes.length <= 1) return;  // just this document, no real neighbors
+        widgetContainer.innerHTML = '<h3>Local graph</h3><div id="local-graph-svg"></div>';
+        widgetContainer.className = "local-graph";
+        window.WikiGraphRender.render(document.getElementById("local-graph-svg"),
+          local.nodes, local.edges, { width: 500, height: 320, centerPath: docPath });
+      })
+      .catch(function () {
+        // A failed local-graph fetch is cosmetic, not core page content
+        // (unlike the document body itself) -- leave the placeholder
+        // empty rather than showing an error where a small widget was
+        // expected.
+      });
+  }
+
   window.WikiPages.renderView = function (container, docPath, session) {
     fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath), {
       credentials: "same-origin",
@@ -119,7 +153,8 @@ window.WikiPages = window.WikiPages || {};
           titleHtml +
           doc.renderedHtml +
           "</div>" +
-          backlinksHtml;
+          backlinksHtml +
+          '<div id="local-graph-container"></div>';
 
         if (window.WikiMermaid) {
           window.WikiMermaid.renderIn(container);
@@ -132,6 +167,9 @@ window.WikiPages = window.WikiPages || {};
         }
         if (window.WikiSectionZoom) {
           window.WikiSectionZoom.setup(container);
+        }
+        if (window.WikiGraphRender) {
+          renderLocalGraph(docPath);
         }
 
         var deleteBtn = document.getElementById("doc-delete-btn");

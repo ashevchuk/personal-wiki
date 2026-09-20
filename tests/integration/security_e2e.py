@@ -397,6 +397,41 @@ def run_checks(sandbox, vault):
     check("query: documents table still intact after the injection attempt",
           status == 200 and len(body["rows"]) == 2, f"status={status} body={body}")
 
+    # --- 6c. /api/graph (full/local graph data source) -------------------
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/graph-pub-source.md", "title": "Graph Pub Source", "tags": [],
+         "visibility": "public", "type": "note",
+         "body": "Links to [[notes/graph-priv-target]]."},
+        headers={"X-CSRF-Token": csrf})
+    check("create graph pub-source doc -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/graph-priv-target.md", "title": "Graph Priv Target", "tags": [],
+         "visibility": "private", "type": "note", "body": "private target"},
+        headers={"X-CSRF-Token": csrf})
+    check("create graph priv-target doc -> 201", status == 201, f"got {status}")
+
+    status, _, body = anon.get_json("/api/graph")
+    anon_paths = [n["path"] for n in body["nodes"]]
+    anon_edges = [(e["source"], e["target"]) for e in body["edges"]]
+    check("anon graph: public source node present, private target node absent",
+          "notes/graph-pub-source.md" in anon_paths and
+          "notes/graph-priv-target.md" not in anon_paths, f"paths={anon_paths}")
+    check("anon graph: edge touching the private document is not leaked",
+          ("notes/graph-pub-source.md", "notes/graph-priv-target.md") not in anon_edges,
+          f"edges={anon_edges}")
+
+    status, _, body = admin.get_json("/api/graph")
+    admin_paths = [n["path"] for n in body["nodes"]]
+    admin_edges = [(e["source"], e["target"]) for e in body["edges"]]
+    check("admin graph: both nodes present",
+          "notes/graph-pub-source.md" in admin_paths and
+          "notes/graph-priv-target.md" in admin_paths, f"paths={admin_paths}")
+    check("admin graph: the edge is present",
+          ("notes/graph-pub-source.md", "notes/graph-priv-target.md") in admin_edges,
+          f"edges={admin_edges}")
+
     # --- 7. Attachments: visibility follows the OWNING document --------
     # No extension policy on upload anymore (see AttachmentService) — an
     # extension that would have been rejected before (.exe) now succeeds;

@@ -571,6 +571,64 @@ a.btn:focus {
   padding: 0.2rem 0;
 }
 
+/* Graph (static/js/graph-render.js) -- shared by the full graph page
+   (/graph) and the local-graph widget on the document view page. Colors
+   come from this theme's own palette (--link for nodes/edges,
+   --fg-dim for labels) -- same discipline as mermaid/Prism/query-block:
+   no generic styling bolted on top of the theme. */
+.local-graph {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.local-graph h3 {
+  font-family: inherit;
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0 0 0.5rem;
+}
+.graph-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.graph-edge {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.graph-node {
+  fill: var(--panel-bg);
+  stroke: var(--link);
+  stroke-width: 1.5;
+}
+.graph-node-center {
+  fill: var(--link);
+  stroke: var(--fg-bright);
+}
+.graph-label {
+  fill: var(--fg-dim);
+  font-size: 11px;
+  text-anchor: middle;
+  pointer-events: none;
+}
+.graph-nodes a:hover .graph-node {
+  fill: var(--link);
+}
+.graph-nodes a:hover .graph-label {
+  fill: var(--fg);
+}
+.graph-hint {
+  color: var(--fg-dim);
+  margin-bottom: 1rem;
+}
+.graph-empty {
+  color: var(--fg-dim);
+  font-style: italic;
+}
+
+
 /* History page (history.js) — snapshot list + diff view. */
 .history-list {
   list-style: none;
@@ -982,7 +1040,8 @@ h6:hover > .zoom-btn {
   .folder-actions,
   .breadcrumbs,
   .zoom-btn,
-  .zoom-banner {
+  .zoom-banner,
+  .local-graph {
     display: none !important;
   }
 
