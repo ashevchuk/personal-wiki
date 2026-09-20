@@ -1416,6 +1416,25 @@ page, appearing right after the backlinks list — this document plus its
 discipline the backlinks list right above it already follows) when the
 document genuinely has no neighbors at all.
 
+**A real bug found via a user screenshot: labels on two directly-linked
+nodes overlapped each other.** Each node's own label
+(`static/js/graph-render.js`) is `text-anchor: middle`, centered
+directly under its node — and the original `SPRING_LENGTH` (the target
+rest distance the spring force pulls a connected pair toward) was
+`90`px. A typical multi-word document title at this theme's own
+font-size/font-family renders 80-110px wide on its own; two
+directly-connected nodes settling near that 90px rest length left
+essentially no room for either label without the two colliding,
+regardless of which theme was active (confirmed on both green and
+classic after the fix, using the exact two-document scenario from the
+report — a document linking to another via a real `[[wiki-link]]`).
+Fixed by raising `SPRING_LENGTH` to `150` — no per-label text-width
+measurement needed (this app's real vaults are tens of documents with
+short, human-written titles, not the kind of scale that would ever
+need that precision); the repulsion/spring balance re-settles on its
+own at the new target distance, same simulation, just tuned to leave
+realistic multi-word titles room to breathe.
+
 ## Print/Download/Upload buttons, and a real dead-route bug found building them
 
 Three small, purely additive UI actions: the view page's "Print" button
