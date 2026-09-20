@@ -515,6 +515,26 @@ form p {
   font-size: 0.85rem;
   margin: 0;
 }
+
+/* Type/Tags field typeahead (pages/edit.js's createTypeahead) -- layout
+   in edit.css, colors here, same split .ms-menu above already uses.
+   Neutral #0a0a0a background for the same reason .ms-menu picked it over
+   var(--panel-bg-2): that variable is shared with every input/button, so
+   changing it here would have de-greened all of those too. */
+.typeahead-menu {
+  background: #0a0a0a;
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+}
+.typeahead-option:hover,
+.typeahead-option.active {
+  color: #fff;
+  text-shadow: 0 0 10px rgba(0, 255, 0, 0.9);
+}
+.typeahead-count {
+  color: var(--fg-dim);
+  font-size: 0.8em;
+}
 label {
   display: flex;
   flex-direction: column;

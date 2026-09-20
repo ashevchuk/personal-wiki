@@ -117,6 +117,170 @@ window.WikiPages = window.WikiPages || {};
       });
   };
 
+  // A small typeahead/combobox, NOT the same shape as search.js's own
+  // createMultiSelect (checkbox popover) -- that one filters over a
+  // CLOSED set (you can only pick a tag/type that already exists in the
+  // vault). Type and tags are free text -- the first document of a new
+  // type, or the first use of a new tag, has to stay possible -- so this
+  // is a plain text input with suggestions layered on top: pick one from
+  // the dropdown, or just keep typing your own value, either works.
+  //
+  // input: the existing <input type="text"> to enhance in place (wrapped
+  // in a positioning <span>, not replaced -- keeps its id/name/form
+  // association intact). optionsUrl/jsonKey: where the suggestion list
+  // comes from and which field of each returned object holds the value
+  // (`/api/nav/types` returns {type, count}, `/api/nav/tags` returns
+  // {tag, count} -- same shape as the tag cloud / search page's own
+  // multiselect already consume, both already visibility-gated
+  // server-side the same fail-safe-private way as everything else, so
+  // this can never suggest a value that would leak what private content
+  // exists). mode: "single" replaces the WHOLE field value (Type, which
+  // only ever holds one value) -- "token" (Tags) only replaces the
+  // comma-separated segment currently being typed, so picking a
+  // suggestion for the second tag doesn't clobber the first one already
+  // written.
+  function createTypeahead(input, optionsUrl, jsonKey, mode) {
+    var options = []; // [{value, count}]
+    var filtered = [];
+    var activeIndex = -1;
+
+    var wrap = document.createElement("span");
+    wrap.className = "typeahead-wrap";
+    input.parentNode.insertBefore(wrap, input);
+    wrap.appendChild(input);
+
+    var menu = document.createElement("div");
+    menu.className = "typeahead-menu";
+    menu.hidden = true;
+    wrap.appendChild(menu);
+
+    fetch(basePath() + optionsUrl, { credentials: "same-origin" })
+      .then(function (resp) { return resp.ok ? resp.json() : []; })
+      .then(function (data) {
+        options = data.map(function (d) { return { value: d[jsonKey], count: d.count }; });
+      })
+      .catch(function () {
+        // Suggestions are a convenience layered on top of a plain text
+        // field, never load-bearing -- a failed fetch just means an
+        // empty dropdown, the field itself still works exactly like a
+        // normal <input type="text">.
+      });
+
+    // Deliberately caret-position-agnostic for "token" mode: always
+    // treats the LAST comma-separated segment as "what's currently being
+    // typed", regardless of where the text cursor actually is. Covers
+    // the overwhelmingly common case (typing new tags onto the end of
+    // the list) with far less code than real caret-aware token editing;
+    // editing a tag in the MIDDLE of an existing list just won't show
+    // suggestions scoped to it, a deliberate simplicity trade-off, not
+    // an oversight.
+    function currentToken() {
+      if (mode === "single") {
+        return { query: input.value, start: 0 };
+      }
+      var lastComma = input.value.lastIndexOf(",");
+      var segment = input.value.slice(lastComma + 1);
+      var query = segment.replace(/^\s+/, "");
+      return { query: query, start: input.value.length - query.length };
+    }
+
+    function otherTokenValues() {
+      if (mode !== "token") return [];
+      var tok = currentToken();
+      return input.value
+        .slice(0, tok.start)
+        .split(",")
+        .map(function (s) { return s.trim().toLowerCase(); })
+        .filter(Boolean);
+    }
+
+    function applyToken(value) {
+      var tok = currentToken();
+      input.value =
+        input.value.slice(0, tok.start) + value + (mode === "token" ? ", " : "");
+      closeMenu();
+      input.focus();
+    }
+
+    function renderMenu() {
+      menu.innerHTML = "";
+      filtered.forEach(function (opt, i) {
+        var row = document.createElement("div");
+        row.className = "typeahead-option";
+        var label = document.createElement("span");
+        label.textContent = opt.value;
+        row.appendChild(label);
+        var count = document.createElement("span");
+        count.className = "typeahead-count";
+        count.textContent = "(" + opt.count + ")";
+        row.appendChild(count);
+        // mousedown, not click -- fires BEFORE the input's own blur
+        // handler below, so applyToken() runs before closeMenu()-on-blur
+        // would otherwise race it and discard the pick.
+        row.addEventListener("mousedown", function (evt) {
+          evt.preventDefault();
+          applyToken(opt.value);
+        });
+        row.addEventListener("mouseenter", function () { setActive(i); });
+        menu.appendChild(row);
+      });
+      menu.hidden = filtered.length === 0;
+    }
+
+    function setActive(i) {
+      var rows = menu.children;
+      for (var j = 0; j < rows.length; j++) rows[j].classList.remove("active");
+      activeIndex = i;
+      if (i >= 0 && i < rows.length) rows[i].classList.add("active");
+    }
+
+    function closeMenu() {
+      menu.hidden = true;
+      activeIndex = -1;
+    }
+
+    function refreshMenu() {
+      var tok = currentToken();
+      var q = tok.query.toLowerCase();
+      var exclude = otherTokenValues();
+      filtered = options.filter(function (opt) {
+        var v = opt.value.toLowerCase();
+        if (exclude.indexOf(v) !== -1) return false; // already picked -- don't re-suggest
+        return q === "" || v.indexOf(q) !== -1;
+      });
+      activeIndex = -1;
+      renderMenu();
+    }
+
+    input.addEventListener("input", refreshMenu);
+    input.addEventListener("focus", refreshMenu);
+    input.addEventListener("blur", function () {
+      // Delayed so a suggestion row's own mousedown handler gets a
+      // chance to run first -- an immediate close here would hide the
+      // menu before that click actually lands.
+      setTimeout(closeMenu, 150);
+    });
+    input.addEventListener("keydown", function (evt) {
+      if (menu.hidden) return;
+      if (evt.key === "ArrowDown") {
+        evt.preventDefault();
+        setActive(Math.min(activeIndex + 1, filtered.length - 1));
+      } else if (evt.key === "ArrowUp") {
+        evt.preventDefault();
+        setActive(Math.max(activeIndex - 1, 0));
+      } else if (evt.key === "Enter") {
+        if (activeIndex >= 0) {
+          evt.preventDefault();
+          applyToken(filtered[activeIndex].value);
+        }
+        // else: no suggestion highlighted -- fall through to this
+        // input's normal behavior (same as before this feature existed).
+      } else if (evt.key === "Escape") {
+        closeMenu();
+      }
+    });
+  }
+
   function buildForm(container, docPath, data) {
     var isNew = data.isNew;
     document.getElementById("page-title").textContent =
@@ -162,6 +326,9 @@ window.WikiPages = window.WikiPages || {};
     tagsInput.value = (data.tags || []).join(", ");
     typeInput.value = data.type || "";
     visibilityInput.checked = data.visibility === "public";
+
+    createTypeahead(typeInput, "/api/nav/types", "type", "single");
+    createTypeahead(tagsInput, "/api/nav/tags", "tag", "token");
 
     // Attachments (POST /api/attachments/{docPath}) belong to an OWNING
     // document that has to exist already — refuse client-side too rather

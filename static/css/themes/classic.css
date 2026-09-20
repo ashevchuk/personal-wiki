@@ -447,6 +447,22 @@ form p {
   font-size: 0.85rem;
   margin: 0;
 }
+
+/* Type/Tags field typeahead (pages/edit.js's createTypeahead) -- layout
+   in edit.css, colors here, same split .ms-menu above already uses. */
+.typeahead-menu {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+}
+.typeahead-option:hover,
+.typeahead-option.active {
+  color: var(--link);
+}
+.typeahead-count {
+  color: var(--fg-dim);
+  font-size: 0.8em;
+}
 label {
   display: flex;
   flex-direction: column;
