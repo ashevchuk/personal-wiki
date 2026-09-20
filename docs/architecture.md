@@ -1310,6 +1310,73 @@ Marked experimental and kept in its own isolated commit (touches only
 `section-zoom.js`, `view.js`'s wrapper div, and each theme's CSS) on
 request — a clean `git revert` away if it doesn't earn its keep.
 
+## Full graph page and per-document local graph widget
+
+The last item from the SiYuan/Obsidian survey worth actually building:
+Obsidian's Graph View, a force-directed visualization of every note as a
+node and every link as an edge. In a huge Obsidian vault this tends to
+degrade into an unreadable "hairball"; at THIS app's real scale (a
+personal vault, tens of documents) it stays genuinely readable and shows
+real structure — confirmed live against real production content, not
+assumed: the full graph correctly clustered `demo/wiki-links-example`'s
+two cross-linked notes and `notes/linux/systemd-timers.md`'s link to
+`wireguard-setup.md`, with every other real document (most of this
+vault's actual content) sitting isolated, exactly matching what's
+actually in `document_links`.
+
+**Data source**: `index::GraphQueries` (nodes = visible documents,
+edges = real `[[wiki-link]]`s between two documents that both currently
+exist) backs one `GET /api/graph` endpoint, same fail-safe-private
+gating as `NavQueries` throughout — an edge only appears when BOTH
+endpoints are visible to the caller, so a private document can't leak
+its existence via an edge pointing at it (or from it) even when the
+other end is public; verified in both directions by a dedicated unit
+test, not just one. A "red link" (the target document doesn't currently
+exist) is silently excluded from the edge list rather than inventing a
+placeholder node for it — a deliberate v1 scope decision (Obsidian's own
+graph view draws a distinct "unresolved" node for this case, which this
+app doesn't attempt yet), not a bug.
+
+**Local graph is NOT a second server-side query.** It's the exact same
+`/api/graph` payload, filtered client-side to N hops of the current
+document (`WikiGraphRender.neighborsOf`) before layout. A dedicated
+BFS-shaped backend query would be real, structurally more complex code
+paid for a cost saving that doesn't matter yet at this app's actual
+scale — the whole graph is cheap enough to send on every document view.
+Revisit if a real vault ever gets big enough for this to genuinely cost
+something; nothing about the current design blocks adding that later.
+
+**Rendering is a from-scratch force-directed layout**
+(`static/js/graph-render.js`), not a vendored physics library like
+d3-force: repulsion between every node pair (O(n²), fine at this app's
+real scale), spring attraction along real edges, a weak pull toward
+center so a disconnected node doesn't drift off-screen, velocity
+damping, run for a fixed iteration count synchronously (the simulation
+finishes before the next paint at this scale, so there's no user-visible
+benefit to animating it frame-by-frame with `requestAnimationFrame`,
+only added start/stop/cleanup complexity). Initial node placement is a
+deterministic circle, not `Math.random()`, so the SAME graph settles
+into a recognizable, only mildly different layout across reloads rather
+than a jarring fresh scatter every time. Same "write it ourselves when
+it's small, vendor when it's genuinely complex" split this app already
+applies elsewhere (query-block.js/section-zoom.js vs. mermaid.js/
+Prism.js).
+
+Output is real SVG built via `createElementNS` + DOM properties
+throughout — never `innerHTML`/string concatenation — so a document
+title reaches the page as inert text with no manual escaping needed
+(unlike `query-block.js`'s HTML-string rendering, which genuinely does
+need `WikiCommon.escapeHtml`). Each node is a real `<a href="/d/...">`,
+so clicking one is an ordinary navigation, no client-side routing
+needed — this app already does a full page reload on every navigation.
+
+**Two places this shows up**: a new `/graph` page (the whole vault,
+wired into the sidebar) and a "Local graph" widget on the document view
+page, appearing right after the backlinks list — this document plus its
+1-hop neighbors, omitted entirely (same "don't show an empty section"
+discipline the backlinks list right above it already follows) when the
+document genuinely has no neighbors at all.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

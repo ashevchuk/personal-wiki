@@ -83,6 +83,10 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   `#zoom=<slug>` link lands already focused. Client-side only, no true block-level
   reference model behind it (this app's content is plain markdown files, not
   individually addressable blocks).
+- **Graph view** — every document as a node, every `[[wiki-link]]` as an edge, a real
+  force-directed layout (written from scratch, no vendored physics library). A full
+  `/graph` page for the whole vault, plus a "Local graph" widget on each document
+  (itself + its immediate neighbors) right after the backlinks list.
 - **Document history.** Every edit is snapshotted; diff any two versions, restore any
   of them (which itself snapshots first — restoring is undoable too).
 - **Fail-safe-private visibility.** Missing or malformed front-matter defaults to
