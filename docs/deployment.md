@@ -482,7 +482,12 @@ app's own known route shapes (`/d/...`, `/edit/...`, `/search`, ...) and sets a
 `<base href="{whatever came before that match}/">` tag, which every relative resource
 link/fetch URL in the rest of the page then resolves against automatically. Point a
 reverse proxy at a subpath, or none at all, and this correctly adapts either way with
-nothing to set anywhere.
+nothing to set anywhere. Stylesheets in `shell.html` itself are created in that same
+inline script *after* `<base>` exists, not as static `<link href="css/...">` tags —
+the HTML preload scanner otherwise fetches them against the document URL
+(`/wiki/edit/css/edit.css`) and gets this SPA shell (`text/html`) instead of CSS.
+See `docs/architecture.md`'s "Edit-page attachment insert, and stylesheet MIME
+refusals under `/edit/`" for the live console error that caught this.
 
 **One case that inference can never close by pattern-matching alone**, though: a path
 matching NO known route (a typo, a stale `[[wiki-link]]`, anything `main.cpp`'s default

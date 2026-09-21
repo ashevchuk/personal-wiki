@@ -1632,6 +1632,54 @@ picks a suggestion and appends it to the Tags field with a trailing
 comma-space, ready for the next tag; the `Public` checkbox now sits
 flush with the Title/Type/Tags inputs on the same row.
 
+## Edit-page attachment insert, and stylesheet MIME refusals under `/edit/`
+
+Two frontend-only follow-ups to the attachment list (the list itself,
+`GET`/`DELETE /api/attachments/...`, and MCP `attach_file` landed
+earlier — see `docs/mcp.md`). Neither needed a rebuild.
+
+**Double-click a filename in the list to insert it into the editor.**
+The list is a view of the owning document's `.assets/` folder, not a
+picker that rewrites markdown on delete; inserting is a separate
+gesture. Raster images (`image/*` except SVG, same rule as
+`AttachToDocument`) become an image node; everything else a regular
+link. The "Attach file" button uses the same helper after the upload
+lands, so both paths write the same shape.
+
+**`editor.insertText("[name](url)")` is the wrong API in WYSIWYG.**
+It is correct in Markdown mode. In WYSIWYG Toast UI dumps the brackets
+as literal text, then auto-linkifies the `[name]` piece and leaves
+`](url)` visible as leftover characters — the same broken insert from
+both double-click and Attach file. The toolbar's own link/image popups
+go through `editor.exec("addLink", {linkUrl, linkText})` /
+`editor.exec("addImage", {imageUrl, altText})`; those commands write
+the right node in BOTH modes (markdown-mode variants insert the
+`[]()` / `![]()` source). Verified live in WYSIWYG: a double-clicked
+filename became a real clickable link, not leftover markdown syntax.
+
+**Static `<link href="css/edit.css">` (and Toast UI's own CSS) in
+`shell.html` shipped a real MIME-type console error on every `/edit/`
+load under a subpath.** Theme CSS already avoided this by being
+created in JS after `<base>` exists (see "Visual theme picker"
+above). `edit.css` + `toastui-editor.css` + `toastui-editor-dark.css`
+were still static tags. The HTML preload scanner fetches stylesheets
+in parallel with the first `<head>` script, resolving URLs against
+the DOCUMENT path, not against a `<base>` that script hasn't appended
+yet. On `/wiki/edit/{doc}` that meant `css/edit.css` →
+`/wiki/edit/css/edit.css`, which is this same SPA shell (`text/html`);
+Chrome then refused it (`MIME type is not a supported stylesheet type,
+and strict MIME checking is enabled`). The page still "worked"
+because a later navigation or cache sometimes recovered the real
+files, but the console was red on every fresh edit-page load. Fixed
+the same way theme CSS already was: those three `<link>`s are now
+`createElement`d in the theme bootstrap script, after `<base>` exists,
+so they resolve against `/wiki/` like everything else. Putting static
+stylesheet tags back in `shell.html`'s markup re-breaks this.
+
+An unrelated `share-modal.js` `Cannot read properties of null
+(reading 'addEventListener')` in the same console is a browser
+extension, not this repo.
+
 ## Two-binary layout
 
 `libwikicore` (vault + index + MCP tool logic) — no dependency on Drogon/OpenSSL.

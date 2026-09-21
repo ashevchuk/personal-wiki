@@ -167,27 +167,30 @@
   link.rel = "stylesheet";
   link.href = "css/themes/" + theme + ".css";
   document.head.appendChild(link);
+
+  // Edit/editor CSS MUST be injected here, after <base> exists — not as
+  // static <link href="css/..."> in the markup. The HTML preload scanner
+  // fetches stylesheets in parallel with the previous script, resolving
+  // URLs against the DOCUMENT path, not against a <base> that script
+  // hasn't appended yet. On /wiki/edit/{doc} that meant
+  // css/edit.css → /wiki/edit/css/edit.css, which is this same SPA
+  // shell (text/html); the browser then refused it as a stylesheet.
+  // Theme CSS above already used this JS-created <link> shape; these
+  // three used to be static tags and hit that exact failure.
+  var sheets = [
+    "css/edit.css",
+    "js/toastui-editor/toastui-editor.css",
+    "js/toastui-editor/toastui-editor-dark.css",
+  ];
+  for (var s = 0; s < sheets.length; s++) {
+    var css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = sheets[s];
+    document.head.appendChild(css);
+  }
 })();
 </script>
 <title id="page-title">wiki</title>
-<!-- Edit-page-specific layout (.field-row, .visibility-toggle, #f-status
-     colors, .yt-embed-preview) — was a real, orphaned file for who knows
-     how long before this link existed: edit.css was written, referenced
-     by class/id from pages/edit.js, and documented in theme.css's own
-     header comment, but never actually <link>ed anywhere, so none of its
-     rules had EVER applied to a real page load. Found by testing the
-     YouTube-embed WYSIWYG preview live rather than trusting a green
-     ctest run — unrelated to that feature, fixed alongside it since it
-     was the same file this session already had open. -->
-<link rel="stylesheet" href="css/edit.css">
-<link rel="stylesheet" href="js/toastui-editor/toastui-editor.css">
-<!-- Official dark theme (theme: 'dark' in pages/edit.js's Editor
-     constructor call applies the .toastui-editor-dark class it's scoped
-     under) — the editor's own UI used to be stock light-theme white
-     inside an otherwise all-black page. Not a pixel-perfect match for
-     the green terminal look, but a real, maintained theme beats hand-
-     rolled CSS overrides fighting a third-party component's internals. -->
-<link rel="stylesheet" href="js/toastui-editor/toastui-editor-dark.css">
 </head>
 <body>
 <div class="layout">

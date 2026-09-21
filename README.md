@@ -61,7 +61,8 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   treats `/` as just another character.
 - **A real editor, not a textarea.** Toast UI Editor (WYSIWYG + raw markdown), undo/
   redo, drag-and-drop image upload routed through the same attachment pipeline as
-  everything else.
+  everything else, and a list of the document's existing files (double-click a
+  name to insert a link).
 - **`![youtube](url)` embeds** that render as a real `<iframe>` — `youtu.be`,
   `/watch?v=`, and `/shorts/` links all recognized, with a thumbnail preview right in
   the editor.

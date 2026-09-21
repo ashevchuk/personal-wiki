@@ -569,10 +569,12 @@ window.WikiPages = window.WikiPages || {};
                 return (
                   '<div class="edit-att-row" data-path="' +
                   escapeHtml(f.path) +
+                  '" data-mime="' +
+                  escapeHtml(f.mimeType || "") +
                   '">' +
                   '<span class="edit-att-name" title="' +
                   escapeHtml(name) +
-                  '">' +
+                  ' — double-click to insert">' +
                   escapeHtml(name) +
                   "</span>" +
                   '<a class="edit-att-icon" href="' +
@@ -627,6 +629,47 @@ window.WikiPages = window.WikiPages || {};
         });
     });
 
+    // Raster images become an image node / ![name](url) (svg is
+    // image/svg+xml but not an <img> here — same rule as
+    // AttachToDocument); everything else a regular link.
+    // insertText("[name](url)") is correct in Markdown mode but in
+    // WYSIWYG it dumps the brackets as literal text (Toast UI then
+    // auto-linkifies the [name] piece and leaves "](url)" visible).
+    // editor.exec("addLink"/"addImage") is the same command the
+    // toolbar's own link/image popups use, and it writes the right
+    // node in BOTH modes (markdown command inserts the []() source).
+    function isInlineImageName(mime, name) {
+      if (!mime || mime.indexOf("image/") !== 0) return false;
+      if (mime === "image/svg+xml") return false;
+      var lower = (name || "").toLowerCase();
+      return !/\.svg$/.test(lower);
+    }
+
+    function insertAttachmentLink(url, name, mime) {
+      editor.focus();
+      if (isInlineImageName(mime, name)) {
+        editor.exec("addImage", { imageUrl: url, altText: name || "image" });
+      } else {
+        editor.exec("addLink", { linkUrl: url, linkText: name || url });
+      }
+    }
+
+    document.getElementById("edit-attachments").addEventListener("dblclick", function (ev) {
+      var nameEl = ev.target.closest(".edit-att-name");
+      if (!nameEl) return;
+      var row = nameEl.closest(".edit-att-row");
+      if (!row) return;
+      ev.preventDefault();
+      var sel = window.getSelection();
+      if (sel && sel.removeAllRanges) sel.removeAllRanges();
+      insertAttachmentLink(
+        basePath() + "/assets/" + encodeVaultPath(row.getAttribute("data-path")),
+        nameEl.textContent,
+        row.getAttribute("data-mime") || ""
+      );
+      setStatus("Inserted " + nameEl.textContent + ".", "ok");
+    });
+
     // Shared by both attachment paths below (drag/paste-an-image and the
     // explicit "Attach file" button). url is the ABSOLUTE /assets/...
     // path — this app's own /d/{path} view isn't a directory-shaped URL,
@@ -650,7 +693,7 @@ window.WikiPages = window.WikiPages || {};
       }).then(function (resp) {
         if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
         return resp.json().then(function (info) {
-          return { url: basePath() + "/assets/" + encodeVaultPath(info.path), filename: file.name };
+          return { url: basePath() + "/assets/" + encodeVaultPath(info.path), filename: file.name, mimeType: info.mimeType || file.type || "" };
         });
       }).then(function (result) {
         return loadAttachments().then(function () { return result; });
@@ -852,7 +895,7 @@ window.WikiPages = window.WikiPages || {};
       setStatus("Uploading " + file.name + "...", "");
       uploadAttachment(file)
         .then(function (result) {
-          editor.insertText("[" + result.filename + "](" + result.url + ")");
+          insertAttachmentLink(result.url, result.filename, result.mimeType);
           setStatus("Attached " + result.filename + ".", "ok");
         })
         .catch(function (err) {
