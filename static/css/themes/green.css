@@ -1524,11 +1524,33 @@ h6:hover > .zoom-btn {
      metrics/rounding is enough) has nowhere to go but a second, mostly
      empty page. Zeroing both here lets the page box size to the
      content's real height instead. */
+  /* Screen rules keep using var(--fg)/var(--link)/var(--border).
+     Redefining them here turns leftover theme color black-on-white
+     without chasing each selector that beats print `th`/`a` by one
+     class. query-example.md printed green headers+grid because
+     `.query-results th` is `color: var(--fg-dim)` and
+     `border-bottom: var(--border)` — both more specific than `th, td`. */
+  :root {
+    --bg: #fff;
+    --fg: #000;
+    --fg-dim: #000;
+    --fg-bright: #000;
+    --panel-bg: #fff;
+    --panel-bg-2: #fff;
+    --border: #000;
+    --glow: none;
+    --link: #000;
+    --select-bg: transparent;
+    --error: #000;
+    --ok: #000;
+    color-scheme: light;
+  }
+
   html,
   body {
-    background: #fff;
-    color: #000;
-    text-shadow: none;
+    background: #fff !important;
+    color: #000 !important;
+    text-shadow: none !important;
     font-family: Georgia, 'Times New Roman', serif;
     min-height: 0;
   }
@@ -1536,17 +1558,18 @@ h6:hover > .zoom-btn {
   h1,
   h2,
   h3 {
-    color: #000;
+    color: #000 !important;
     text-transform: none;
     letter-spacing: normal;
   }
 
   a,
   a:hover,
-  a:focus {
-    color: #000;
+  a:focus,
+  a:visited {
+    color: #000 !important;
     text-decoration: underline;
-    text-shadow: none;
+    text-shadow: none !important;
   }
 
   mark {
@@ -1563,17 +1586,18 @@ h6:hover > .zoom-btn {
   }
 
   pre {
-    border: 1px solid #ccc;
+    border: none;
     padding: 0.6rem;
     white-space: pre-wrap;
     word-break: break-word;
   }
 
-  blockquote {
-    border-left: 3px solid #999;
+  blockquote,
+  pre.mermaid {
+    border: none !important;
     margin: 0.6rem 0;
-    padding: 0.2rem 0.8rem;
-    color: #333;
+    padding: 0;
+    background: transparent !important;
   }
 
   img {
@@ -1585,8 +1609,75 @@ h6:hover > .zoom-btn {
     width: 100%;
   }
   th,
-  td {
-    border: 1px solid #999;
+  td,
+  .query-results th,
+  .query-results td {
+    border: 1px solid #000 !important;
     padding: 0.3rem 0.5rem;
+    color: #000 !important;
+    background: transparent !important;
+  }
+
+  /* Catch hardcoded leftovers (Prism amber/cyan, tag chips, etc.)
+     that do not go through the CSS variables above. SVG fill/stroke
+     is not `color`/`border-color` — mermaid still has its own rules. */
+  h4,
+  h5,
+  h6,
+  p,
+  li,
+  blockquote,
+  .query-empty,
+  .query-error {
+    color: #000 !important;
+    background: transparent !important;
+  }
+
+  .content * {
+    color: #000 !important;
+    border-color: #000 !important;
+    text-shadow: none !important;
+    box-shadow: none !important;
+  }
+
+  mark {
+    background: transparent !important;
+    color: #000 !important;
+    text-decoration: underline;
+  }
+
+  pre,
+  code,
+  pre code[class*="language-"] {
+    background: #fff !important;
+    color: #000 !important;
+    text-shadow: none;
+  }
+
+  .token {
+    color: #000 !important;
+    background: none !important;
+  }
+
+  .mermaid svg {
+    background: #fff !important;
+  }
+  .mermaid svg * {
+    fill: none !important;
+    stroke: #000 !important;
+    color: #000 !important;
+  }
+  .mermaid svg text,
+  .mermaid svg tspan,
+  .mermaid svg foreignObject,
+  .mermaid svg foreignObject * {
+    fill: #000 !important;
+    stroke: none !important;
+    color: #000 !important;
+  }
+  .mermaid svg marker,
+  .mermaid svg marker * {
+    fill: #000 !important;
+    stroke: #000 !important;
   }
 }
