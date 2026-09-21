@@ -311,6 +311,148 @@ window.WikiPages = window.WikiPages || {};
     });
   }
 
+  // Toast UI's WYSIWYG code-block widget already has a language badge
+  // that pops a plain <input> (createLanguageEditor in the vendored
+  // bundle — no language list, no Editor option to feed it one). Don't
+  // fork that min.js: watch for the input appearing and hang the same
+  // body-portal typeahead the Type/Tags fields already use onto it.
+  // Markdown-mode fences stay typed by hand (```cpp); this is the
+  // WYSIWYG picker only.
+  //
+  // List is the Prism bundle (static/js/prism/VENDORED.md) plus the
+  // aliases that bundle actually registers (js/ts/py/html/sh/yml) plus
+  // mermaid/query, which aren't Prism grammars but are real fences this
+  // app understands. An unrecognized value still saves — Toast UI
+  // writes whatever string is in the input, same as before.
+  var CODE_FENCE_LANGUAGES = [
+    "bash", "c", "cpp", "css", "go", "html", "javascript", "js", "json",
+    "mermaid", "py", "python", "query", "rust", "sh", "sql", "toml",
+    "ts", "typescript", "yaml", "yml",
+  ];
+
+  function attachCodeBlockLanguageTypeahead(input) {
+    if (input.dataset.wikiLangTa === "1") return;
+    input.dataset.wikiLangTa = "1";
+
+    var filtered = [];
+    var activeIndex = -1;
+    var menu = document.createElement("div");
+    menu.className = "typeahead-menu codeblock-lang-menu";
+    menu.hidden = true;
+    document.body.appendChild(menu);
+
+    function positionMenu() {
+      var r = input.getBoundingClientRect();
+      menu.style.top = r.bottom + 4 + "px";
+      menu.style.left = r.left + "px";
+      menu.style.minWidth = Math.max(r.width, 160) + "px";
+    }
+
+    function closeMenu() {
+      menu.hidden = true;
+      activeIndex = -1;
+    }
+
+    function destroyMenu() {
+      closeMenu();
+      if (menu.parentNode) menu.parentNode.removeChild(menu);
+    }
+
+    function setActive(i) {
+      var rows = menu.children;
+      for (var j = 0; j < rows.length; j++) rows[j].classList.remove("active");
+      activeIndex = i;
+      if (i >= 0 && i < rows.length) rows[i].classList.add("active");
+    }
+
+    // Commit through Toast UI's own blur handler (changeLanguage), not
+    // by poking ProseMirror ourselves — that handler also tears the
+    // input down. Set the value first, then blur.
+    function pick(value) {
+      input.value = value;
+      destroyMenu();
+      input.blur();
+    }
+
+    function renderMenu() {
+      menu.innerHTML = "";
+      filtered.forEach(function (lang, i) {
+        var row = document.createElement("div");
+        row.className = "typeahead-option";
+        row.textContent = lang;
+        row.addEventListener("mousedown", function (evt) {
+          evt.preventDefault();
+          pick(lang);
+        });
+        row.addEventListener("mouseenter", function () {
+          setActive(i);
+        });
+        menu.appendChild(row);
+      });
+      menu.hidden = filtered.length === 0;
+    }
+
+    function refreshMenu() {
+      var q = (input.value || "").toLowerCase();
+      filtered = CODE_FENCE_LANGUAGES.filter(function (lang) {
+        return q === "" || lang.indexOf(q) !== -1;
+      });
+      activeIndex = -1;
+      if (filtered.length > 0) positionMenu();
+      renderMenu();
+    }
+
+    input.addEventListener("input", refreshMenu);
+    input.addEventListener("focus", refreshMenu);
+    // Toast UI focuses this input via setTimeout(0) after creating it.
+    // The MutationObserver callback can run after that focus already
+    // happened, so the focus listener above would miss the first open.
+    if (document.activeElement === input) refreshMenu();
+    input.addEventListener("blur", function () {
+      setTimeout(destroyMenu, 150);
+    });
+    // capture: Toast UI's own keydown always commits on Enter
+    // (preventDefault + changeLanguage). When a suggestion is
+    // highlighted we have to win that race, otherwise Enter saves
+    // whatever prefix was typed ("c") instead of the pick ("cpp").
+    input.addEventListener(
+      "keydown",
+      function (evt) {
+        if (menu.hidden) return;
+        if (evt.key === "ArrowDown") {
+          evt.preventDefault();
+          evt.stopPropagation();
+          setActive(Math.min(activeIndex + 1, filtered.length - 1));
+        } else if (evt.key === "ArrowUp") {
+          evt.preventDefault();
+          evt.stopPropagation();
+          setActive(Math.max(activeIndex - 1, 0));
+        } else if (evt.key === "Enter" && activeIndex >= 0) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          pick(filtered[activeIndex]);
+        } else if (evt.key === "Escape") {
+          closeMenu();
+        }
+      },
+      true
+    );
+  }
+
+  function watchCodeBlockLanguageInputs(editorRoot) {
+    function scan() {
+      var nodes = editorRoot.querySelectorAll(
+        ".toastui-editor-ww-code-block-language input"
+      );
+      for (var i = 0; i < nodes.length; i++) {
+        attachCodeBlockLanguageTypeahead(nodes[i]);
+      }
+    }
+    scan();
+    var obs = new MutationObserver(scan);
+    obs.observe(editorRoot, { childList: true, subtree: true });
+  }
+
   function buildForm(container, docPath, data) {
     var isNew = data.isNew;
     document.getElementById("page-title").textContent =
@@ -506,6 +648,7 @@ window.WikiPages = window.WikiPages || {};
     // previously-live bug (flowchart diagrams silently breaking) this
     // also fixes as a side effect.
     window.WikiMermaidEditorPreview.watchPreviewVisibility();
+    watchCodeBlockLanguageInputs(document.getElementById("editor"));
 
     // Re-fit on viewport resize (window resize, or a mobile browser's
     // address bar showing/hiding changing innerHeight) -- debounced since

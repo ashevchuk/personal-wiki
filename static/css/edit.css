@@ -154,6 +154,13 @@
 .typeahead-menu[hidden] {
   display: none;
 }
+/* Toast UI's own language editor (.toastui-editor-ww-code-block-language)
+   is z-index 30. This dropdown hangs below that input and has to paint
+   above it — the Type/Tags menu stays at 20, it never shares the screen
+   with this one. */
+.codeblock-lang-menu {
+  z-index: 31;
+}
 .typeahead-option {
   display: flex;
   justify-content: space-between;
