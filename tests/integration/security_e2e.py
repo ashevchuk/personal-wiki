@@ -469,6 +469,101 @@ def run_checks(sandbox, vault):
           ("notes/graph-pub-source.md", "notes/graph-priv-target.md") in admin_edges,
           f"edges={admin_edges}")
 
+    # --- 6c2. GET /api/graph?around= (server-side 1-hop neighborhood) --
+    # PathGuard + fail-safe-private, hops server-fixed at 1, exact bind
+    # (not LIKE). Same 404-not-403 as GET /api/documents for private/
+    # missing/traversal, and an edge still requires BOTH ends visible.
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/around-center.md", "title": "Around Center", "tags": [],
+         "visibility": "public", "type": "note",
+         "body": "Links to [[notes/around-pub]] and [[notes/around-priv]]."},
+        headers={"X-CSRF-Token": csrf})
+    check("create around-center doc -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/around-pub.md", "title": "Around Pub", "tags": [],
+         "visibility": "public", "type": "note",
+         "body": "Links to [[notes/around-twohop]]."},
+        headers={"X-CSRF-Token": csrf})
+    check("create around-pub doc -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/around-priv.md", "title": "Around Priv", "tags": [],
+         "visibility": "private", "type": "note", "body": "private neighbor"},
+        headers={"X-CSRF-Token": csrf})
+    check("create around-priv doc -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/around-twohop.md", "title": "Around Twohop", "tags": [],
+         "visibility": "public", "type": "note", "body": "two hops from center"},
+        headers={"X-CSRF-Token": csrf})
+    check("create around-twohop doc -> 201", status == 201, f"got {status}")
+
+    around_center = "/api/graph?around=" + urllib.parse.quote(
+        "notes/around-center.md", safe="")
+    status, _, body = anon.get_json(around_center)
+    anon_around_paths = [n["path"] for n in body["nodes"]]
+    anon_around_edges = [(e["source"], e["target"]) for e in body["edges"]]
+    check("anon around=center: public neighbor present, private not leaked",
+          "notes/around-center.md" in anon_around_paths and
+          "notes/around-pub.md" in anon_around_paths and
+          "notes/around-priv.md" not in anon_around_paths,
+          f"paths={anon_around_paths}")
+    check("anon around=center: 1-hop only, two-hop public document excluded",
+          "notes/around-twohop.md" not in anon_around_paths,
+          f"paths={anon_around_paths}")
+    check("anon around=center: public edge present, private-touching edge absent",
+          ("notes/around-center.md", "notes/around-pub.md") in anon_around_edges and
+          ("notes/around-center.md", "notes/around-priv.md") not in anon_around_edges,
+          f"edges={anon_around_edges}")
+
+    # hops= from the client is ignored — still 1 hop, not a recursive walk.
+    status, _, body = anon.get_json(around_center + "&hops=99")
+    hops_paths = [n["path"] for n in body["nodes"]]
+    check("anon around=center&hops=99 still excludes the two-hop document",
+          "notes/around-twohop.md" not in hops_paths, f"paths={hops_paths}")
+
+    status, _, body = anon.get(
+        "/api/graph?around=" + urllib.parse.quote("notes/around-priv.md", safe=""))
+    check("anon around=private -> 404, not 403",
+          status == 404, f"got {status}")
+    check("anon around=private 404 body does not leak the path",
+          b"around-priv" not in body, f"body={body[:200]!r}")
+
+    status, _, body = admin.get_json(
+        "/api/graph?around=" + urllib.parse.quote("notes/around-priv.md", safe=""))
+    admin_priv_paths = [n["path"] for n in body["nodes"]]
+    admin_priv_edges = [(e["source"], e["target"]) for e in body["edges"]]
+    check("admin around=private: center and its public source are present",
+          "notes/around-priv.md" in admin_priv_paths and
+          "notes/around-center.md" in admin_priv_paths, f"paths={admin_priv_paths}")
+    check("admin around=private: the inbound edge is present",
+          ("notes/around-center.md", "notes/around-priv.md") in admin_priv_edges,
+          f"edges={admin_priv_edges}")
+
+    status, _, body = anon.get(
+        "/api/graph?around=" + urllib.parse.quote("../../../etc/passwd"))
+    check("around= path traversal -> 404, passwd contents not leaked",
+          status == 404 and b"root:" not in body, f"got {status} body={body[:200]!r}")
+    check("around= path traversal 404 body does not echo the payload",
+          b"passwd" not in body and b"etc" not in body, f"body={body[:200]!r}")
+
+    # A LIKE-wildcard around= must be an exact miss (404), not a dump of
+    # every document whose path happens to match.
+    status, _, body = anon.get("/api/graph?around=" + urllib.parse.quote("%"))
+    check("around=% is a literal miss, not a LIKE pattern",
+          status == 404, f"got {status}")
+
+    injection = "x'; DROP TABLE documents; --"
+    status, _, _ = anon.get("/api/graph?around=" + urllib.parse.quote(injection))
+    check("around= SQL-injection-shaped path is a 404, not a 500",
+          status == 404, f"got {status}")
+    status, _, body = admin.get_json("/api/graph")
+    check("around= injection attempt did not drop the documents table",
+          status == 200 and "notes/around-center.md" in [n["path"] for n in body["nodes"]],
+          f"status={status} nodes={len(body.get('nodes', [])) if isinstance(body, dict) else 'n/a'}")
+
     # --- 7. Attachments: visibility follows the OWNING document --------
     # No extension policy on upload anymore (see AttachmentService) — an
     # extension that would have been rejected before (.exe) now succeeds;

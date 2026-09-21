@@ -2,6 +2,7 @@
 
 #include "index/Database.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -19,22 +20,18 @@ struct GraphEdge {
   std::string target;
 };
 
-// Backs both the full graph page and the per-document local graph
-// widget — the local view is computed CLIENT-SIDE (fetch the whole
-// graph once, filter to N hops of the current document in JS) rather
-// than a second server-side query, deliberately: at this app's actual
-// scale (a personal vault, tens of documents, never the thousands a
-// generic PKM tool has to plan for), the whole graph is cheap enough to
-// send every time, and a second BFS-shaped query would be real
-// complexity paid for a saving that doesn't matter yet. Revisit if a
-// real vault ever gets big enough for this to actually cost something.
-//
-// Same fail-safe-private visibility gating as NavQueries throughout:
-// includePrivate is the caller's own session state, never anything a
-// document's content can influence. An edge is only included when BOTH
-// endpoints are visible to this caller — a private document must not
-// leak its existence via an edge pointing at (or from) it, even toward
-// a public document on the other end.
+struct GraphNeighborhood {
+  std::vector<GraphNode> nodes;
+  std::vector<GraphEdge> edges;
+};
+
+// Backs both the full graph page (`nodes`/`edges`) and the per-document
+// local graph widget (`around`). Same fail-safe-private visibility
+// gating as NavQueries throughout: includePrivate is the caller's own
+// session state, never anything a document's content can influence. An
+// edge is only included when BOTH endpoints are visible to this caller
+// — a private document must not leak its existence via an edge pointing
+// at (or from) it, even toward a public document on the other end.
 class GraphQueries {
  public:
   explicit GraphQueries(Database& db) : db_(db) {}
@@ -51,6 +48,19 @@ class GraphQueries {
   // not a bug: Obsidian's own graph view draws a distinct "unresolved"
   // node for exactly this case, which this app doesn't attempt yet.
   std::vector<GraphEdge> edges(bool includePrivate) const;
+
+  // 1-hop neighborhood of `centerPath` (the document itself plus every
+  // visible document that shares a visible edge with it). std::nullopt
+  // if that path is not a document visible to this caller — missing and
+  // private-to-anon are the same result, so the HTTP handler can map
+  // both to 404 without distinguishing them. An isolated but visible
+  // document returns a neighborhood of just itself (empty edges).
+  //
+  // Hop count is server-fixed at 1: this is a single bound join, not a
+  // recursive CTE, and GraphRoutes ignores any client `hops=` query
+  // param rather than threading it through here.
+  std::optional<GraphNeighborhood> around(const std::string& centerPath,
+                                          bool includePrivate) const;
 
  private:
   Database& db_;

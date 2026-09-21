@@ -812,18 +812,44 @@ a.btn:focus {
   min-height: 0;
   min-width: 0;
 }
-.graph-svg {
+.graph-svg,
+.graph-canvas,
+.graph-surface {
   width: 100%;
   height: auto;
   display: block;
   cursor: grab;
-  /* Pan/zoom are handled on the SVG itself -- without this a finger
+  /* Pan/zoom are handled on the surface itself -- without this a finger
      drag (or a wheel over the local-graph widget) scrolls the page
      instead. */
   touch-action: none;
 }
-.graph-svg.is-panning {
+.graph-surface {
+  position: relative;
+}
+.graph-surface .graph-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.graph-canvas-labels {
+  pointer-events: none;
+}
+.graph-svg.is-panning,
+.graph-canvas.is-panning,
+.graph-surface.is-panning {
   cursor: grabbing;
+}
+.graph-sr-links {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
 }
 .graph-nodes a {
   cursor: pointer;
@@ -833,12 +859,20 @@ a.btn:focus {
    the flex leftover 1:1, otherwise the simulation runs in the right
    coordinate space and then CSS letterboxes it back into a short strip. */
 .content--graph .graph-svg,
-.local-graph-rail.is-open .graph-svg {
+.content--graph .graph-canvas,
+.content--graph .graph-surface,
+.local-graph-rail.is-open .graph-svg,
+.local-graph-rail.is-open .graph-canvas,
+.local-graph-rail.is-open .graph-surface {
   height: 100%;
 }
+/* --border is a 0.35-alpha hairline for chrome; as a graph link over
+   black it vanished (found live on /graph). --fg-dim is the same
+   secondary green labels already use, so edges read as structure
+   without competing with node rings (--link). */
 .graph-edge {
-  stroke: var(--border);
-  stroke-width: 1;
+  stroke: var(--fg-dim);
+  stroke-width: 1.5;
 }
 .graph-node {
   fill: var(--panel-bg);
@@ -962,7 +996,9 @@ a.btn:focus {
     height: auto;
     overflow: visible;
   }
-  .content--graph .graph-svg {
+  .content--graph .graph-svg,
+  .content--graph .graph-canvas,
+  .content--graph .graph-surface {
     height: 60vh;
   }
   /* Stacked layout has no side-by-side width to negotiate — dragging
@@ -1404,7 +1440,9 @@ h6:hover > .zoom-btn {
     height: auto;
     overflow: visible;
   }
-  .content--graph .graph-svg {
+  .content--graph .graph-svg,
+  .content--graph .graph-canvas,
+  .content--graph .graph-surface {
     height: auto;
   }
 

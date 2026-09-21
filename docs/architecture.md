@@ -1376,14 +1376,15 @@ placeholder node for it — a deliberate v1 scope decision (Obsidian's own
 graph view draws a distinct "unresolved" node for this case, which this
 app doesn't attempt yet), not a bug.
 
-**Local graph is NOT a second server-side query.** It's the exact same
-`/api/graph` payload, filtered client-side to N hops of the current
-document (`WikiGraphRender.neighborsOf`) before layout. A dedicated
-BFS-shaped backend query would be real, structurally more complex code
-paid for a cost saving that doesn't matter yet at this app's actual
-scale — the whole graph is cheap enough to send on every document view.
-Revisit if a real vault ever gets big enough for this to genuinely cost
-something; nothing about the current design blocks adding that later.
+**Local graph is a second, filtered query.** `GET /api/graph?around={path}`
+returns the 1-hop neighborhood of that document (the document itself plus
+every visible document that shares a visible edge with it). `around=` is
+untrusted caller input: PathGuard first (same 404 as GET `/api/documents`
+for a traversal/`filesystem_error`), then an exact bound path lookup,
+never LIKE. Missing and private-to-anon are the same 404 — existence of
+private content is not revealed. Hop count is server-fixed at 1;
+a client `hops=` query param is ignored. The full `GET /api/graph` (no
+`around=`) is unchanged and still backs the dedicated graph page.
 
 **Rendering is a from-scratch force-directed layout**
 (`static/js/graph-render.js`), not a vendored physics library like
@@ -1401,13 +1402,20 @@ it's small, vendor when it's genuinely complex" split this app already
 applies elsewhere (query-block.js/section-zoom.js vs. mermaid.js/
 Prism.js).
 
-Output is real SVG built via `createElementNS` + DOM properties
-throughout — never `innerHTML`/string concatenation — so a document
+Output is painted by a capability ladder in `graph-render.js`:
+WebGL, then canvas 2D, then SVG-in-the-DOM. Each rung is probed with a
+real `getContext` (and for WebGL, a shader compile), not "does
+`WebGLRenderingContext` exist" — that constructor can be present while
+context creation fails. Layout is still the CPU O(n²) simulation above;
+this chain is only the draw. SVG remains the last fallback because
+nodes are real `<a href="/d/...">` (ordinary navigation, no client-side
+router — this app already does a full page reload on every navigation)
+built via `createElementNS` + DOM properties throughout, so a document
 title reaches the page as inert text with no manual escaping needed
 (unlike `query-block.js`'s HTML-string rendering, which genuinely does
-need `WikiCommon.escapeHtml`). Each node is a real `<a href="/d/...">`,
-so clicking one is an ordinary navigation, no client-side routing
-needed — this app already does a full page reload on every navigation.
+need `WikiCommon.escapeHtml`). Canvas/WebGL hit-test in JS and navigate
+the same URLs; a visually-hidden `<nav>` of the same links keeps
+keyboard access when the paint is a bitmap.
 
 **Two places this shows up**: a new `/graph` page (the whole vault,
 wired into the sidebar) and a "Local graph" widget on the document view

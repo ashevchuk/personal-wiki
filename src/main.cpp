@@ -483,7 +483,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
   wikicore::controllers::registerNavRoutes(drogon::app(), navQueries);
   wikicore::controllers::registerQueryRoutes(drogon::app(), queryBlocks);
-  wikicore::controllers::registerGraphRoutes(drogon::app(), graphQueries);
+  wikicore::controllers::registerGraphRoutes(drogon::app(), graphQueries, vault);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog,
                                               remoteMcpConfig, cfg.vaultPath, db,
                                               embeddingProvider.get(), rescanProgress);

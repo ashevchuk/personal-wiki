@@ -12,10 +12,9 @@ window.WikiPages = window.WikiPages || {};
 
   // Local graph: this document plus its 1-hop [[wiki-link]] neighbors,
   // rendered the same way the full graph page does (see graph-render.js).
-  // Fetches the SAME /api/graph payload the full graph page uses and
-  // filters client-side (WikiGraphRender.neighborsOf) rather than a
-  // dedicated server-side query — see GraphQueries.h's own comment on
-  // why that split isn't worth it at this app's real scale.
+  // Fetches GET /api/graph?around= this document's path — a server-side
+  // 1-hop neighborhood (PathGuard + fail-safe-private, hops not client-
+  // controlled), not a client-side filter over the full graph payload.
   //
   // Lives in a right-edge rail, NOT in the document flow: a 500×320
   // widget under the markdown sat in empty space after the last
@@ -125,15 +124,16 @@ window.WikiPages = window.WikiPages || {};
   }
 
   function renderLocalGraph(docPath) {
-    fetch(basePath() + "/api/graph", { credentials: "same-origin" })
+    fetch(basePath() + "/api/graph?around=" + encodeURIComponent(docPath), {
+      credentials: "same-origin",
+    })
       .then(function (resp) {
         if (!resp.ok) throw new Error("HTTP " + resp.status);
         return resp.json();
       })
       .then(function (data) {
-        var local = window.WikiGraphRender.neighborsOf(docPath, data.nodes, data.edges, 1);
-        if (local.nodes.length <= 1) return;  // just this document, no real neighbors
-        mountLocalGraphRail(docPath, local);
+        if (!data.nodes || data.nodes.length <= 1) return;  // just this document, no real neighbors
+        mountLocalGraphRail(docPath, data);
       })
       .catch(function () {
         // A failed local-graph fetch is cosmetic, not core page content

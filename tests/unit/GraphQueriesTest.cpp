@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <optional>
 
 namespace fs = std::filesystem;
 using namespace wikicore::index;
@@ -45,6 +46,13 @@ bool hasEdge(const std::vector<GraphEdge>& edges, const std::string& source,
              const std::string& target) {
   for (const auto& e : edges) {
     if (e.source == source && e.target == target) return true;
+  }
+  return false;
+}
+
+bool hasNode(const std::vector<GraphNode>& nodes, const std::string& path) {
+  for (const auto& n : nodes) {
+    if (n.path == path) return true;
   }
   return false;
 }
@@ -131,4 +139,115 @@ TEST_CASE("GraphQueries::edges re-derives from a document's CURRENT body on "
 
   updater.upsertOne(makeEntry("a.md", "public", "no link anymore"));
   REQUIRE(graph.edges(true).empty());
+}
+
+TEST_CASE("GraphQueries::around returns nullopt for a missing document",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public"));
+
+  GraphQueries graph(database);
+  REQUIRE_FALSE(graph.around("missing.md", true).has_value());
+  REQUIRE_FALSE(graph.around("missing.md", false).has_value());
+}
+
+TEST_CASE("GraphQueries::around returns nullopt for a private center to an "
+          "anonymous caller, the same as a miss",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("priv.md", "private", "See [[pub.md]]."));
+  updater.upsertOne(makeEntry("pub.md", "public"));
+
+  GraphQueries graph(database);
+  REQUIRE_FALSE(graph.around("priv.md", false).has_value());
+
+  auto admin = graph.around("priv.md", true);
+  REQUIRE(admin.has_value());
+  REQUIRE(hasNode(admin->nodes, "priv.md"));
+  REQUIRE(hasNode(admin->nodes, "pub.md"));
+  REQUIRE(hasEdge(admin->edges, "priv.md", "pub.md"));
+}
+
+TEST_CASE("GraphQueries::around never leaks a private neighbor to an "
+          "anonymous caller, from either end of the edge",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("pub-source.md", "public", "See [[priv-target]]."));
+  updater.upsertOne(makeEntry("priv-target.md", "private"));
+  updater.upsertOne(makeEntry("priv-source.md", "private", "See [[pub-target]]."));
+  updater.upsertOne(makeEntry("pub-target.md", "public"));
+
+  GraphQueries graph(database);
+
+  auto fromPub = graph.around("pub-source.md", false);
+  REQUIRE(fromPub.has_value());
+  REQUIRE(fromPub->nodes.size() == 1);
+  REQUIRE(hasNode(fromPub->nodes, "pub-source.md"));
+  REQUIRE_FALSE(hasNode(fromPub->nodes, "priv-target.md"));
+  REQUIRE(fromPub->edges.empty());
+
+  auto fromPubAdmin = graph.around("pub-source.md", true);
+  REQUIRE(fromPubAdmin.has_value());
+  REQUIRE(hasNode(fromPubAdmin->nodes, "priv-target.md"));
+  REQUIRE(hasEdge(fromPubAdmin->edges, "pub-source.md", "priv-target.md"));
+}
+
+TEST_CASE("GraphQueries::around is 1-hop, not a recursive walk",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", "See [[b]]."));
+  updater.upsertOne(makeEntry("b.md", "public", "See [[c]]."));
+  updater.upsertOne(makeEntry("c.md", "public"));
+
+  GraphQueries graph(database);
+  auto nb = graph.around("a.md", true);
+  REQUIRE(nb.has_value());
+  REQUIRE(nb->nodes.size() == 2);
+  REQUIRE(hasNode(nb->nodes, "a.md"));
+  REQUIRE(hasNode(nb->nodes, "b.md"));
+  REQUIRE_FALSE(hasNode(nb->nodes, "c.md"));
+  REQUIRE(hasEdge(nb->edges, "a.md", "b.md"));
+  REQUIRE_FALSE(hasEdge(nb->edges, "b.md", "c.md"));
+}
+
+TEST_CASE("GraphQueries::around of an isolated visible document is just itself",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("alone.md", "public"));
+
+  GraphQueries graph(database);
+  auto nb = graph.around("alone.md", false);
+  REQUIRE(nb.has_value());
+  REQUIRE(nb->nodes.size() == 1);
+  REQUIRE(hasNode(nb->nodes, "alone.md"));
+  REQUIRE(nb->edges.empty());
+}
+
+TEST_CASE("GraphQueries::around treats a LIKE-wildcard path as a literal miss, "
+          "not a pattern",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public"));
+
+  GraphQueries graph(database);
+  REQUIRE_FALSE(graph.around("%", true).has_value());
+  REQUIRE_FALSE(graph.around("_.md", true).has_value());
 }
