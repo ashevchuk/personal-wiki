@@ -81,16 +81,20 @@
     WikiCommon.fetchSession().then(function (session) {
       wireSidebarAuthChrome(session);
 
-      if (path === "/") {
-        window.location.href = basePath() + "/search";
+      // Bare mount root ("/", "/wiki", "/wiki/") is the search page,
+      // same renderer as /search — not a location.href bounce. Found
+      // live: Home (sidebar brand + breadcrumbs) hrefs to "/", so Back
+      // landed on a shell that had only painted "Loading…" then assigned
+      // location.href = .../search. That incomplete document stayed in
+      // history / bfcache; restoring it never re-ran this script.
+      // Rendering in place means "/" is a finished page; /search stays
+      // as the explicit bookmarkable URL, no extra history entry.
+      if (path === "/" || path === "/search" || path === "/search/") {
+        pages.renderSearch(content, session);
         return;
       }
       if (path === "/login" || path === "/login/") {
         pages.renderLogin(content, session);
-        return;
-      }
-      if (path === "/search" || path === "/search/") {
-        pages.renderSearch(content, session);
         return;
       }
       if (path === "/folder" || path === "/folder/") {

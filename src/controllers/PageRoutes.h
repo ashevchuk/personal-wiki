@@ -10,11 +10,13 @@ namespace wikicore::controllers {
 // /folder[/...], /d/{path...}, /edit/{path...}, /account) — each one returns the
 // EXACT SAME rendered shell (static/shell.html, verbatim unless
 // cfg.basePath is set — see shellResponse() below), regardless of the
-// specific path or any request data. This is the standard client-rendered
-// app fallback: the browser's own JS (static/js/router.js) inspects
-// location.pathname and renders the actual page from JSON fetched off the
-// /api/* routes. Nothing here builds HTML from a request — see
-// docs/architecture.md's frontend section for why that split exists.
+// specific path or any request data. `/` is the search page in the
+// client router (static/js/router.js), not a bounce to `/search`. This
+// is the standard client-rendered app fallback: the browser's own JS
+// (static/js/router.js) inspects location.pathname and renders the actual
+// page from JSON fetched off the /api/* routes. Nothing here builds HTML
+// from a request — see docs/architecture.md's frontend section for why
+// that split exists.
 //
 // Drogon's own static-file serving (setDocumentRoot) can't cover these:
 // it only serves a request whose URI literally matches a file under

@@ -376,10 +376,10 @@ For a cross-compiled deployment, "install" means: rebuild `build-arm`, re-verify
   fixed for Drogon's own upload-buffer path (see "systemd" above); if this shows up
   again for a different path, either add it to `ReadWritePaths=` in the unit or, if
   it's app-generated, redirect it into the vault path the way `.uploads-tmp` already is.
-- **`GET /` (or the subpath-prefixed equivalent) returns a 404** — expected if there's
-  no request-matching route (no dedicated homepage view exists; the client-side router
-  redirects bare `/` to `/search`). Confirm `/healthz` and `/search` both return `200`
-  before suspecting anything is actually broken.
+- **`GET /` (or the subpath-prefixed equivalent) returns a 404** — unexpected:
+  PageRoutes registers `/` as the same shell as `/search`, and the client-side
+  router renders search in place there (no bounce). Confirm `/healthz` and
+  `/search` both return `200` before suspecting anything is actually broken.
 - **CSS/JS 404 or the login form posts to the wrong path when reverse-proxied under a
   subpath** — set `[server].base_path` (see "Under a subpath of an existing site"
   above) and restart; that closes this permanently. Without it, an unmatched path
