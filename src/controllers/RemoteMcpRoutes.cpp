@@ -2,9 +2,14 @@
 
 #include "auth/ClientIp.h"
 #include "core/wikicore.h"
+#include "util/Base64.h"
+#include "vault/AttachToDocument.h"
+#include "vault/McpUploadStaging.h"
 
 #include <drogon/HttpResponse.h>
+#include <drogon/MultiPart.h>
 
+#include <cctype>
 #include <filesystem>
 #include <string_view>
 
@@ -175,6 +180,40 @@ Json::Value buildToolsList(bool writeEnabled) {
           "value -- this is a partial update, not a full replace.",
           props, {"path"}));
     }
+    {
+      Json::Value props;
+      props["path"] = stringParam("Vault-relative path of the owning document");
+      props["filename"] =
+          stringParam("Stored filename including extension (defaults to source basename)");
+      props["source_path"] = stringParam(
+          "Host filesystem path to copy (stdio wiki-mcp only; rejected here)");
+      props["content_base64"] = stringParam("Small file bytes, base64-encoded");
+      tools.append(toolSchema(
+          "attach_file",
+          "Attach a file to an existing document and append a markdown link. "
+          "On this HTTP transport, pass content_base64 for small files. "
+          "For a large file (a 120 MB PDF) call attach_file_begin, then HTTP "
+          "PUT the raw bytes to /mcp/uploads/{upload_id} on the same host "
+          "(the id is a capability URL — no Bearer token on that PUT). "
+          "source_path is rejected here. The owning document must already "
+          "exist.",
+          props, {"path"}));
+    }
+    {
+      Json::Value props;
+      props["path"] = stringParam("Vault-relative path of the owning document");
+      props["filename"] = stringParam("Stored filename including extension");
+      tools.append(toolSchema(
+          "attach_file_begin",
+          "Start a large-file upload to an existing document. Returns an "
+          "upload_id. Then PUT the raw file bytes (or POST multipart field "
+          "'file') to /mcp/uploads/{upload_id} on the same origin as this "
+          "MCP endpoint. That request does not need the Bearer token — "
+          "knowing the id is enough. The file is attached and linked when "
+          "the PUT completes. Prefer this over content_base64 for anything "
+          "bigger than a screenshot.",
+          props, {"path", "filename"}));
+    }
   }
 
   Json::Value result;
@@ -335,7 +374,7 @@ Json::Value handleListDocuments(FtsSearch& search, const Json::Value& args) {
 }
 
 // `source` is "remote:" -- prefixed distinctly from the stdio server's
-// plain "create_document"/"update_document" tool_name values in the SAME
+// plain "create_document"/"update_document"/"attach_file" tool_name values in the SAME
 // mcp_audit_log table, so an admin reviewing it can tell local-stdio and
 // remote-HTTP writes apart at a glance without a schema change (a
 // `source` column would need its own migration; this needs none).
@@ -428,16 +467,134 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
   }
 }
 
+// content_base64 is the in-memory path for small files. Large files on
+// this HTTP transport cannot use source_path (that would read arbitrary
+// files off the wiki host) — call attach_file_begin, then PUT the raw
+// bytes to /mcp/uploads/{id}. Stdio wiki-mcp still uses source_path.
+constexpr size_t kMaxEncodedAttachmentBytes = 36ull * 1024 * 1024;
+
+Json::Value handleAttachFile(DocumentService& documents, AttachmentService& attachments,
+                              McpAuditLog& auditLog, const Json::Value& args) {
+  if (!args.isMember("path") || !args["path"].isString() || args["path"].asString().empty()) {
+    return toolTextResult("missing 'path'", true);
+  }
+  const std::string path = args["path"].asString();
+  const bool hasSource = args.isMember("source_path") && args["source_path"].isString() &&
+                          !args["source_path"].asString().empty();
+  const bool hasB64 = args.isMember("content_base64") && args["content_base64"].isString();
+  if (hasSource) {
+    auditLog.record("remote:attach_file", path, false,
+                     "source_path is not available on remote MCP");
+    return toolTextResult(
+        "source_path is only available on local stdio wiki-mcp; copying a "
+        "path on this HTTP server would read arbitrary host files. For a "
+        "small file pass content_base64; for a large file call "
+        "attach_file_begin, then PUT the bytes to /mcp/uploads/{upload_id}.",
+        true);
+  }
+  if (!hasB64) {
+    return toolTextResult("missing 'content_base64'", true);
+  }
+  std::string filename = args.get("filename", "").asString();
+  if (filename.empty()) {
+    return toolTextResult("missing 'filename'", true);
+  }
+  const std::string raw = args["content_base64"].asString();
+  if (raw.size() > kMaxEncodedAttachmentBytes) {
+    auditLog.record("remote:attach_file", path, false,
+                     "content_base64 is too large; use attach_file_begin");
+    return toolTextResult(
+        "content_base64 is too large for this JSON transport; call "
+        "attach_file_begin and PUT the raw bytes to /mcp/uploads/{upload_id}",
+        true);
+  }
+  const auto decoded = wikicore::util::decodeBase64(wikicore::util::stripDataUrlPrefix(raw));
+  if (!decoded) {
+    auditLog.record("remote:attach_file", path, false, "invalid base64");
+    return toolTextResult("invalid base64", true);
+  }
+
+  try {
+    const auto attached =
+        attachFileAndLink(documents, attachments, path, filename, *decoded);
+    auditLog.record("remote:attach_file", path, true, attached.info.relativePath);
+    return toolTextResult("Attached " + attached.info.relativePath + " (" +
+                          std::to_string(attached.info.size) + " bytes, " +
+                          attached.info.mimeType + ")\nInserted markdown: " +
+                          attached.markdownLink);
+  } catch (const DocumentNotFoundError&) {
+    auditLog.record("remote:attach_file", path, false, "document not found");
+    return toolTextResult("document not found: " + path, true);
+  } catch (const AttachmentRejectedError& e) {
+    auditLog.record("remote:attach_file", path, false, e.what());
+    return toolTextResult(e.what(), true);
+  } catch (const PathTraversalError&) {
+    auditLog.record("remote:attach_file", path, false, "path traversal rejected");
+    return toolTextResult("invalid path", true);
+  } catch (const std::filesystem::filesystem_error& e) {
+    auditLog.record("remote:attach_file", path, false, e.what());
+    return toolTextResult("invalid path", true);
+  } catch (const std::exception& e) {
+    auditLog.record("remote:attach_file", path, false, e.what());
+    return toolTextResult(e.what(), true);
+  }
+}
+
+Json::Value handleAttachFileBegin(DocumentService& documents, McpUploadStaging& staging,
+                                   McpAuditLog& auditLog, const Json::Value& args) {
+  if (!args.isMember("path") || !args["path"].isString() || args["path"].asString().empty()) {
+    return toolTextResult("missing 'path'", true);
+  }
+  if (!args.isMember("filename") || !args["filename"].isString() ||
+      args["filename"].asString().empty()) {
+    return toolTextResult("missing 'filename'", true);
+  }
+  const std::string path = args["path"].asString();
+  const std::string filename = args["filename"].asString();
+  try {
+    (void)documents.get(path);  // must exist, same as attach_file
+    const std::string id = staging.begin(path, filename);
+    auditLog.record("remote:attach_file_begin", path, true, id);
+    std::string msg;
+    msg += "upload_id: ";
+    msg += id;
+    msg += "\nPUT the raw file bytes to /mcp/uploads/";
+    msg += id;
+    msg += " (same host and URL prefix as this MCP endpoint; "
+           "if MCP is at https://example/wiki/mcp, PUT "
+           "https://example/wiki/mcp/uploads/";
+    msg += id;
+    msg += "). No Authorization header on that PUT — the upload_id is the "
+           "capability secret. Multipart POST with field name 'file' also "
+           "works. The document is updated with a markdown link when the "
+           "upload completes. Ticket expires in 1 hour.";
+    return toolTextResult(msg);
+  } catch (const DocumentNotFoundError&) {
+    auditLog.record("remote:attach_file_begin", path, false, "document not found");
+    return toolTextResult("document not found: " + path, true);
+  } catch (const PathTraversalError&) {
+    auditLog.record("remote:attach_file_begin", path, false, "path traversal rejected");
+    return toolTextResult("invalid path", true);
+  } catch (const std::filesystem::filesystem_error& e) {
+    auditLog.record("remote:attach_file_begin", path, false, e.what());
+    return toolTextResult("invalid path", true);
+  } catch (const std::exception& e) {
+    auditLog.record("remote:attach_file_begin", path, false, e.what());
+    return toolTextResult(e.what(), true);
+  }
+}
+
 }  // namespace
 
 void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfig,
                               RateLimiter& rateLimiter, FtsSearch& search, NavQueries& nav,
                               IndexUpdater& indexUpdater, DocumentService& documents,
+                              AttachmentService& attachments, McpUploadStaging& mcpUploads,
                               McpAuditLog& auditLog) {
   app.registerHandler(
       "/mcp",
-      [&remoteConfig, &rateLimiter, &search, &nav, &indexUpdater, &documents,
-       &auditLog](const HttpRequestPtr& req,
+      [&remoteConfig, &rateLimiter, &search, &nav, &indexUpdater, &documents, &attachments,
+       &mcpUploads, &auditLog](const HttpRequestPtr& req,
                    std::function<void(const HttpResponsePtr&)>&& callback) {
         // Feature off -> plain 404, indistinguishable from "this route
         // never existed" (see this file's own header comment on why:
@@ -563,6 +720,14 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
             result = settings.writeEnabled
                          ? handleUpdateDocument(documents, auditLog, args)
                          : toolTextResult("write access is disabled for remote MCP", true);
+          } else if (toolName == "attach_file") {
+            result = settings.writeEnabled
+                         ? handleAttachFile(documents, attachments, auditLog, args)
+                         : toolTextResult("write access is disabled for remote MCP", true);
+          } else if (toolName == "attach_file_begin") {
+            result = settings.writeEnabled
+                         ? handleAttachFileBegin(documents, mcpUploads, auditLog, args)
+                         : toolTextResult("write access is disabled for remote MCP", true);
           } else {
             callback(HttpResponse::newHttpJsonResponse(
                 jsonRpcError(id, -32602, "Tool not found: " + toolName)));
@@ -576,6 +741,142 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
             jsonRpcError(id, -32601, "Method not found: " + method)));
       },
       {Post});
+
+  // PUT/POST /mcp/uploads/{uuid} — the follow-up to attach_file_begin.
+  // Knowing the UUID is the capability (no Bearer). Same enabled / IP
+  // allowlist / writeEnabled gates as POST /mcp; the token stays off this
+  // path so an agent can `curl -T file.pdf` without pasting it.
+  app.registerHandlerViaRegex(
+      "^/mcp/uploads/([0-9a-fA-F-]{36})$",
+      [&remoteConfig, &rateLimiter, &documents, &attachments, &mcpUploads, &auditLog](
+          const HttpRequestPtr& req,
+          std::function<void(const HttpResponsePtr&)>&& callback,
+          const std::string& uploadId) {
+        const RemoteMcpSettings settings = remoteConfig.get();
+        if (!settings.enabled) {
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k404NotFound);
+          callback(resp);
+          return;
+        }
+
+        const std::string ip = clientIp(req);
+        if (!rateLimiter.allow(ip)) {
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k429TooManyRequests);
+          callback(resp);
+          return;
+        }
+
+        if (!remoteConfig.isIpAllowed(ip)) {
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k403Forbidden);
+          callback(resp);
+          return;
+        }
+
+        if (!settings.writeEnabled) {
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k403Forbidden);
+          callback(resp);
+          return;
+        }
+
+        const auto ticket = mcpUploads.get(uploadId);
+        if (!ticket) {
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k404NotFound);
+          callback(resp);
+          return;
+        }
+
+        std::string bytes;
+        std::string filename = ticket->filename;
+        std::string ct = req->getHeader("content-type");
+        for (char& c : ct) {
+          c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (req->contentType() == CT_MULTIPART_FORM_DATA ||
+            ct.find("multipart/form-data") != std::string::npos) {
+          MultiPartParser parser;
+          if (parser.parse(req) != 0 || parser.getFiles().empty()) {
+            Json::Value err;
+            err["error"] = "expected exactly one uploaded file";
+            auto resp = HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(k400BadRequest);
+            callback(resp);
+            return;
+          }
+          const auto& file = parser.getFiles()[0];
+          bytes.assign(file.fileContent().data(), file.fileContent().size());
+          if (!file.getFileName().empty()) filename = file.getFileName();
+        } else {
+          const auto body = req->body();
+          bytes.assign(body.data(), body.size());
+        }
+        if (bytes.empty()) {
+          Json::Value err;
+          err["error"] = "empty upload";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+
+        try {
+          const auto attached = attachFileAndLink(documents, attachments,
+                                                   ticket->documentPath, filename, bytes);
+          mcpUploads.remove(uploadId);
+          auditLog.record("remote:attach_file", ticket->documentPath, true,
+                           attached.info.relativePath);
+          Json::Value body;
+          body["path"] = attached.info.relativePath;
+          body["mimeType"] = attached.info.mimeType;
+          body["size"] = static_cast<Json::UInt64>(attached.info.size);
+          body["markdownLink"] = attached.markdownLink;
+          auto resp = HttpResponse::newHttpJsonResponse(body);
+          resp->setStatusCode(k201Created);
+          callback(resp);
+        } catch (const DocumentNotFoundError&) {
+          auditLog.record("remote:attach_file", ticket->documentPath, false,
+                           "document not found");
+          Json::Value err;
+          err["error"] = "owning document not found";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k404NotFound);
+          callback(resp);
+        } catch (const AttachmentRejectedError& e) {
+          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what());
+          Json::Value err;
+          err["error"] = e.what();
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+        } catch (const PathTraversalError&) {
+          auditLog.record("remote:attach_file", ticket->documentPath, false,
+                           "path traversal rejected");
+          Json::Value err;
+          err["error"] = "invalid path";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+        } catch (const std::filesystem::filesystem_error& e) {
+          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what());
+          Json::Value err;
+          err["error"] = "invalid path";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+        } catch (const std::exception& e) {
+          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what());
+          Json::Value err;
+          err["error"] = e.what();
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k500InternalServerError);
+          callback(resp);
+        }
+      },
+      {Put, Post});
 }
 
 }  // namespace wikicore::controllers

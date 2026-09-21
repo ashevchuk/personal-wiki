@@ -23,7 +23,8 @@ struct BackupResult {
 // shutdown). Excludes `.uploads-tmp/` — Drogon's own multipart-upload
 // staging buffer (see main.cpp's setUploadPath comment), 256 pre-created
 // empty sharded subdirectories that hold nothing but transient upload
-// fragments mid-flight, never a real document; pure noise in a backup.
+// fragments mid-flight, never a real document; also excludes
+// `.mcp-uploads/` (remote-MCP large-file tickets, equally transient).
 //
 // Deliberately shells out to the system `tar` binary via fork()+execlp()
 // — NEVER system()/popen(), which run the command through /bin/sh and

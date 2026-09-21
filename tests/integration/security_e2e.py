@@ -27,6 +27,7 @@ Usage: security_e2e.py <path-to-wiki-server-binary>
 import http.client
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -239,6 +240,8 @@ def run_checks(sandbox, vault):
     check("anon delete -> 401", status == 401, f"got {status}")
     status, _, _ = anon.upload("/api/attachments/x.md", "a.png", b"data")
     check("anon upload -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.delete("/api/attachments/x.assets/a.png")
+    check("anon delete attachment -> 401", status == 401, f"got {status}")
     check("vault has zero .md files after anon attempts",
           not any(f.endswith(".md") for _, _, files in os.walk(vault) for f in files))
 
@@ -273,6 +276,11 @@ def run_checks(sandbox, vault):
     # allowlist) need the same "no session -> 401" as everything else.
     status, _, _ = anon.post_json("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "initialize"})
     check("anon /mcp while disabled -> 404 (not 401 -- no hint it exists)",
+          status == 404, f"got {status}")
+    status, _, _ = anon.request(
+        "PUT", "/mcp/uploads/aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        body=b"x", headers={"Content-Type": "application/octet-stream"})
+    check("anon PUT /mcp/uploads while disabled -> 404 (not 401)",
           status == 404, f"got {status}")
     status, _, _ = anon.get("/api/admin/mcp-remote-config")
     check("anon GET mcp-remote-config -> 401", status == 401, f"got {status}")
@@ -578,6 +586,114 @@ def run_checks(sandbox, vault):
     check("admin can fetch attachment of private doc", status == 200, f"got {status}")
     status, _, _ = anon.get(f"/assets/{attach_path}")
     check("anon CANNOT fetch attachment of private doc", status == 404, f"got {status}")
+
+    status, _, body = admin.get_json("/api/attachments/notes/private.md")
+    listed = [f["path"] for f in (body or {}).get("files", [])] if isinstance(body, dict) else []
+    check("admin lists attachments of private doc",
+          attach_path in listed, f"listed={listed}")
+    status, _, _ = anon.get("/api/attachments/notes/private.md")
+    check("anon list attachments of private doc -> 404 (not 403)",
+          status == 404, f"got {status}")
+    status, _, _ = admin.upload("/api/attachments/notes/private.md", "extra.bin", b"extra",
+                                headers={"X-CSRF-Token": csrf})
+    check("upload second attachment -> 201", status == 201, f"got {status}")
+    extra_path = "notes/private.assets/extra.bin"
+    status, _, _ = admin.delete(f"/api/attachments/{extra_path}")
+    check("mutating delete attachment without csrf -> 403", status == 403, f"got {status}")
+    status, _, _ = admin.delete(f"/api/attachments/{extra_path}",
+                                 headers={"X-CSRF-Token": csrf})
+    check("admin delete attachment -> 200", status == 200, f"got {status}")
+    status, _, body = admin.get_json("/api/attachments/notes/private.md")
+    listed = [f["path"] for f in (body or {}).get("files", [])] if isinstance(body, dict) else []
+    check("deleted attachment gone from list, original remains",
+          extra_path not in listed and attach_path in listed, f"listed={listed}")
+    status, _, _ = admin.delete("/api/attachments/notes/private.md",
+                                 headers={"X-CSRF-Token": csrf})
+    check("delete owning-document path as if it were an asset -> 400",
+          status == 400, f"got {status}")
+
+    # --- 7b. Remote MCP large-file upload (attach_file_begin + PUT) ------
+    # Bytes must not travel as JSON/base64 (that would blow the model
+    # context). attach_file_begin issues a UUID ticket; PUT /mcp/uploads/{id}
+    # then accepts the raw body with no Bearer — the id is the capability.
+    status, _, body = admin.post_json(
+        "/api/admin/mcp-remote-config/regenerate-token", {},
+        headers={"X-CSRF-Token": csrf})
+    check("regenerate remote MCP token -> 200", status == 200, f"got {status}")
+    mcp_token = json.loads(body).get("token")
+    check("regenerate-token returns a raw token once",
+          isinstance(mcp_token, str) and len(mcp_token) >= 32, f"got {mcp_token!r}")
+    status, _, _ = admin.put_json(
+        "/api/admin/mcp-remote-config",
+        {"enabled": True, "writeEnabled": True},
+        headers={"X-CSRF-Token": csrf})
+    check("enable remote MCP writes -> 200", status == 200, f"got {status}")
+
+    mcp_auth = {"Authorization": f"Bearer {mcp_token}"}
+    status, _, body = admin.post_json(
+        "/mcp",
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "attach_file",
+                    "arguments": {"path": "notes/private.md",
+                                  "source_path": "/etc/passwd"}}},
+        headers=mcp_auth)
+    rpc = json.loads(body) if body else {}
+    check("remote attach_file source_path is rejected (host LFI)",
+          status == 200 and rpc.get("result", {}).get("isError") is True
+          and "source_path" in rpc.get("result", {}).get("content", [{}])[0].get("text", ""),
+          f"status={status} body={body[:240]!r}")
+
+    status, _, body = admin.post_json(
+        "/mcp",
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+         "params": {"name": "attach_file_begin",
+                    "arguments": {"path": "notes/private.md",
+                                  "filename": "mcp-big.bin"}}},
+        headers=mcp_auth)
+    rpc = json.loads(body) if body else {}
+    begin_text = rpc.get("result", {}).get("content", [{}])[0].get("text", "")
+    upload_id_match = re.search(r"upload_id:\s*([0-9a-fA-F-]{36})", begin_text)
+    check("attach_file_begin returns an upload_id",
+          status == 200 and rpc.get("result", {}).get("isError") is not True
+          and upload_id_match is not None,
+          f"status={status} text={begin_text!r}")
+    upload_id = upload_id_match.group(1) if upload_id_match else ""
+
+    status, _, body = anon.request(
+        "PUT", f"/mcp/uploads/{upload_id}",
+        body=b"hello-mcp-upload",
+        headers={"Content-Type": "application/octet-stream"})
+    check("PUT raw bytes to capability URL (no Bearer) -> 201",
+          status == 201, f"got {status} body={body[:200]!r}")
+    uploaded = json.loads(body) if status == 201 and body else {}
+    check("upload JSON has path and markdownLink",
+          "path" in uploaded and "markdownLink" in uploaded, f"got {uploaded}")
+
+    status, _, body = admin.get("/api/documents/notes/private.md")
+    doc = json.loads(body) if body else {}
+    check("owning document body contains the uploaded markdown link",
+          status == 200 and uploaded.get("markdownLink", "MISSING") in doc.get("body", ""),
+          f"status={status} body={doc.get('body', '')!r}")
+    status, _, _ = anon.get(f"/assets/{uploaded.get('path', '')}")
+    check("anon cannot fetch MCP-uploaded attachment of a private doc",
+          status == 404, f"got {status}")
+
+    status, _, _ = anon.request(
+        "PUT", f"/mcp/uploads/{upload_id}",
+        body=b"replay",
+        headers={"Content-Type": "application/octet-stream"})
+    check("replay of a consumed upload_id -> 404", status == 404, f"got {status}")
+    status, _, _ = anon.request(
+        "PUT", "/mcp/uploads/00000000-0000-4000-8000-000000000000",
+        body=b"nope",
+        headers={"Content-Type": "application/octet-stream"})
+    check("PUT unknown upload id while enabled -> 404", status == 404, f"got {status}")
+
+    status, _, _ = admin.put_json(
+        "/api/admin/mcp-remote-config",
+        {"enabled": False, "writeEnabled": False},
+        headers={"X-CSRF-Token": csrf})
+    check("disable remote MCP after upload checks -> 200", status == 200, f"got {status}")
 
     # --- 8. Update, soft-delete -------------------------------------------
     status, _, _ = admin.put_json(

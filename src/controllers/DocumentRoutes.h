@@ -28,7 +28,14 @@ namespace wikicore::controllers {
 //   POST   /api/documents                - create (path in the JSON body)
 //   PUT    /api/documents/{path...}      - update
 //   DELETE /api/documents/{path...}      - soft-delete (-> .trash/)
+//   GET    /api/attachments/{path...}    - list files in the owning
+//                                           document's .assets/ folder
+//                                           (visibility-gated like GET
+//                                           /api/documents; [] if none)
 //   POST   /api/attachments/{path...}    - upload, path = owning document
+//   DELETE /api/attachments/{path...}    - delete one file; path is the
+//                                           vault-relative asset path
+//                                           (must live under .assets/)
 //   GET    /assets/{path...}             - serve an attachment, visibility-
 //                                           gated through its owning
 //                                           document

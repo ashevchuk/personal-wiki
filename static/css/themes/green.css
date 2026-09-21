@@ -572,6 +572,10 @@ label {
   accent-color: var(--fg);
   width: auto;
 }
+.edit-attachments {
+  background: var(--panel-bg-2);
+  color: var(--fg);
+}
 
 /* Same generic-`label`-is-flex-column problem as .visibility-toggle above,
    for every OTHER inline "<label><input type=checkbox> Text</label>"

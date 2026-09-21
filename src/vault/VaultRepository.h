@@ -2,8 +2,10 @@
 
 #include "vault/PathGuard.h"
 
+#include <filesystem>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace wikicore::vault {
 
@@ -31,7 +33,14 @@ class VaultRepository {
   // target (POSIX rename() is atomic within the same filesystem, which a
   // temp file in the same directory always is). Creates parent
   // directories as needed. Throws PathTraversalError / filesystem_error.
-  void writeRawAtomic(std::string_view relativePath, const std::string& content) const;
+  void writeRawAtomic(std::string_view relativePath, std::string_view content) const;
+
+  // Same atomic temp-file + rename as writeRawAtomic, but copies from an
+  // already-on-disk source (streamed by the filesystem, never held as a
+  // std::string). Used for large attachments. `source` is NOT a vault
+  // path — PathGuard only constrains the destination.
+  void copyFileAtomic(std::string_view relativePath,
+                       const std::filesystem::path& source) const;
 
   // Moves the document at `relativePath`, and its co-located
   // "<stem>.assets/" folder if one exists, to the equivalent path under
@@ -45,6 +54,17 @@ class VaultRepository {
   };
   // Throws filesystem_error if the path doesn't exist.
   [[nodiscard]] FileStat statFile(std::string_view relativePath) const;
+
+  // Regular files in a vault-relative directory (non-recursive). A
+  // missing path, or a path that isn't a directory, returns empty —
+  // listing something that isn't there is not an error. Skips dotfiles.
+  // Each entry is vault-relative (`relativeDir` + filename).
+  [[nodiscard]] std::vector<std::string> listRegularFiles(
+      std::string_view relativeDir) const;
+
+  // Removes a file (or an empty directory). Missing path is a no-op.
+  // Throws PathTraversalError if it escapes the vault.
+  void removeFile(std::string_view relativePath) const;
 
   [[nodiscard]] const PathGuard& pathGuard() const noexcept { return guard_; }
 

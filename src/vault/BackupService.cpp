@@ -69,7 +69,8 @@ BackupResult createVaultBackup(const std::string& vaultPath) {
     // mid-flight, never a document. Pure noise in a backup, and GNU tar's
     // unqualified (no-slash) --exclude pattern matches it by basename
     // wherever it appears, not just at the top level.
-    execlp("tar", "tar", "-czf", "-", "--exclude=.uploads-tmp", "-C", parentDir.c_str(),
+    execlp("tar", "tar", "-czf", "-", "--exclude=.uploads-tmp", "--exclude=.mcp-uploads",
+           "-C", parentDir.c_str(),
            dirName.c_str(), static_cast<char*>(nullptr));
     _exit(127);  // only reached if execlp itself failed
   }

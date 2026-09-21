@@ -124,9 +124,17 @@ codebase; don't relearn them by touching a `.csp` file that also no longer exist
   if present, its `<stem>.assets/` folder into `.trash/<same relative path>` —
   separately, returning an error if the document moved but the assets folder didn't
   (doesn't try to roll the document itself back).
-- **Attachments**: an extension allowlist (not a blocklist), filename sanitization
-  (`[A-Za-z0-9._-]`, everything else → `_`), a 25 MiB cap, de-duped via a short UUID
-  suffix on a name collision. `GET /assets/{path...}` resolves visibility through the
+- **Attachments**: no extension allowlist (removed; serving-side
+  `isSafeToRenderInline` is the actual safety boundary), filename sanitization
+  (`[A-Za-z0-9._-]`, everything else → `_`), **no app-level size cap** (a 120 MiB
+  PDF is a legitimate personal-wiki attachment; disk is the bound). HTTP uploads
+  are still bounded by Drogon's `setClientMaxBodySize` (2 GiB, fits 32-bit
+  `size_t` on armv7) and whatever `client_max_body_size` the reverse proxy uses
+  (nginx defaults to 1m — raise it, see `docs/deployment.md`). MCP large files
+  go through `attach_file`'s `source_path` (streamed `copy_file`, stdio only) or,
+  on remote HTTP, `attach_file_begin` then `PUT /mcp/uploads/{id}` (raw body,
+  bytes never enter the model). Not through base64. De-duped via a short UUID suffix on a name collision.
+  `GET /assets/{path...}` resolves visibility through the
   OWNING document (`<stem>.assets/` → `<stem>.md`), not via a separate flag on the file
   itself.
 
@@ -339,7 +347,7 @@ write anywhere in this feature. The diff view (`static/js/diff.js`) is a small
 hand-rolled LCS line diff, not a vendored library — the app already avoids adding a
 frontend dependency for something this contained.
 
-### MCP write access (Phase 2, local stdio — `create_document`/`update_document`)
+### MCP write access (Phase 2, local stdio — `create_document`/`update_document`/`attach_file`)
 
 Gated behind `[mcp].write_access` in `config.toml`, default **off** — a client gaining
 write access to the vault is a conscious opt-in on rebuild/reconfigure, never a silent
@@ -368,7 +376,11 @@ of the stdio server above; turning one on touches nothing about the other.
   cookies — shown raw exactly once at generation; a dedicated `RateLimiter` instance,
   never sharing state/lockout budget with `/login`'s own; an optional CIDR allowlist,
   empty meaning no restriction — the token is the actual gate, the allowlist an
-  optional extra layer on top).
+  optional extra layer on top). Large-file attach is a two-step capability URL:
+  `attach_file_begin` (Bearer, like any other tool) issues a UUID ticket, then
+  `PUT /mcp/uploads/{id}` accepts the raw bytes with **no** Authorization header
+  (the UUID is the secret; same enabled / IP allowlist / writeEnabled gates).
+  `source_path` is rejected here — that would read arbitrary files off the wiki host.
 - **A real, self-caught bug: `auth::ClientIp` originally trusted `X-Forwarded-For`'s
   FIRST entry.** Cross-referencing the actual deployed nginx config
   (`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;` — APPENDS, never
@@ -395,7 +407,8 @@ path happens to contain into a parsing hazard; `execlp()` takes an explicit argv
 shell involved at all, so the path's actual content is inert regardless of what's in
 it. Excludes `.uploads-tmp/` (Drogon's own transient multipart-upload staging buffer —
 256 pre-created sharded subdirectories, never real content; confirmed by testing a real
-backup and finding them cluttering the archive before adding the exclusion). The
+backup and finding them cluttering the archive before adding the exclusion) and
+`.mcp-uploads/` (one-shot remote-MCP large-file tickets, equally transient). The
 opt-in `systemd` timer path (`systemd/wiki-backup.sh`) deliberately reimplements the
 same tar invocation standalone rather than curling the admin HTTP endpoint above — a
 disaster-recovery backup that only works while `wiki-server` happens to be up and an

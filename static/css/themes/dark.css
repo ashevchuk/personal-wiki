@@ -482,6 +482,10 @@ label {
   accent-color: var(--link);
   width: auto;
 }
+.edit-attachments {
+  background: var(--panel-bg-2);
+  color: var(--fg);
+}
 
 input,
 textarea,

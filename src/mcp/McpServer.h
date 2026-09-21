@@ -5,6 +5,7 @@
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
+#include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 
 #include <string>
@@ -13,8 +14,8 @@ namespace wikicore::mcp {
 
 // Builds and runs the MCP stdio server exposing the 4 read-only tools
 // (search_documents, get_document, list_tags, list_documents), plus,
-// when `writeAccess` is true, create_document/update_document. Blocks
-// until stdin closes.
+// when `writeAccess` is true, create_document/update_document/attach_file.
+// Blocks until stdin closes.
 //
 // `includePrivate` is fixed for the whole process lifetime, from
 // config.toml's [mcp].scope ("admin" -> true, "public" -> false — see
@@ -35,16 +36,16 @@ namespace wikicore::mcp {
 //
 // `cfg` is used ONLY to lazily construct a real EmbeddingProvider (see
 // EmbeddingProviderFactory) on the FIRST successful create_document/
-// update_document call, via `indexUpdater.setProvider()` — never at
-// startup, and never at all for a session that only ever uses the
-// read-only tools. A failed lazy-init (bad model path, missing API key)
-// is logged to stderr once and the write proceeds FTS5-only, same
+// update_document/attach_file call, via `indexUpdater.setProvider()` —
+// never at startup, and never at all for a session that only ever uses
+// the read-only tools. A failed lazy-init (bad model path, missing API
+// key) is logged to stderr once and the write proceeds FTS5-only, same
 // best-effort philosophy as wiki-server's own embedding step — an
 // embedding problem must never fail the document save itself.
 void runServer(const std::string& serverName, const std::string& serverVersion,
                index::FtsSearch& search, index::NavQueries& nav,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
-               index::McpAuditLog& auditLog, bool includePrivate, bool writeAccess,
-               const config::AppConfig& cfg);
+               vault::AttachmentService& attachments, index::McpAuditLog& auditLog,
+               bool includePrivate, bool writeAccess, const config::AppConfig& cfg);
 
 }  // namespace wikicore::mcp

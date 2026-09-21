@@ -210,7 +210,8 @@ system `tar` binary (never `system()`/`popen()` — `fork()`+`execlp()` with an
 explicit argv, so nothing about the vault path's own content can be interpreted as
 shell syntax) and streams back a `.tar.gz` of the whole vault, `.trash/` and the
 index db included, `.uploads-tmp/` (Drogon's own transient upload-staging buffer,
-never real content) excluded. Good for "grab a snapshot right now before I do
+never real content) and `.mcp-uploads/` (remote-MCP large-file tickets) excluded.
+Good for "grab a snapshot right now before I do
 something risky"; not a substitute for the automated path below — it only helps if
 the server and its disk are both still alive, which is exactly the case a real
 disaster (dead SD card) is not.
@@ -228,8 +229,8 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now wiki-backup.timer
 ```
 
-`wiki-backup.sh` tars `VAULT_PATH` straight off disk (same `.uploads-tmp/`
-exclusion as the Web UI button, same atomic temp-file-then-rename discipline as
+`wiki-backup.sh` tars `VAULT_PATH` straight off disk (same `.uploads-tmp/` and
+`.mcp-uploads/` exclusion as the Web UI button, same atomic temp-file-then-rename discipline as
 `VaultRepository`'s own document writes — a run that dies partway through never
 leaves a truncated file under the real `wiki-backup-*.tar.gz` name), then prunes
 down to `RETENTION_COUNT` (default 14), oldest first, only after a new backup has
@@ -518,7 +519,9 @@ fallback assumed an unmatched path's ENTIRE contents WAS the prefix, caught live
 this deployment's own real nginx config, not a synthetic test).
 
 The nginx side is a plain prefix-stripping `proxy_pass`, with no response-body or
-header rewriting at all:
+header rewriting at all. `client_max_body_size 0` is required for large attachment
+uploads (a 120 MB PDF, etc.); nginx's default is 1m and would 413 before
+`wiki-server` ever saw the body. `wiki-server` itself caps a single request at 2 GiB.
 
 ```nginx
 location = /wiki {
@@ -526,6 +529,7 @@ location = /wiki {
 }
 
 location /wiki/ {
+    client_max_body_size 0;  # unlimited; wiki-server's own 2 GiB request cap still applies
     proxy_pass http://127.0.0.1:8080/;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;

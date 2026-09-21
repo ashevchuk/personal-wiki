@@ -3,7 +3,7 @@
 // Deliberately NOT linked against Drogon: Claude Desktop/Code spawn this
 // process directly per-session, so it must start instantly and carry no
 // HTTP-stack weight. Read-only tools (search/get/list) are always on;
-// create_document/update_document are Phase 2, gated behind
+// create_document/update_document/attach_file are Phase 2, gated behind
 // [mcp].write_access (default off — see AppConfig.h and McpServer.cpp)
 // and always recorded to mcp_audit_log regardless of outcome. See
 // docs/mcp.md for the client-config example and docs/architecture.md for
@@ -25,6 +25,7 @@
 #include "index/NavQueries.h"
 #include "index/SnapshotStore.h"
 #include "mcp/McpServer.h"
+#include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/VaultRepository.h"
 
@@ -47,10 +48,18 @@ int main() {
   wikicore::index::IndexUpdater indexUpdater(db, /*provider=*/nullptr,
                                               cfg.embeddingsMinContentWords);
   // Only actually exercised (snapshots_.record called) when
-  // [mcp].write_access is on and update_document runs — DocumentService
-  // itself doesn't know or care which caller (HTTP or MCP) is driving it.
+  // [mcp].write_access is on and update_document/attach_file runs —
+  // DocumentService itself doesn't know or care which caller (HTTP or
+  // MCP) is driving it.
   wikicore::index::SnapshotStore snapshotStore(db);
   wikicore::vault::DocumentService documents(vault, indexUpdater, snapshotStore);
+  wikicore::vault::AttachmentService attachments(
+      vault,
+      cfg.attachmentMimeTypes.empty() ? wikicore::vault::AttachmentService::defaultMimeTypes()
+                                       : cfg.attachmentMimeTypes,
+      cfg.attachmentInlineSafeExtensions.empty()
+          ? wikicore::vault::AttachmentService::defaultInlineSafeExtensions()
+          : cfg.attachmentInlineSafeExtensions);
   wikicore::index::FtsSearch search(db);
   wikicore::index::NavQueries nav(db);
   wikicore::index::McpAuditLog auditLog(db);
@@ -63,7 +72,7 @@ int main() {
   const bool includePrivate = cfg.mcpScope != "public";
 
   wikicore::mcp::runServer("personal-wiki", wikicore::versionString(), search, nav,
-                            indexUpdater, documents, auditLog, includePrivate,
+                            indexUpdater, documents, attachments, auditLog, includePrivate,
                             cfg.mcpWriteAccess, cfg);
 
   return 0;

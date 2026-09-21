@@ -5,16 +5,16 @@ Resource-exhaustion stress tests against a real wiki-server process — the
 traversal checks" category, distinct from both security_e2e.py (logical
 correctness) and stress_concurrency.py (race conditions).
 
-1. Concurrent near-cap attachment uploads — AttachmentService caps a single
-   attachment at 25 MiB (src/vault/AttachmentService.cpp) and Drogon itself
-   is capped at 30 MiB (setClientMaxBodySize, src/main.cpp) with 5 MiB of
-   headroom over that for the multipart envelope. This fires several
-   near-cap uploads AT ONCE and checks the server's own memory doesn't
-   balloon far past what that many legitimate near-cap files should cost,
-   and that it stays responsive throughout.
+1. Concurrent large attachment uploads — there is no app-level attachment
+   size cap (src/vault/AttachmentService.cpp); Drogon itself is capped at
+   2 GiB (setClientMaxBodySize, src/main.cpp). This fires several ~24 MiB
+   uploads AT ONCE and checks the server's own memory doesn't balloon far
+   past what that many legitimate files should cost, and that it stays
+   responsive throughout.
 
-2. Oversized single upload (over both caps) — must be rejected promptly,
-   not accepted, and not left as a partial/oversized file on disk.
+2. A single 50 MiB upload — must be accepted (this used to sit over a 25/30
+   MiB cap pair that no longer exists) and land on disk, without crashing
+   the server.
 
 3. Heavy concurrent search load vs. /healthz responsiveness — a burst of
    expensive concurrent FTS5 queries must not starve the Drogon thread
@@ -62,7 +62,7 @@ def stress_concurrent_uploads(server):
     check("seed document created -> 201", status == 201, f"got {status}")
 
     UPLOADERS = 6
-    SIZE = 24 * 1024 * 1024  # just under the 25 MiB app-level cap
+    SIZE = 24 * 1024 * 1024  # large, well under the 2 GiB request-body cap
     payload = os.urandom(1024) * (SIZE // 1024)  # not all-zero, avoids sparse-file skew
 
     rss_before = server.rss_kb()
@@ -99,7 +99,7 @@ def stress_concurrent_uploads(server):
 
 
 def stress_oversized_upload(server):
-    print("\n--- 2. Single oversized upload (over both caps) ---------------------")
+    print("\n--- 2. Single large upload (50 MiB, previously over-cap) -----------")
     admin, csrf = login_admin(server)
     status, _, _ = admin.post_json(
         "/api/documents",
@@ -108,36 +108,26 @@ def stress_oversized_upload(server):
         headers={"X-CSRF-Token": csrf})
     check("seed document created -> 201", status == 201, f"got {status}")
 
-    SIZE = 50 * 1024 * 1024  # over both the 25 MiB app cap and 30 MiB Drogon cap
+    SIZE = 50 * 1024 * 1024  # used to exceed both the 25 MiB app cap and 30 MiB Drogon cap
     payload = os.urandom(1024) * (SIZE // 1024)
 
     start = time.monotonic()
-    try:
-        status, _, _ = admin.upload("/api/attachments/notes/oversized.md", "toobig.bin", payload,
-                                     headers={"X-CSRF-Token": csrf})
-    except OSError as e:
-        # A hard connection reset while sending is an ACCEPTABLE way for
-        # Drogon to reject an over-cap body -- still "promptly rejected,
-        # not accepted", just at the transport layer instead of HTTP.
-        status = None
-        note(f"connection-level rejection while sending oversized body: {e}")
+    status, _, _ = admin.upload("/api/attachments/notes/oversized.md", "big.bin", payload,
+                                 headers={"X-CSRF-Token": csrf})
     elapsed = time.monotonic() - start
 
-    check("oversized upload was not accepted (no 201)", status != 201, f"got {status}")
-    check("oversized upload was rejected promptly, not held open",
-          elapsed < 15, f"took {elapsed:.1f}s")
+    check("50 MiB upload accepted -> 201", status == 201, f"got {status}")
+    check("50 MiB upload finished in a reasonable time", elapsed < 60, f"took {elapsed:.1f}s")
+    check("server still healthy after the large upload", server.is_alive())
 
-    # Whatever happened at the HTTP layer, no oversized file may have
-    # landed on disk -- that would mean the cap was enforced only after
-    # already having paid the full cost of writing it.
     assets_dir = os.path.join(server.vault, "notes", "oversized.assets")
-    leaked = []
+    landed = []
     if os.path.isdir(assets_dir):
         for name in os.listdir(assets_dir):
             p = os.path.join(assets_dir, name)
-            if os.path.getsize(p) > 30 * 1024 * 1024:
-                leaked.append((name, os.path.getsize(p)))
-    check("no oversized attachment file leaked onto disk", not leaked, f"leaked={leaked}")
+            landed.append((name, os.path.getsize(p)))
+    check("50 MiB attachment landed on disk",
+          any(sz == SIZE for _, sz in landed), f"landed={landed}")
 
 
 def stress_search_vs_healthz(server):

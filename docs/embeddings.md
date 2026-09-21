@@ -244,7 +244,7 @@ empirical finding about this model, not test flakiness), this was verified again
 ### Closed gap: `wiki-mcp`'s write tools now embed too, lazily
 
 `wiki-mcp` (`src/mcp_main.cpp`) constructs an `IndexUpdater` for its Phase 2
-`create_document`/`update_document` tools, but deliberately does NOT construct a
+`create_document`/`update_document`/`attach_file` tools, but deliberately does NOT construct a
 real `EmbeddingProvider` at process startup — `wiki-mcp` is spawned fresh per MCP
 session and documented project-wide as staying "fast-starting, dependency-light"
 (see `CLAUDE.md`'s two-binary-layout entry); unconditionally constructing a
@@ -255,7 +255,7 @@ calls a write tool — the overwhelmingly common case (`search_documents`/
 
 Instead, `mcp/McpServer.cpp`'s `LazyEmbeddingProvider` constructs the real
 provider (via `EmbeddingProviderFactory`, same as `wiki-server`) on the FIRST
-actual `create_document`/`update_document` call, via
+actual `create_document`/`update_document`/`attach_file` call, via
 `IndexUpdater::setProvider()` (a small setter added specifically for this —
 `wiki-server` never uses it, since it already knows its provider up front and
 passes it straight to the constructor). Every write after the first reuses the

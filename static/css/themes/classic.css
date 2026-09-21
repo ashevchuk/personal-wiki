@@ -490,6 +490,11 @@ label {
   accent-color: var(--link);
   width: auto;
 }
+.edit-attachments {
+  background: var(--bg);
+  color: var(--fg);
+  border-radius: 2px;
+}
 .checkbox-label {
   flex-direction: row;
   align-items: center;

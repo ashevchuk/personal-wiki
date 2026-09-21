@@ -40,6 +40,7 @@
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
+#include "vault/McpUploadStaging.h"
 #include "vault/VaultRepository.h"
 
 #include <drogon/drogon.h>
@@ -219,6 +220,7 @@ int main(int argc, char** argv) {
       cfg.attachmentInlineSafeExtensions.empty()
           ? wikicore::vault::AttachmentService::defaultInlineSafeExtensions()
           : cfg.attachmentInlineSafeExtensions);
+  wikicore::vault::McpUploadStaging mcpUploadStaging(vault);
   wikicore::index::IndexBuilder indexBuilder(vault, indexUpdater);
   wikicore::vault::FolderService folderService(vault, indexUpdater, indexBuilder);
   wikicore::index::FtsSearch ftsSearch(db, activeEmbeddingProvider, cfg.embeddingsMaxDistance,
@@ -341,7 +343,12 @@ int main(int argc, char** argv) {
   // static/ is the ONLY thing served as static files — never the project
   // root, which would also expose config.toml/source/etc. over HTTP.
   drogon::app().setDocumentRoot("static");
-  drogon::app().setClientMaxBodySize(30 * 1024 * 1024);  // headroom over the 25 MiB attachment cap
+  // 2 GiB — fits 32-bit size_t (the armv7 cross-compile). There is no
+  // app-level attachment cap anymore (a 120 MiB PDF is a legitimate
+  // upload); this is just so a single request can't be unbounded. Disk
+  // is the real bound. A reverse proxy in front still needs its own
+  // client_max_body_size raised (nginx defaults to 1m).
+  drogon::app().setClientMaxBodySize(static_cast<size_t>(2) * 1024u * 1024u * 1024u);
 
   // Don't advertise the exact framework+version in every response —
   // `Server: drogon/1.9.13` by default, no reason to hand a would-be
@@ -497,7 +504,8 @@ int main(int argc, char** argv) {
                                                 documentService);
   wikicore::controllers::registerRemoteMcpRoutes(drogon::app(), remoteMcpConfig,
                                                   remoteMcpRateLimiter, ftsSearch, navQueries,
-                                                  indexUpdater, documentService, mcpAuditLog);
+                                                  indexUpdater, documentService, attachmentService,
+                                                  mcpUploadStaging, mcpAuditLog);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)

@@ -6,7 +6,9 @@
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
+#include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
+#include "vault/McpUploadStaging.h"
 
 #include <drogon/HttpAppFramework.h>
 
@@ -32,14 +34,18 @@ namespace wikicore::controllers {
 // A single stateless request/response endpoint (MCP's "Streamable HTTP"
 // transport, minus its optional Mcp-Session-Id — every tool here is a
 // fast, synchronous call with nothing to carry across requests, so there
-// is no session state worth tracking). Every request is independently
+// is no session state worth tracking). POST /mcp is independently
 // authenticated: bearer token (Authorization: Bearer <token>) AND, if
 // any allowlist entries are configured, the caller's IP (auth::clientIp
 // — X-Real-IP/X-Forwarded-For-aware, NOT the raw TCP peer, which behind
 // the reverse proxy this needs to run behind would always be the
 // proxy's own address; see auth/ClientIp.h for exactly which header
 // wins and why, verified against this deployment's own real nginx
-// config, not assumed). When the feature is off
+// config, not assumed). PUT/POST /mcp/uploads/{uuid} is the follow-up
+// to attach_file_begin for large files: no Bearer (the UUID is the
+// capability secret), still gated by enabled + IP allowlist +
+// writeEnabled, so an agent can `curl -T` without pasting the token.
+// When the feature is off
 // (McpRemoteConfig::get().enabled == false, the default), every request
 // gets a plain 404 — indistinguishable from the route never having
 // existed, not a "this exists but needs a token" hint to an
@@ -51,6 +57,8 @@ void registerRemoteMcpRoutes(drogon::HttpAppFramework& app,
                               wikicore::index::NavQueries& nav,
                               wikicore::index::IndexUpdater& indexUpdater,
                               wikicore::vault::DocumentService& documents,
+                              wikicore::vault::AttachmentService& attachments,
+                              wikicore::vault::McpUploadStaging& mcpUploads,
                               wikicore::index::McpAuditLog& auditLog);
 
 }  // namespace wikicore::controllers

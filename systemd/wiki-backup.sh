@@ -10,7 +10,8 @@
 #
 # Same exclusion as BackupService.h's in-app backup, for the same reason:
 # `.uploads-tmp/` is Drogon's transient multipart-upload staging buffer
-# (main.cpp's setUploadPath), never real content.
+# (main.cpp's setUploadPath), never real content; `.mcp-uploads/` holds
+# one-shot remote-MCP large-file tickets, equally transient.
 #
 # Configuration via environment (see wiki-backup.env.example, loaded by
 # wiki-backup.service's EnvironmentFile=):
@@ -53,7 +54,7 @@ vault_name="$(basename "$VAULT_PATH")"
 # killed mid-run) never leaves a truncated file sitting under the real
 # `wiki-backup-*.tar.gz` name where a later restore could mistake it for
 # a complete one.
-tar -czf "$tmp_dest" --exclude=.uploads-tmp -C "$vault_parent" "$vault_name"
+tar -czf "$tmp_dest" --exclude=.uploads-tmp --exclude=.mcp-uploads -C "$vault_parent" "$vault_name"
 mv "$tmp_dest" "$dest"
 echo "wiki-backup: wrote $dest"
 

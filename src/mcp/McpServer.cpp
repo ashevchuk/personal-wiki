@@ -1,6 +1,8 @@
 #include "mcp/McpServer.h"
 
 #include "embeddings/EmbeddingProviderFactory.h"
+#include "util/Base64.h"
+#include "vault/AttachToDocument.h"
 
 // From the vendored hkr04/cpp-mcp library (FetchContent, see
 // CMakeLists.txt) — mcp::json is nlohmann::ordered_json, vendored by that
@@ -14,6 +16,7 @@
 #include <mcp_tool.h>
 
 #include <cstdio>
+#include <filesystem>
 #include <memory>
 #include <stdexcept>
 
@@ -318,13 +321,108 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
   };
 }
 
+// content_base64 is the in-memory path for small files (screenshots,
+// snippets). A 120 MiB PDF cannot travel this way — the model would have
+// to emit ~160 MiB of JSON, and decoding it would allocate a matching
+// std::string. Large files use source_path instead (stdio only). This
+// cap is a JSON-size gate, not AttachmentService's own (there isn't one).
+constexpr size_t kMaxEncodedAttachmentBytes = 36ull * 1024 * 1024;
+
+std::string decodeContentBase64Param(const ::mcp::json& params) {
+  if (!params.contains("content_base64") || !params["content_base64"].is_string()) {
+    throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'content_base64'");
+  }
+  const std::string raw = params["content_base64"].get<std::string>();
+  if (raw.size() > kMaxEncodedAttachmentBytes) {
+    throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+                                "content_base64 is too large; pass source_path for big files");
+  }
+  const auto decoded = util::decodeBase64(util::stripDataUrlPrefix(raw));
+  if (!decoded) {
+    throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid base64");
+  }
+  return *decoded;
+}
+
+::mcp::tool_handler makeAttachFileHandler(vault::DocumentService& documents,
+                                           vault::AttachmentService& attachments,
+                                           index::McpAuditLog& auditLog,
+                                           LazyEmbeddingProvider& lazyProvider) {
+  return [&documents, &attachments, &auditLog, &lazyProvider](
+             const ::mcp::json& params, const std::string&) -> ::mcp::json {
+    if (!params.contains("path") || !params["path"].is_string() ||
+        params["path"].get<std::string>().empty()) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
+    }
+    const std::string path = params["path"].get<std::string>();
+    const bool hasSource = params.contains("source_path") && params["source_path"].is_string() &&
+                            !params["source_path"].get<std::string>().empty();
+    const bool hasB64 = params.contains("content_base64") && params["content_base64"].is_string();
+    if (hasSource && hasB64) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+                                  "pass either source_path or content_base64, not both");
+    }
+    if (!hasSource && !hasB64) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+                                  "missing 'source_path' or 'content_base64'");
+    }
+
+    std::string filename;
+    if (params.contains("filename") && params["filename"].is_string()) {
+      filename = params["filename"].get<std::string>();
+    }
+    if (filename.empty() && hasSource) {
+      filename = std::filesystem::path(params["source_path"].get<std::string>()).filename().string();
+    }
+    if (filename.empty()) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'filename'");
+    }
+    lazyProvider.ensureLoaded();
+
+    try {
+      vault::AttachedFile attached;
+      if (hasSource) {
+        attached = vault::attachFileAndLinkFromPath(
+            documents, attachments, path, filename,
+            std::filesystem::path(params["source_path"].get<std::string>()));
+      } else {
+        const std::string content = decodeContentBase64Param(params);
+        attached = vault::attachFileAndLink(documents, attachments, path, filename, content);
+      }
+      auditLog.record("attach_file", path, true, attached.info.relativePath);
+      return textContent("Attached " + attached.info.relativePath + " (" +
+                         std::to_string(attached.info.size) + " bytes, " +
+                         attached.info.mimeType + ")\nInserted markdown: " +
+                         attached.markdownLink);
+    } catch (const ::mcp::mcp_exception&) {
+      auditLog.record("attach_file", path, false, "invalid or missing content_base64");
+      throw;
+    } catch (const vault::DocumentNotFoundError&) {
+      auditLog.record("attach_file", path, false, "document not found");
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "document not found: " + path);
+    } catch (const vault::AttachmentRejectedError& e) {
+      auditLog.record("attach_file", path, false, e.what());
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, e.what());
+    } catch (const vault::PathTraversalError&) {
+      auditLog.record("attach_file", path, false, "path traversal rejected");
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+    } catch (const std::filesystem::filesystem_error& e) {
+      auditLog.record("attach_file", path, false, e.what());
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+    } catch (const std::exception& e) {
+      auditLog.record("attach_file", path, false, e.what());
+      throw ::mcp::mcp_exception(::mcp::error_code::internal_error, e.what());
+    }
+  };
+}
+
 }  // namespace
 
 void runServer(const std::string& serverName, const std::string& serverVersion,
                index::FtsSearch& search, index::NavQueries& nav,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
-               index::McpAuditLog& auditLog, bool includePrivate, bool writeAccess,
-               const config::AppConfig& cfg) {
+               vault::AttachmentService& attachments, index::McpAuditLog& auditLog,
+               bool includePrivate, bool writeAccess, const config::AppConfig& cfg) {
   LazyEmbeddingProvider lazyProvider(indexUpdater, cfg);
 
   ::mcp::server::configuration conf;
@@ -413,6 +511,34 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
             .build();
     srv.register_tool(updateDocumentTool,
                        makeUpdateDocumentHandler(documents, auditLog, lazyProvider));
+
+    ::mcp::tool attachFileTool =
+        ::mcp::tool_builder("attach_file")
+            .with_description(
+                "Attach a file to an existing document and append a markdown "
+                "link (image embed for png/jpg/gif/webp, a regular link "
+                "otherwise). For a large file (a 120 MB PDF, a video) pass "
+                "source_path — an absolute path on THIS machine that wiki-mcp "
+                "can read; the bytes are copied from disk, never through the "
+                "model. content_base64 is only for small files (the file "
+                "bytes as standard or URL-safe base64; a data: URL prefix is "
+                "stripped). Pass exactly one of source_path or "
+                "content_base64. filename defaults to the source basename. "
+                "The owning document must already exist.")
+            .with_string_param("path", "Vault-relative path of the owning document", true)
+            .with_string_param("filename",
+                                "Stored filename including extension (defaults to "
+                                "source_path's basename)",
+                                false)
+            .with_string_param("source_path",
+                                "Absolute path of a local file to copy into the vault",
+                                false)
+            .with_string_param("content_base64",
+                                "Small file bytes, base64-encoded (not for large PDFs)",
+                                false)
+            .build();
+    srv.register_tool(attachFileTool,
+                       makeAttachFileHandler(documents, attachments, auditLog, lazyProvider));
   }
 
   // CRITICAL: nothing in this process may ever write to stdout except the

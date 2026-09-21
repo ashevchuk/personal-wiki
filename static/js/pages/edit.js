@@ -461,6 +461,8 @@ window.WikiPages = window.WikiPages || {};
     container.innerHTML =
       renderBreadcrumbs(docPath) +
       '<form id="doc-form" autocomplete="off">' +
+      '<div class="edit-meta">' +
+      '<div class="edit-meta-fields">' +
       '<div class="field-row">' +
       '<label>Path <input type="text" id="f-path" placeholder="e.g. notes/getting-started.md" required></label>' +
       '<label>Type <input type="text" id="f-type" placeholder="note"></label>' +
@@ -469,6 +471,11 @@ window.WikiPages = window.WikiPages || {};
       '<label>Title <input type="text" id="f-title" required></label>' +
       '<label>Tags <input type="text" id="f-tags" placeholder="comma, separated"></label>' +
       '<label class="visibility-toggle"><input type="checkbox" id="f-visibility"> Public</label>' +
+      "</div>" +
+      "</div>" +
+      '<div class="edit-attachments-slot" hidden>' +
+      '<div id="edit-attachments" class="edit-attachments" hidden></div>' +
+      "</div>" +
       "</div>" +
       '<div id="editor"></div>' +
       '<div class="field-row" id="edit-actions-row">' +
@@ -510,6 +517,116 @@ window.WikiPages = window.WikiPages || {};
       return isNew ? null : pathInput.value.trim();
     }
 
+    var ICON_DOWNLOAD =
+      '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+      '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+      'stroke-linejoin="round" d="M8 2v8m-3-2.5L8 11l3-3.5M3 13.5h10"/></svg>';
+    var ICON_DELETE =
+      '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
+      '<path fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" ' +
+      'stroke-linejoin="round" d="M3 4h10M6.5 4V3h3v1M5 4l.5 9h5L11 4"/></svg>';
+
+    function attachmentBasename(p) {
+      var i = p.lastIndexOf("/");
+      return i < 0 ? p : p.slice(i + 1);
+    }
+
+    function loadAttachments() {
+      var host = document.getElementById("edit-attachments");
+      var slot = host && host.parentElement;
+      function hideList() {
+        if (host) {
+          host.hidden = true;
+          host.innerHTML = "";
+        }
+        if (slot) slot.hidden = true;
+      }
+      if (!host) return Promise.resolve();
+      var docP = currentDocPath();
+      if (!docP) {
+        hideList();
+        return Promise.resolve();
+      }
+      return fetch(basePath() + "/api/attachments/" + encodeVaultPath(docP), {
+        credentials: "same-origin",
+        cache: "no-store",
+      })
+        .then(function (resp) {
+          if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
+          return resp.json();
+        })
+        .then(function (data) {
+          var files = (data && data.files) || [];
+          if (!files.length) {
+            hideList();
+          } else {
+            host.hidden = false;
+            if (slot) slot.hidden = false;
+            host.innerHTML = files
+              .map(function (f) {
+                var name = attachmentBasename(f.path);
+                var href = basePath() + "/assets/" + encodeVaultPath(f.path);
+                return (
+                  '<div class="edit-att-row" data-path="' +
+                  escapeHtml(f.path) +
+                  '">' +
+                  '<span class="edit-att-name" title="' +
+                  escapeHtml(name) +
+                  '">' +
+                  escapeHtml(name) +
+                  "</span>" +
+                  '<a class="edit-att-icon" href="' +
+                  escapeHtml(href) +
+                  '" download="' +
+                  escapeHtml(name) +
+                  '" title="Download" aria-label="Download ' +
+                  escapeHtml(name) +
+                  '">' +
+                  ICON_DOWNLOAD +
+                  "</a>" +
+                  '<button type="button" class="edit-att-icon edit-att-del" title="Delete" aria-label="Delete ' +
+                  escapeHtml(name) +
+                  '">' +
+                  ICON_DELETE +
+                  "</button>" +
+                  "</div>"
+                );
+              })
+              .join("");
+          }
+          if (editor && editor.setHeight) editor.setHeight(computeEditorHeight());
+        })
+        .catch(function () {
+          hideList();
+        });
+    }
+
+    document.getElementById("edit-attachments").addEventListener("click", function (ev) {
+      var btn = ev.target.closest(".edit-att-del");
+      if (!btn) return;
+      var row = btn.closest(".edit-att-row");
+      if (!row) return;
+      var assetPath = row.getAttribute("data-path");
+      var name = row.querySelector(".edit-att-name");
+      name = name ? name.textContent : assetPath;
+      if (!window.confirm('Delete attachment "' + name + '"? The file is removed; markdown links to it stay in the document.')) {
+        return;
+      }
+      fetch(basePath() + "/api/attachments/" + encodeVaultPath(assetPath), {
+        method: "DELETE",
+        headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+        credentials: "same-origin",
+      })
+        .then(function (resp) {
+          if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
+          setStatus("Deleted " + name + ".", "ok");
+          return loadAttachments();
+        })
+        .catch(function (err) {
+          setStatus("Delete failed: " + err.message, "error");
+        });
+    });
+
     // Shared by both attachment paths below (drag/paste-an-image and the
     // explicit "Attach file" button). url is the ABSOLUTE /assets/...
     // path — this app's own /d/{path} view isn't a directory-shaped URL,
@@ -535,6 +652,8 @@ window.WikiPages = window.WikiPages || {};
         return resp.json().then(function (info) {
           return { url: basePath() + "/assets/" + encodeVaultPath(info.path), filename: file.name };
         });
+      }).then(function (result) {
+        return loadAttachments().then(function () { return result; });
       });
     }
 
@@ -665,6 +784,8 @@ window.WikiPages = window.WikiPages || {};
         editor.setHeight(computeEditorHeight());
       }, 150);
     });
+
+    loadAttachments();
 
     document.getElementById("doc-form").addEventListener("submit", function (evt) {
       evt.preventDefault();

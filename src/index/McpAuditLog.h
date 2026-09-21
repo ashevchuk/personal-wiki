@@ -17,7 +17,7 @@ struct McpAuditEntry {
 };
 
 // Records every call to an MCP write tool (create_document/
-// update_document — see McpServer.cpp), success or failure alike. This
+// update_document/attach_file — see McpServer.cpp), success or failure alike. This
 // is the accountability half of [mcp].write_access: the flag lets an
 // LLM write to the vault unsupervised, this table is what lets the
 // human admin find out what it actually did, after the fact, via

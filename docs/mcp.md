@@ -2,7 +2,7 @@
 
 `wiki-mcp` is a separate binary, stdio transport (JSON-RPC 2.0), spawned directly by an
 MCP client (Claude Desktop, Claude Code) on the SAME machine as the vault. Read-only
-tools are always available; Phase 2 added two write tools, gated behind
+tools are always available; Phase 2 added write tools, gated behind
 `[mcp].write_access` (default **off** — see "Write tools" below) so an MCP client
 writing to the vault is a conscious opt-in, not a silent capability that showed up on
 the next rebuild.
@@ -77,7 +77,7 @@ machine's owner, not an anonymous web visit).
 
 ## Write tools (Phase 2, off by default)
 
-Set `write_access = true` under `[mcp]` in `config.toml` to expose two more tools:
+Set `write_access = true` under `[mcp]` in `config.toml` to expose three more tools:
 
 - **create_document**(path: string, title?: string, body?: string, type?: string,
   visibility?: string, tags?: string[]) — fails if a document already exists at
@@ -87,18 +87,42 @@ Set `write_access = true` under `[mcp]` in `config.toml` to expose two more tool
   visibility?: string, tags?: string[]) — a genuine PARTIAL update: any field left out
   keeps its current value, unlike the HTTP `PUT` route (which always replaces every
   field). Fails if `path` doesn't exist yet.
+- **attach_file**(path: string, filename?: string, source_path?: string,
+  content_base64?: string) — stores the file in the owning document's co-located
+  `<stem>.assets/` folder (same `AttachmentService` the web UI's Attach button uses:
+  sanitized filename, de-duped on collision, **no size cap**) and appends a markdown
+  link to the document body. Raster images that `GET /assets/` will serve inline
+  (`png`/`jpg`/`gif`/`webp`) become `![name](assets/...)`; everything else becomes
+  `[name](assets/...)`. The href is relative to `<base href="{basePath}/">`, same
+  convention as wiki-links.
 
-Both go through the exact same `DocumentService::create`/`update` the HTTP API uses —
-same validation, same path-traversal rejection, same atomic write, same index sync,
-and (for `update_document`) the same pre-edit snapshot `document_snapshots` records for
-every other save (see the "Versioning" section below) — an MCP-driven edit is undoable
-through `/history/{path}` exactly like a human-made one.
+  Pass **exactly one** of:
+  - **source_path** — absolute path of a file on the machine running `wiki-mcp`. The
+    bytes are copied from disk (`std::filesystem::copy_file`), never through the
+    model. This is how a 120 MB PDF gets attached. `filename` defaults to the source
+    basename. **stdio only.** The remote HTTP transport rejects `source_path`
+    (copying a path on the wiki host would read arbitrary files off that host) —
+    use `attach_file_begin` + `PUT /mcp/uploads/{id}` there instead (see
+    "Remote (HTTP) transport" below).
+  - **content_base64** — file bytes (standard or URL-safe base64; a `data:` URL
+    prefix is stripped). Only for small files; the encoded string is gated around
+    36 MiB so a huge JSON tool-call doesn't become a multi-hundred-MB `std::string`.
 
-When `write_access` is `false` (the default), these two tools are not registered at
+  The owning document must already exist — there is no "attach to a document that
+  hasn't been saved yet", matching the HTTP upload route.
+
+`create_document`/`update_document` go through the exact same `DocumentService::create`/
+`update` the HTTP API uses — same validation, same path-traversal rejection, same
+atomic write, same index sync, and (for `update_document` and `attach_file`, which
+itself calls `update` to append the link) the same pre-edit snapshot `document_snapshots`
+records for every other save (see the "Versioning" section below) — an MCP-driven edit
+is undoable through `/history/{path}` exactly like a human-made one.
+
+When `write_access` is `false` (the default), these three tools are not registered at
 all — absent from `tools/list`, not present-and-erroring. An MCP client asking "what
 can you do" never learns they exist unless the admin opted in.
 
-**Every call through either tool is recorded in the `mcp_audit_log` SQLite table,
+**Every call through any of these tools is recorded in the `mcp_audit_log` SQLite table,
 success or failure alike** — this is the accountability half of turning `write_access`
 on: an LLM writing to your vault unsupervised is a different risk than it reading from
 one, and the log is what lets you find out what it actually did, after the fact.
@@ -109,10 +133,10 @@ happened doesn't erase the record of what was written while it was on.
 
 ## Versioning
 
-Every `DocumentService::update` (HTTP `PUT` or the MCP `update_document` tool alike)
-snapshots the document's PRE-edit content into `document_snapshots` before overwriting
-it — `create`/`create_document` snapshot nothing (there's no "before" state for a
-brand-new document). The web UI's `/history/{path}` page lists every past version for a
+Every `DocumentService::update` (HTTP `PUT`, the MCP `update_document` tool, or
+`attach_file` appending a link) snapshots the document's PRE-edit content into
+`document_snapshots` before overwriting it — `create`/`create_document` snapshot nothing
+(there's no "before" state for a brand-new document). The web UI's `/history/{path}` page lists every past version for a
 document, diffs any of them against the current live content (a small client-side
 LCS line diff — see `static/js/diff.js`, no vendored diff library), and can restore
 one — which itself snapshots the pre-restore state first, so restoring is undoable the
@@ -127,19 +151,30 @@ over HTTPS from anywhere, not just a local stdio spawn. Off by default; every se
 below is managed live from the Account page (SQLite-backed via `McpRemoteConfig`, not
 `config.toml` — the whole point is toggling this without a server restart):
 
-- **Enabled** — the master switch. While off, `POST /mcp` answers a plain `404` to
-  everyone, indistinguishable from a route that was never registered — not a `401`
-  hinting "this exists, bring a token."
+- **Enabled** — the master switch. While off, `POST /mcp` and `PUT /mcp/uploads/{id}`
+  answer a plain `404` to everyone, indistinguishable from a route that was never
+  registered — not a `401` hinting "this exists, bring a token."
 - **Write access** — independent of `[mcp].write_access` above (the LOCAL stdio
-  server's own flag). Allowing `create_document`/`update_document` from the open
+  server's own flag). Allowing `create_document`/`update_document`/`attach_file` from the open
   internet is a bigger step than allowing it from a local process only your own
   machine can spawn; it gets its own explicit opt-in rather than inheriting the local
-  setting.
+  setting. Remote write tools also include **attach_file_begin** (not registered on
+  stdio): it returns an `upload_id`, then the client `PUT`s the raw file bytes to
+  `/mcp/uploads/{upload_id}` on the same origin. That follow-up request does **not**
+  send the Bearer token — the UUID is a one-hour capability secret, so an agent can
+  `curl -T file.pdf` without pasting the token into a shell history, and the file
+  bytes never enter the model's context. `source_path` is rejected on this transport
+  (it would read arbitrary files off the wiki host). Multipart `POST` with a file
+  field also works. Tickets live in `<vault>/.mcp-uploads/` (a dotdir, skipped by
+  the indexer; excluded from backups). Drogon's `setClientMaxBodySize` (2 GiB) and
+  the reverse proxy's `client_max_body_size` still bound the HTTP request; the app
+  itself has no attachment size cap.
 - **Bearer token** — a 64-char random hex string, checked via `Authorization: Bearer
-  <token>` on every request. Only its SHA-256 hash is ever stored (same discipline as
+  <token>` on every `POST /mcp`. Only its SHA-256 hash is ever stored (same discipline as
   session cookies — see `docs/architecture.md`); "Regenerate token" shows the new raw
   value exactly once, right there, and immediately invalidates whatever token was
-  issued before.
+  issued before. `PUT /mcp/uploads/{id}` does not send this header — the upload id is
+  the capability.
 - **IP allowlist** — optional, additional to the token, not instead of it. Empty means
   no IP restriction. Accepts IPv4 and IPv6, CIDR or a bare address (treated as `/32` or
   `/128`) — see `src/auth/CidrMatch.h`.
@@ -152,7 +187,8 @@ it's readable by anything in between.
 
 **Every write through the remote tools is recorded in the same `mcp_audit_log` table
 the local stdio write tools use** (see "Write tools" above), with tool names prefixed
-`"remote:"` (`remote:create_document`, `remote:update_document`) so an admin reviewing
+`"remote:"` (`remote:create_document`, `remote:update_document`,
+`remote:attach_file`, `remote:attach_file_begin`) so an admin reviewing
 `GET /api/admin/mcp-audit-log` can tell local and remote writes apart at a glance —
 no schema change needed for that, just a naming convention at the call site.
 

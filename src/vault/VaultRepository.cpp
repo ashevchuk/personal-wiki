@@ -34,7 +34,7 @@ bool VaultRepository::exists(std::string_view relativePath) const {
 }
 
 void VaultRepository::writeRawAtomic(std::string_view relativePath,
-                                      const std::string& content) const {
+                                      std::string_view content) const {
   const fs::path fullPath = guard_.resolve(relativePath);
   fs::create_directories(fullPath.parent_path());
 
@@ -47,13 +47,39 @@ void VaultRepository::writeRawAtomic(std::string_view relativePath,
           "failed to open temp file for atomic write", tempPath,
           std::make_error_code(std::errc::io_error));
     }
-    file << content;
+    file.write(content.data(), static_cast<std::streamsize>(content.size()));
     if (!file) {
       std::error_code ignored;
       fs::remove(tempPath, ignored);
       throw fs::filesystem_error("failed to write temp file", tempPath,
                                   std::make_error_code(std::errc::io_error));
     }
+  }
+
+  std::error_code ec;
+  fs::rename(tempPath, fullPath, ec);
+  if (ec) {
+    std::error_code ignored;
+    fs::remove(tempPath, ignored);
+    throw fs::filesystem_error("failed to atomically replace document",
+                                tempPath, fullPath, ec);
+  }
+}
+
+void VaultRepository::copyFileAtomic(std::string_view relativePath,
+                                      const fs::path& source) const {
+  const fs::path fullPath = guard_.resolve(relativePath);
+  fs::create_directories(fullPath.parent_path());
+
+  const fs::path tempPath = fullPath.parent_path() /
+      (fullPath.filename().string() + ".tmp-" + util::newUuidV4());
+  std::error_code copyEc;
+  fs::copy_file(source, tempPath, fs::copy_options::none, copyEc);
+  if (copyEc) {
+    std::error_code ignored;
+    fs::remove(tempPath, ignored);
+    throw fs::filesystem_error("failed to copy into temp file for atomic write",
+                                source, tempPath, copyEc);
   }
 
   std::error_code ec;
@@ -118,6 +144,30 @@ VaultRepository::FileStat VaultRepository::statFile(
   stat.mtimeUnix = std::chrono::system_clock::to_time_t(systemTime);
 
   return stat;
+}
+
+std::vector<std::string> VaultRepository::listRegularFiles(
+    std::string_view relativeDir) const {
+  const fs::path fullPath = guard_.resolve(relativeDir);
+  std::error_code ec;
+  if (!fs::is_directory(fullPath, ec)) return {};
+
+  std::vector<std::string> out;
+  for (fs::directory_iterator it(fullPath, ec); !ec && it != fs::directory_iterator();
+       it.increment(ec)) {
+    if (!it->is_regular_file()) continue;
+    const std::string name = it->path().filename().string();
+    if (name.empty() || name.front() == '.') continue;
+    const fs::path rel = fs::path(std::string(relativeDir)) / name;
+    out.push_back(rel.generic_string());
+  }
+  return out;
+}
+
+void VaultRepository::removeFile(std::string_view relativePath) const {
+  const fs::path fullPath = guard_.resolve(relativePath);
+  std::error_code ec;
+  fs::remove(fullPath, ec);
 }
 
 }  // namespace wikicore::vault

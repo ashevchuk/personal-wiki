@@ -54,6 +54,8 @@ add_library(wikicore STATIC
   src/vault/VaultRepository.cpp
   src/vault/DocumentService.cpp
   src/vault/AttachmentService.cpp
+  src/vault/AttachToDocument.cpp
+  src/vault/McpUploadStaging.cpp
   src/vault/FolderService.cpp
   src/vault/BackupService.cpp
   src/index/Database.cpp
@@ -68,6 +70,7 @@ add_library(wikicore STATIC
   src/index/VaultWatcher.cpp
   src/util/Time.cpp
   src/util/Uuid.cpp
+  src/util/Base64.cpp
   src/util/HtmlEscape.cpp
   src/util/Excerpt.cpp
   src/util/MarkdownRenderer.cpp

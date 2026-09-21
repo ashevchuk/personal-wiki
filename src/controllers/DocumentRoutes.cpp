@@ -305,6 +305,51 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
       },
       {Delete, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 
+  // --- GET /api/attachments/{path...} — list the owning document's files -
+  app.registerHandlerViaRegex(
+      "^/api/attachments/(.*)$",
+      [&vault, &attachmentService](
+          const HttpRequestPtr& req,
+          std::function<void(const HttpResponsePtr&)>&& callback,
+          const std::string& docPath) {
+        std::string raw;
+        try {
+          raw = vault.readRaw(docPath);
+        } catch (const PathTraversalError&) {
+          callback(notFound());
+          return;
+        } catch (const std::filesystem::filesystem_error&) {
+          callback(notFound());
+          return;
+        }
+        const ParsedDocument parsed = parseFrontMatter(raw);
+        if (parsed.frontMatter.visibility != "public" && !isAuthenticated(req)) {
+          callback(notFound());
+          return;
+        }
+
+        try {
+          Json::Value files(Json::arrayValue);
+          for (const auto& info : attachmentService.listForDocument(docPath)) {
+            Json::Value item;
+            item["path"] = info.relativePath;
+            item["mimeType"] = info.mimeType;
+            item["size"] = static_cast<Json::UInt64>(info.size);
+            files.append(item);
+          }
+          Json::Value body;
+          body["files"] = files;
+          callback(HttpResponse::newHttpJsonResponse(body));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::exception& e) {
+          callback(jsonError(k500InternalServerError, e.what()));
+        }
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
   // --- POST /api/attachments/{path...} — upload --------------------------
   app.registerHandlerViaRegex(
       "^/api/attachments/(.*)$",
@@ -351,6 +396,38 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         }
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  // --- DELETE /api/attachments/{path...} — remove one uploaded file ------
+  // Capture is the vault-relative ASSET path (notes/foo.assets/x.png),
+  // not the owning document — the same shape GET /assets/ uses. Refuses
+  // anything that isn't under a co-located .assets/ folder (so this
+  // cannot be pointed at a markdown document).
+  app.registerHandlerViaRegex(
+      "^/api/attachments/(.*)$",
+      [&attachmentService](const HttpRequestPtr& req,
+                            std::function<void(const HttpResponsePtr&)>&& callback,
+                            const std::string& assetPath) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        try {
+          if (!attachmentService.remove(assetPath)) {
+            callback(jsonError(k404NotFound, "not found"));
+            return;
+          }
+          callback(jsonOk(assetPath));
+        } catch (const AttachmentRejectedError& e) {
+          callback(jsonError(k400BadRequest, e.what()));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::exception& e) {
+          callback(jsonError(k500InternalServerError, e.what()));
+        }
+      },
+      {Delete, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 
   // --- GET /assets/{path...} — serve an attachment, gated through its ---
   // --- owning document's visibility --------------------------------------

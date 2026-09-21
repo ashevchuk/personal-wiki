@@ -3,6 +3,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
+#include <fstream>
 
 namespace fs = std::filesystem;
 using namespace wikicore;
@@ -97,13 +98,34 @@ TEST_CASE("AttachmentService honors config-provided mime/inline-safe "
   REQUIRE(svc.mimeTypeForExtension("png") == "application/octet-stream");
 }
 
-TEST_CASE("AttachmentService rejects an oversized upload", "[AttachmentService]") {
+TEST_CASE("AttachmentService::storeFromPath copies from disk without a size cap",
+          "[AttachmentService]") {
   TempVaultDir dir;
   vault::VaultRepository repo(dir.root());
   vault::AttachmentService svc(repo);
 
-  const std::string tooBig(26LL * 1024 * 1024, 'x');
-  REQUIRE_THROWS_AS(svc.store("notes/foo.md", "big.png", tooBig),
+  const fs::path src = dir.root() / "outside.bin";
+  {
+    std::ofstream out(src, std::ios::binary);
+    out << std::string(4096, 'Q');
+  }
+
+  const auto info = svc.storeFromPath("notes/foo.md", "paper.pdf", src);
+  REQUIRE(info.relativePath == "notes/foo.assets/paper.pdf");
+  REQUIRE(info.mimeType == "application/pdf");
+  REQUIRE(info.size == 4096);
+  REQUIRE(repo.readRaw("notes/foo.assets/paper.pdf") == std::string(4096, 'Q'));
+}
+
+TEST_CASE("AttachmentService::storeFromPath rejects a missing or non-file source",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);
+
+  REQUIRE_THROWS_AS(svc.storeFromPath("notes/foo.md", "x.bin", dir.root() / "nope.bin"),
+                     vault::AttachmentRejectedError);
+  REQUIRE_THROWS_AS(svc.storeFromPath("notes/foo.md", "x.bin", dir.root()),
                      vault::AttachmentRejectedError);
 }
 
@@ -135,4 +157,47 @@ TEST_CASE("AttachmentService de-dupes a filename collision instead of "
   vault::VaultRepository verify(dir.root());
   REQUIRE(verify.readRaw(first.relativePath) == "first");
   REQUIRE(verify.readRaw(second.relativePath) == "second");
+}
+
+TEST_CASE("AttachmentService::listForDocument lists stored files, empty if none",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);
+
+  REQUIRE(svc.listForDocument("notes/foo.md").empty());
+
+  svc.store("notes/foo.md", "b.txt", "bb");
+  svc.store("notes/foo.md", "a.txt", "aa");
+  const auto listed = svc.listForDocument("notes/foo.md");
+  REQUIRE(listed.size() == 2);
+  REQUIRE(listed[0].relativePath == "notes/foo.assets/a.txt");
+  REQUIRE(listed[1].relativePath == "notes/foo.assets/b.txt");
+  REQUIRE(listed[0].size == 2);
+  REQUIRE(listed[0].mimeType == "text/plain");
+}
+
+TEST_CASE("AttachmentService::remove deletes the file and the empty assets dir",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);
+
+  const auto info = svc.store("notes/foo.md", "x.bin", "xyz");
+  REQUIRE(svc.remove(info.relativePath));
+  REQUIRE_FALSE(fs::exists(dir.root() / "notes/foo.assets/x.bin"));
+  REQUIRE_FALSE(fs::exists(dir.root() / "notes/foo.assets"));
+  REQUIRE_FALSE(svc.remove(info.relativePath));
+}
+
+TEST_CASE("AttachmentService::remove refuses a path that is not under .assets/",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);
+  svc.store("notes/foo.md", "x.bin", "xyz");
+
+  REQUIRE_THROWS_AS(svc.remove("notes/foo.md"), vault::AttachmentRejectedError);
+  REQUIRE_THROWS_AS(svc.remove("notes/foo.assets"), vault::AttachmentRejectedError);
+  REQUIRE(fs::exists(dir.root() / "notes/foo.assets/x.bin"));
 }

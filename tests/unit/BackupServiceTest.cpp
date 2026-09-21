@@ -26,10 +26,12 @@ class TempVault {
     fs::create_directories(root_ / "vault" / "notes");
     fs::create_directories(root_ / "vault" / ".trash");
     fs::create_directories(root_ / "vault" / ".uploads-tmp" / "tmp" / "AB");
+    fs::create_directories(root_ / "vault" / ".mcp-uploads");
     write(root_ / "vault" / "welcome.md", "# Welcome\n");
     write(root_ / "vault" / "notes" / "sub.md", "# Sub\n");
     write(root_ / "vault" / ".trash" / "deleted.md", "# Gone\n");
     write(root_ / "vault" / ".uploads-tmp" / "tmp" / "AB" / "fragment", "junk");
+    write(root_ / "vault" / ".mcp-uploads" / "deadbeef-ticket.meta", "notes/x.md\nfile.bin\n");
   }
   ~TempVault() { fs::remove_all(root_); }
 
@@ -100,7 +102,8 @@ TEST_CASE("createVaultBackup: succeeds and includes documents, .trash/",
   REQUIRE(contains(members, ".trash/deleted.md"));
 }
 
-TEST_CASE("createVaultBackup: excludes .uploads-tmp/", "[BackupService]") {
+TEST_CASE("createVaultBackup: excludes .uploads-tmp/ and .mcp-uploads/",
+          "[BackupService]") {
   TempVault env;
   const BackupResult result = createVaultBackup(env.vaultPath().string());
 
@@ -109,6 +112,7 @@ TEST_CASE("createVaultBackup: excludes .uploads-tmp/", "[BackupService]") {
   for (const auto& m : members) {
     INFO("archive member: " << m);
     REQUIRE(m.find(".uploads-tmp") == std::string::npos);
+    REQUIRE(m.find(".mcp-uploads") == std::string::npos);
   }
 }
 

@@ -8,6 +8,9 @@ add_executable(unit_tests
   unit/RateLimiterTest.cpp
   unit/DocumentServiceTest.cpp
   unit/AttachmentServiceTest.cpp
+  unit/AttachToDocumentTest.cpp
+  unit/McpUploadStagingTest.cpp
+  unit/Base64Test.cpp
   unit/FolderServiceTest.cpp
   unit/FtsSearchTest.cpp
   unit/NavQueriesTest.cpp

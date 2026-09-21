@@ -3,10 +3,12 @@
 #include "vault/VaultRepository.h"
 
 #include <cstdint>
+#include <filesystem>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace wikicore::vault {
 
@@ -62,12 +64,26 @@ class AttachmentService {
         mimeTypes_(std::move(mimeTypes)),
         inlineSafeExtensions_(std::move(inlineSafeExtensions)) {}
 
-  // Throws AttachmentRejectedError only if `content` exceeds the size
-  // cap. Throws PathTraversalError if `documentRelativePath` itself
-  // escapes the vault.
+  // Throws PathTraversalError if `documentRelativePath` itself escapes
+  // the vault. There is no size cap here — a 120 MiB PDF is a legitimate
+  // personal-wiki attachment, and the previous 25 MiB limit made that
+  // impossible. Disk space is the real bound. Callers that ingest bytes
+  // over JSON (MCP `content_base64`) still gate the encoded string
+  // themselves so a huge tool-call doesn't become a multi-hundred-MB
+  // std::string; this method just writes whatever it's given.
   AttachmentInfo store(const std::string& documentRelativePath,
                         const std::string& originalFilename,
                         const std::string& content);
+
+  // Streamed copy of an already-on-disk file into the owning document's
+  // assets folder (same sanitization / de-dupe as store()). `sourcePath`
+  // is a host filesystem path, not a vault-relative one — PathGuard
+  // only constrains the destination. Throws AttachmentRejectedError if
+  // the source is missing or not a regular file (directories, devices,
+  // FIFOs — copying /dev/zero until the disk fills is not an upload).
+  AttachmentInfo storeFromPath(const std::string& documentRelativePath,
+                                const std::string& originalFilename,
+                                const std::filesystem::path& sourcePath);
 
   // Best-effort MIME type from a file's extension (lowercase, without the
   // dot) — falls back to "application/octet-stream" for anything not
@@ -86,6 +102,18 @@ class AttachmentService {
   // the "uploaded .html/.svg executes same-origin JS" risk without
   // restricting what can be uploaded or downloaded at all.
   bool isSafeToRenderInline(const std::string& extensionNoDot) const;
+
+  // Regular files in the owning document's co-located `.assets/` folder.
+  // Missing folder → empty. Does not require the `.md` itself to exist
+  // (the HTTP list route checks that separately). Sorted by filename.
+  std::vector<AttachmentInfo> listForDocument(const std::string& documentRelativePath) const;
+
+  // Deletes one file under a `.assets/` folder. False if the path is
+  // well-shaped but the file is missing. Throws AttachmentRejectedError
+  // if `assetRelativePath` isn't a co-located attachment path (so a
+  // caller can't point this at an arbitrary vault file). PathGuard still
+  // has the final say. Does not rewrite the owning document's markdown.
+  bool remove(const std::string& assetRelativePath);
 
  private:
   VaultRepository& vault_;
