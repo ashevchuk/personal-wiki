@@ -201,7 +201,7 @@ TEST_CASE("GraphQueries::around never leaks a private neighbor to an "
   REQUIRE(hasEdge(fromPubAdmin->edges, "pub-source.md", "priv-target.md"));
 }
 
-TEST_CASE("GraphQueries::around is 1-hop, not a recursive walk",
+TEST_CASE("GraphQueries::around walks the connected component, not just 1-hop",
           "[GraphQueries]") {
   TempDb db;
   Database database(db.path());
@@ -210,16 +210,85 @@ TEST_CASE("GraphQueries::around is 1-hop, not a recursive walk",
   updater.upsertOne(makeEntry("a.md", "public", "See [[b]]."));
   updater.upsertOne(makeEntry("b.md", "public", "See [[c]]."));
   updater.upsertOne(makeEntry("c.md", "public"));
+  updater.upsertOne(makeEntry("unrelated.md", "public"));
 
   GraphQueries graph(database);
   auto nb = graph.around("a.md", true);
   REQUIRE(nb.has_value());
-  REQUIRE(nb->nodes.size() == 2);
+  REQUIRE(nb->nodes.size() == 3);
   REQUIRE(hasNode(nb->nodes, "a.md"));
   REQUIRE(hasNode(nb->nodes, "b.md"));
-  REQUIRE_FALSE(hasNode(nb->nodes, "c.md"));
+  REQUIRE(hasNode(nb->nodes, "c.md"));
+  REQUIRE_FALSE(hasNode(nb->nodes, "unrelated.md"));
   REQUIRE(hasEdge(nb->edges, "a.md", "b.md"));
-  REQUIRE_FALSE(hasEdge(nb->edges, "b.md", "c.md"));
+  REQUIRE(hasEdge(nb->edges, "b.md", "c.md"));
+}
+
+TEST_CASE("GraphQueries::around includes an induced edge that does not touch "
+          "the center",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", "See [[b]] and [[c]]."));
+  updater.upsertOne(makeEntry("b.md", "public", "See [[c]]."));
+  updater.upsertOne(makeEntry("c.md", "public"));
+
+  GraphQueries graph(database);
+  auto nb = graph.around("a.md", true);
+  REQUIRE(nb.has_value());
+  REQUIRE(nb->nodes.size() == 3);
+  REQUIRE(hasEdge(nb->edges, "a.md", "b.md"));
+  REQUIRE(hasEdge(nb->edges, "a.md", "c.md"));
+  REQUIRE(hasEdge(nb->edges, "b.md", "c.md"));
+}
+
+TEST_CASE("GraphQueries::around does not walk through a private document to "
+          "reach a further public one for an anonymous caller",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", "See [[b]]."));
+  updater.upsertOne(makeEntry("b.md", "private", "See [[c]]."));
+  updater.upsertOne(makeEntry("c.md", "public"));
+
+  GraphQueries graph(database);
+  auto anon = graph.around("a.md", false);
+  REQUIRE(anon.has_value());
+  REQUIRE(anon->nodes.size() == 1);
+  REQUIRE(hasNode(anon->nodes, "a.md"));
+  REQUIRE_FALSE(hasNode(anon->nodes, "b.md"));
+  REQUIRE_FALSE(hasNode(anon->nodes, "c.md"));
+  REQUIRE(anon->edges.empty());
+
+  auto admin = graph.around("a.md", true);
+  REQUIRE(admin.has_value());
+  REQUIRE(admin->nodes.size() == 3);
+  REQUIRE(hasNode(admin->nodes, "c.md"));
+  REQUIRE(hasEdge(admin->edges, "a.md", "b.md"));
+  REQUIRE(hasEdge(admin->edges, "b.md", "c.md"));
+}
+
+TEST_CASE("GraphQueries::around of a cycle terminates and includes every node",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", "See [[b]]."));
+  updater.upsertOne(makeEntry("b.md", "public", "See [[c]]."));
+  updater.upsertOne(makeEntry("c.md", "public", "See [[a]]."));
+
+  GraphQueries graph(database);
+  auto nb = graph.around("a.md", true);
+  REQUIRE(nb.has_value());
+  REQUIRE(nb->nodes.size() == 3);
+  REQUIRE(hasEdge(nb->edges, "a.md", "b.md"));
+  REQUIRE(hasEdge(nb->edges, "b.md", "c.md"));
+  REQUIRE(hasEdge(nb->edges, "c.md", "a.md"));
 }
 
 TEST_CASE("GraphQueries::around of an isolated visible document is just itself",

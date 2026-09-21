@@ -158,7 +158,7 @@
   }
 
   // Exact pairwise for tiny graphs: BH tree overhead dominates, and
-  // this is the local-graph case (a document plus its 1-hop neighbors).
+  // this is the local-graph case (a document's connected component).
   var EXACT_N = 32;
 
   function accumulateExact(bodies, i) {
@@ -224,6 +224,11 @@
     var iter;
     var e;
     var useExact = n <= EXACT_N;
+    var degree = {};
+    for (e = 0; e < edges.length; e++) {
+      degree[edges[e].source] = (degree[edges[e].source] || 0) + 1;
+      degree[edges[e].target] = (degree[edges[e].target] || 0) + 1;
+    }
     for (iter = 0; iter < ITERATIONS; iter++) {
       if (!useExact) {
         resetPool();
@@ -254,8 +259,13 @@
 
       for (i = 0; i < n; i++) {
         var p = bodies[i];
-        p.vx += (midX - p.x) * CENTER_PULL;
-        p.vy += (midY - p.y) * CENTER_PULL;
+        // Isolates used to share the same pull as a linked cluster, so
+        // a vault of mostly-unlinked notes collapsed into one unreadable
+        // pile on top of the real structure. A much weaker pull leaves
+        // them near the starting circle (the periphery) instead.
+        var pull = (degree[p.path] || 0) === 0 ? CENTER_PULL * 0.12 : CENTER_PULL;
+        p.vx += (midX - p.x) * pull;
+        p.vy += (midY - p.y) * pull;
         p.vx *= DAMPING;
         p.vy *= DAMPING;
         p.x += p.vx;

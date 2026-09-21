@@ -244,6 +244,32 @@ std::vector<SearchResultItem> FtsSearch::search(const SearchQuery& query) const 
   return runQuery(stmt, textSearch);
 }
 
+std::vector<std::string> FtsSearch::matchingPaths(const std::string& text,
+                                                  bool includePrivate) const {
+  const std::string matchExpr = buildMatchExpression(text);
+  if (matchExpr.empty()) return {};
+
+  // Personal-wiki sized; high enough that a real content filter is not
+  // silently truncated the way /api/search's ranked top-50 is, low
+  // enough that a query matching every document cannot become an
+  // unbounded JSON dump.
+  constexpr int64_t kMatchingPathsLimit = 10000;
+
+  Statement stmt(db_.handle(),
+                 "SELECT d.path "
+                 "FROM documents_fts JOIN documents d ON d.rowid_id = documents_fts.rowid "
+                 "WHERE documents_fts MATCH ? AND (? = 1 OR d.visibility = 'public') "
+                 "ORDER BY d.path "
+                 "LIMIT ?;");
+  stmt.bind(1, matchExpr);
+  stmt.bind(2, static_cast<int64_t>(includePrivate ? 1 : 0));
+  stmt.bind(3, kMatchingPathsLimit);
+
+  std::vector<std::string> paths;
+  while (stmt.step()) paths.push_back(stmt.columnText(0));
+  return paths;
+}
+
 #ifdef WIKI_ENABLE_SQLITE_VEC
 
 std::vector<int64_t> FtsSearch::bm25CandidateRowIds(const SearchQuery& query,

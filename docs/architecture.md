@@ -1394,13 +1394,22 @@ graph view draws a distinct "unresolved" node for this case, which this
 app doesn't attempt yet), not a bug.
 
 **Local graph is a second, filtered query.** `GET /api/graph?around={path}`
-returns the 1-hop neighborhood of that document (the document itself plus
-every visible document that shares a visible edge with it). `around=` is
-untrusted caller input: PathGuard first (same 404 as GET `/api/documents`
-for a traversal/`filesystem_error`), then an exact bound path lookup,
-never LIKE. Missing and private-to-anon are the same 404 — existence of
-private content is not revealed. Hop count is server-fixed at 1;
-a client `hops=` query param is ignored. The full `GET /api/graph` (no
+returns the connected component of that document over visible
+`[[wiki-link]]` edges (undirected): the document itself plus every
+visible document reachable from it at any depth, and every visible edge
+among those nodes (the induced subgraph — an edge between two neighbors
+is included even when it doesn't touch the center). v1 of this query
+was a single bound join, 1-hop only; that hid everything past the first
+neighbor (A→B→C showed A and B, never C) which made the rail look like
+a duplicate of the backlinks/outgoing-links lists. Depth is still not
+a client `hops=` query param — GraphRoutes ignores that rather than
+trusting the caller to pick a number. A private document is never a
+stepping stone: an anonymous caller does not reach a further public
+document through one they cannot see. `around=` is untrusted caller
+input: PathGuard first (same 404 as GET `/api/documents` for a
+traversal/`filesystem_error`), then an exact bound path lookup, never
+LIKE. Missing and private-to-anon are the same 404 — existence of
+private content is not revealed. The full `GET /api/graph` (no
 `around=`) is unchanged and still backs the dedicated graph page.
 
 **Rendering is a from-scratch Barnes-Hut force layout**
@@ -1445,10 +1454,40 @@ and zoom (wheel toward the cursor); pointer capture starts only after an
 **Two places this shows up**: a new `/graph` page (the whole vault,
 wired into the sidebar) and a "Local graph" widget on the document view
 page — a collapsed right rail (not inline after the backlinks; that
-placement ate reading width) of this document plus its 1-hop neighbors,
+placement ate reading width) of this document's connected component,
 omitted entirely (same "don't show an empty section" discipline the
 backlinks list already follows) when the document genuinely has no
 neighbors at all.
+
+**`/graph` gained a toolbar** once the vault is large enough that
+drawing every title under every node is unreadable (the hairball the
+Obsidian survey already warned about). Layout stays client-side on the
+same `GET /api/graph` payload. The filter box also hits
+`GET /api/graph/matches?q=` (debounced) so a match in the document body
+lights the node up too:
+
+- **Filter** (title/path substring instantly, then a debounced FTS
+  match over document body/title/tags via `GET /api/graph/matches?q=`):
+  matches stay bright, the rest dim to ~40% opacity. Does not drop
+  nodes from the layout, so typing doesn't send the simulation running
+  again; pan/zoom is kept across keystrokes. Uses the same FTS5 MATCH
+  as `/api/search` (visibility-gated, prefix terms) but returns paths
+  only — no snippets, no ranked top-50, no hybrid semantic neighbors.
+  Empty `q` is an empty path list, not every document.
+- **Hide unlinked**: degree-0 documents (no `[[wiki-link]]` edge with
+  another real, currently-existing document) are dropped before layout.
+  That's the main readability lever for a vault that's mostly isolates.
+  Persisted in `localStorage` (`wiki.graph.hideUnlinked`); the search
+  box is not.
+- **Labels**: `auto` (default: hover + degree ≥ 2 + zoomed-in past
+  ~1.75×) / `On hover` / `All`. Persisted as `wiki.graph.labels`. The
+  local-graph rail does not get this toolbar and still draws every
+  label — it's already one connected component.
+
+Two layout defaults, not toggles: node radius grows slightly with
+degree (still capped below the local-graph "you are here" radius), and
+isolates get a much weaker pull toward the center so they sit on the
+periphery instead of piling on top of the real clusters.
 
 **A real bug found via a user screenshot: labels on two directly-linked
 nodes overlapped each other.** Each node's own label

@@ -110,6 +110,16 @@ class FtsSearch {
 
   std::vector<SearchResultItem> search(const SearchQuery& query) const;
 
+  // Unranked FTS5 MATCH over title/body/tags_flat, visibility-gated the
+  // same way as search(). Empty/whitespace text returns an empty list
+  // (not "every document"). Does NOT use hybrid semantic ranking: a
+  // graph highlight is "this document's indexed text matches", not
+  // "semantically nearby". Paths only — no snippets, no bm25 order.
+  // Capped so an all-matching query cannot dump the whole vault as a
+  // JSON array unbounded.
+  std::vector<std::string> matchingPaths(const std::string& text,
+                                         bool includePrivate) const;
+
  private:
 #ifdef WIKI_ENABLE_SQLITE_VEC
   // Attempts hybrid (BM25 + semantic) ranking; std::nullopt on anything

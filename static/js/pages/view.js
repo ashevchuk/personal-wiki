@@ -10,11 +10,12 @@ window.WikiPages = window.WikiPages || {};
   var escapeHtml = WikiCommon.escapeHtml;
   var renderBreadcrumbs = WikiCommon.renderBreadcrumbs;
 
-  // Local graph: this document plus its 1-hop [[wiki-link]] neighbors,
-  // rendered the same way the full graph page does (see graph-render.js).
+  // Local graph: this document's connected component over [[wiki-link]]
+  // edges (itself plus every reachable neighbor at any depth), rendered
+  // the same way the full graph page does (see graph-render.js).
   // Fetches GET /api/graph?around= this document's path — a server-side
-  // 1-hop neighborhood (PathGuard + fail-safe-private, hops not client-
-  // controlled), not a client-side filter over the full graph payload.
+  // walk (PathGuard + fail-safe-private, hops not client-controlled),
+  // not a client-side filter over the full graph payload.
   //
   // Lives in a right-edge rail, NOT in the document flow: a 500×320
   // widget under the markdown sat in empty space after the last

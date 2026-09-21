@@ -59,18 +59,39 @@ std::optional<GraphNeighborhood> GraphQueries::around(
                        stmt.columnText(2), stmt.columnText(3)};
   }
 
+  // UNION (not UNION ALL) is the visited set: a cycle cannot re-enqueue
+  // a path already in the component. Visibility is re-checked on every
+  // hop so a private document is not a stepping stone that would leak a
+  // further public one to an anonymous caller. The outer SELECT is the
+  // induced subgraph (every visible edge whose both ends are in the
+  // component), not just the BFS tree.
   Statement stmt(
       db_.handle(),
+      "WITH RECURSIVE component(path) AS ("
+      "  SELECT path FROM documents "
+      "  WHERE path = ?1 AND (?2 = 1 OR visibility = 'public') "
+      "  UNION "
+      "  SELECT CASE WHEN src.path = c.path THEN tgt.path ELSE src.path END "
+      "  FROM component c "
+      "  JOIN documents me ON me.path = c.path "
+      "  JOIN document_links dl "
+      "    ON dl.source_rowid = me.rowid_id OR dl.target_path = me.path "
+      "  JOIN documents src ON src.rowid_id = dl.source_rowid "
+      "  JOIN documents tgt ON tgt.path = dl.target_path "
+      "  WHERE (?2 = 1 OR src.visibility = 'public') "
+      "    AND (?2 = 1 OR tgt.visibility = 'public')"
+      ") "
       "SELECT src.path, src.title, src.visibility, src.doc_type, "
       "       tgt.path, tgt.title, tgt.visibility, tgt.doc_type "
       "FROM document_links dl "
       "JOIN documents src ON src.rowid_id = dl.source_rowid "
       "JOIN documents tgt ON tgt.path = dl.target_path "
-      "WHERE (?1 = 1 OR src.visibility = 'public') "
-      "AND (?1 = 1 OR tgt.visibility = 'public') "
-      "AND (src.path = ?2 OR tgt.path = ?2);");
-  stmt.bind(1, vis);
-  stmt.bind(2, centerPath);
+      "WHERE src.path IN (SELECT path FROM component) "
+      "  AND tgt.path IN (SELECT path FROM component) "
+      "  AND (?2 = 1 OR src.visibility = 'public') "
+      "  AND (?2 = 1 OR tgt.visibility = 'public');");
+  stmt.bind(1, centerPath);
+  stmt.bind(2, vis);
 
   // map keeps nodes ordered by path, same as nodes()'s ORDER BY path.
   std::map<std::string, GraphNode> byPath;

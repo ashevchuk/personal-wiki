@@ -25,18 +25,117 @@ window.WikiGraphRender = (function () {
   var NS = "http://www.w3.org/2000/svg";
   var CIRCLE_SEGS = 20;
   var NODE_R = 6;
+  var NODE_R_MAX = 9;
   var CENTER_R = 10;
   var HIT_SLOP = 4;
   var LABEL_DY = 18;
   var CENTER_LABEL_DY = 22;
   var STROKE_W = 1.5;
   var EDGE_W = 1.5;
+  var DIM_ALPHA = 0.4;
+  var AUTO_LABEL_ZOOM = 1.75;
+
+  function buildDegrees(edges) {
+    var d = {};
+    var i;
+    for (i = 0; i < edges.length; i++) {
+      d[edges[i].source] = (d[edges[i].source] || 0) + 1;
+      d[edges[i].target] = (d[edges[i].target] || 0) + 1;
+    }
+    return d;
+  }
+
+  function matchesQuery(node, q) {
+    if (!q) return true;
+    var n = q.toLowerCase();
+    return (
+      (node.title || "").toLowerCase().indexOf(n) !== -1 ||
+      (node.path || "").toLowerCase().indexOf(n) !== -1
+    );
+  }
+
+  // Title/path substring (instant) OR a path from FTS content match.
+  function pathMatches(path, title, view) {
+    if (!view.query) return true;
+    if (matchesQuery({ path: path, title: title || "" }, view.query)) return true;
+    return !!(view.matchPaths && view.matchPaths[path]);
+  }
+
+  function isDimmed(node, view, hoveredPath) {
+    if (!view.query) return false;
+    if (node.path === hoveredPath) return false;
+    if (view.centerPath && node.path === view.centerPath) return false;
+    return !pathMatches(node.path, node.title, view);
+  }
+
+  function edgeIsDimmed(edge, nodes, view) {
+    if (!view.query) return false;
+    return (
+      !pathMatches(edge.source, titleByPath(nodes, edge.source), view) &&
+      !pathMatches(edge.target, titleByPath(nodes, edge.target), view)
+    );
+  }
+
+  function showLabel(node, view, hoveredPath, cameraScale) {
+    if (node.path === hoveredPath) return true;
+    if (view.centerPath && node.path === view.centerPath) return true;
+    if (view.query) return pathMatches(node.path, node.title, view);
+    var mode = view.labelMode || "all";
+    if (mode === "all") return true;
+    if (mode === "hover") return false;
+    if ((cameraScale || 1) >= AUTO_LABEL_ZOOM) return true;
+    return (view.degrees[node.path] || 0) >= 2;
+  }
+
+  function makeView(edges, options) {
+    options = options || {};
+    var mode = options.labels || "all";
+    if (mode !== "auto" && mode !== "hover" && mode !== "all") mode = "all";
+    return {
+      query: (options.query || "").trim(),
+      labelMode: mode,
+      degrees: buildDegrees(edges),
+      centerPath: options.centerPath || null,
+      matchPaths: options.matchPaths || {},
+    };
+  }
+
+  function dimRgba(rgba, dimmed) {
+    if (!dimmed) return rgba;
+    return [rgba[0], rgba[1], rgba[2], rgba[3] * DIM_ALPHA];
+  }
+
+  // Keep pan/zoom across a query/label-mode redraw of the SAME node set.
+  // A different node set (hide-unlinked toggle) resets to identity so
+  // we don't leave the camera looking at empty space.
+  var savedCamera = { scale: 1, tx: 0, ty: 0 };
+  var savedCameraKey = "";
+
+  function cameraFor(key) {
+    if (savedCameraKey !== key) {
+      savedCamera = { scale: 1, tx: 0, ty: 0 };
+      savedCameraKey = key;
+    }
+    return { scale: savedCamera.scale, tx: savedCamera.tx, ty: savedCamera.ty };
+  }
+
+  function rememberCamera(camera) {
+    savedCamera = { scale: camera.scale, tx: camera.tx, ty: camera.ty };
+  }
 
   // Once WebGL has failed in this page (shader compile, context lost,
   // getContext returned null), don't keep probing it on every resize
   // redraw -- fall through to canvas/SVG for the rest of the session.
   var webglFailed = false;
   var lastBackend = null;
+
+  // In-place view updates (query / label mode) must NOT tear down the
+  // canvas: wiping it on every keystroke flashed a blank (often white)
+  // WebGL buffer over the graph. live.view is the same object the
+  // current backend closed over, so mutating it and repainting is
+  // enough; a node-set change (hide-unlinked) still goes through
+  // render() and replaces this.
+  var live = null;
 
   var VS_SRC =
     "attribute vec2 a_pos;\n" +
@@ -201,8 +300,11 @@ window.WikiGraphRender = (function () {
     return basePath() + "/d/" + encodeVaultPath(path);
   }
 
-  function nodeRadius(node, centerPath) {
-    return node.path === centerPath ? CENTER_R : NODE_R;
+  function nodeRadius(node, centerPath, degrees) {
+    if (node.path === centerPath) return CENTER_R;
+    var deg = (degrees && degrees[node.path]) || 0;
+    if (deg <= 1) return NODE_R;
+    return Math.min(NODE_R_MAX, NODE_R + (deg - 1) * 0.55);
   }
 
   function nodeLabel(node) {
@@ -213,6 +315,7 @@ window.WikiGraphRender = (function () {
     var cs = getComputedStyle(host);
     return {
       edge: (cs.getPropertyValue("--fg-dim") || "").trim() || "#888",
+      bg: (cs.getPropertyValue("--bg") || "").trim() || "#000",
       panelBg: (cs.getPropertyValue("--panel-bg") || "").trim() || "#111",
       link: (cs.getPropertyValue("--link") || "").trim() || "#4af",
       fgBright: (cs.getPropertyValue("--fg-bright") || "").trim() || "#fff",
@@ -301,11 +404,12 @@ window.WikiGraphRender = (function () {
     };
   }
 
-  function hitNode(nodes, positions, centerPath, viewPt, camera) {
+  function hitNode(nodes, positions, view, viewPt, camera) {
     if (!viewPt) return null;
     var pt = viewToLayout(viewPt, camera);
     var best = null;
     var bestDist = Infinity;
+    var centerPath = view.centerPath;
     for (var i = 0; i < nodes.length; i++) {
       var node = nodes[i];
       var p = positions[node.path];
@@ -313,7 +417,7 @@ window.WikiGraphRender = (function () {
       var dx = p.x - pt.x;
       var dy = p.y - pt.y;
       var dist = Math.sqrt(dx * dx + dy * dy);
-      var r = nodeRadius(node, centerPath) + HIT_SLOP;
+      var r = nodeRadius(node, centerPath, view.degrees) + HIT_SLOP;
       if (dist <= r && dist < bestDist) {
         best = node;
         bestDist = dist;
@@ -374,6 +478,7 @@ window.WikiGraphRender = (function () {
     var hoveredPath = null;
 
     function apply() {
+      rememberCamera(camera);
       onChange(hoveredPath);
     }
 
@@ -604,19 +709,21 @@ window.WikiGraphRender = (function () {
     }
   }
 
-  function nodeFillStroke(node, centerPath, hoveredPath, palette) {
-    var isCenter = node.path === centerPath;
+  function nodeFillStroke(node, view, hoveredPath, palette) {
+    var isCenter = node.path === view.centerPath;
     var hovered = node.path === hoveredPath;
+    var dimmed = isDimmed(node, view, hoveredPath);
     if (isCenter) {
-      return { fill: palette.link, stroke: palette.fgBright };
+      return { fill: palette.link, stroke: palette.fgBright, dimmed: false };
     }
     return {
       fill: hovered ? palette.link : palette.panelBg,
-      stroke: palette.link,
+      stroke: dimmed ? palette.fgDim : palette.link,
+      dimmed: dimmed,
     };
   }
 
-  function drawLabels2d(ctx, dpr, camera, nodes, positions, centerPath, hoveredPath, palette) {
+  function drawLabels2d(ctx, dpr, camera, nodes, positions, view, hoveredPath, palette) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     ctx.setTransform(
@@ -631,20 +738,25 @@ window.WikiGraphRender = (function () {
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
     nodes.forEach(function (node) {
+      if (!showLabel(node, view, hoveredPath, camera.scale)) return;
       var p = positions[node.path];
       if (!p) return;
+      ctx.globalAlpha = isDimmed(node, view, hoveredPath) ? DIM_ALPHA : 1;
       ctx.fillStyle = node.path === hoveredPath ? palette.fg : palette.fgDim;
       ctx.fillText(
         nodeLabel(node),
         p.x,
-        p.y + (node.path === centerPath ? CENTER_LABEL_DY : LABEL_DY)
+        p.y + (node.path === view.centerPath ? CENTER_LABEL_DY : LABEL_DY)
       );
     });
+    ctx.globalAlpha = 1;
   }
 
-  function drawGraph2d(ctx, dpr, camera, nodes, edges, positions, centerPath, hoveredPath, palette) {
+  function drawGraph2d(ctx, dpr, camera, nodes, edges, positions, view, hoveredPath, palette) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.fillStyle = palette.bg;
+    ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     ctx.setTransform(
       dpr * camera.scale,
       0,
@@ -660,6 +772,8 @@ window.WikiGraphRender = (function () {
       var a = positions[edge.source];
       var b = positions[edge.target];
       if (!a || !b) return;
+      var edgeDim = edgeIsDimmed(edge, nodes, view);
+      ctx.globalAlpha = edgeDim ? DIM_ALPHA : 1;
       ctx.beginPath();
       ctx.moveTo(a.x, a.y);
       ctx.lineTo(b.x, b.y);
@@ -668,8 +782,9 @@ window.WikiGraphRender = (function () {
     nodes.forEach(function (node) {
       var p = positions[node.path];
       if (!p) return;
-      var r = nodeRadius(node, centerPath);
-      var colors = nodeFillStroke(node, centerPath, hoveredPath, palette);
+      var r = nodeRadius(node, view.centerPath, view.degrees);
+      var colors = nodeFillStroke(node, view, hoveredPath, palette);
+      ctx.globalAlpha = colors.dimmed ? DIM_ALPHA : 1;
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
       ctx.fillStyle = colors.fill;
@@ -677,48 +792,55 @@ window.WikiGraphRender = (function () {
       ctx.lineWidth = STROKE_W;
       ctx.strokeStyle = colors.stroke;
       ctx.stroke();
-    });
-    ctx.font = "11px " + palette.fontFamily;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
-    nodes.forEach(function (node) {
-      var p = positions[node.path];
-      if (!p) return;
+      if (!showLabel(node, view, hoveredPath, camera.scale)) return;
+      ctx.font = "11px " + palette.fontFamily;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "alphabetic";
       ctx.fillStyle = node.path === hoveredPath ? palette.fg : palette.fgDim;
       ctx.fillText(
         nodeLabel(node),
         p.x,
-        p.y + (node.path === centerPath ? CENTER_LABEL_DY : LABEL_DY)
+        p.y + (node.path === view.centerPath ? CENTER_LABEL_DY : LABEL_DY)
       );
     });
+    ctx.globalAlpha = 1;
   }
 
-  function buildWebGLGeometry(nodes, edges, positions, centerPath, hoveredPath, palette) {
+  function titleByPath(nodes, path) {
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      if (nodes[i].path === path) return nodes[i].title || "";
+    }
+    return "";
+  }
+
+  function buildWebGLGeometry(nodes, edges, positions, view, hoveredPath, palette) {
     var floats = [];
     var edgeRgba = cssToRgba(palette.edge);
     edges.forEach(function (edge) {
       var a = positions[edge.source];
       var b = positions[edge.target];
       if (!a || !b) return;
+      var edgeDim = edgeIsDimmed(edge, nodes, view);
       // Quads, not GL_LINES — lineWidth is ignored on most WebGL
       // implementations, so a 1px hairline would stay dark-looking even
       // after the color bump. Same 1.5 CSS-px thickness as SVG/canvas.
-      appendLineQuad(floats, a.x, a.y, b.x, b.y, EDGE_W, edgeRgba);
+      appendLineQuad(floats, a.x, a.y, b.x, b.y, EDGE_W, dimRgba(edgeRgba, edgeDim));
     });
     nodes.forEach(function (node) {
       var p = positions[node.path];
       if (!p) return;
-      var r = nodeRadius(node, centerPath);
-      var colors = nodeFillStroke(node, centerPath, hoveredPath, palette);
+      var r = nodeRadius(node, view.centerPath, view.degrees);
+      var colors = nodeFillStroke(node, view, hoveredPath, palette);
       var inner = Math.max(r - STROKE_W / 2, 0.5);
       var outer = r + STROKE_W / 2;
-      appendDisk(floats, p.x, p.y, inner, cssToRgba(colors.fill));
-      appendRing(floats, p.x, p.y, inner, outer, cssToRgba(colors.stroke));
+      appendDisk(floats, p.x, p.y, inner, dimRgba(cssToRgba(colors.fill), colors.dimmed));
+      appendRing(floats, p.x, p.y, inner, outer, dimRgba(cssToRgba(colors.stroke), colors.dimmed));
     });
     return { data: new Float32Array(floats), totalVerts: floats.length / 6 };
   }
 
-  function tryWebGL(container, nodes, edges, positions, width, height, centerPath, palette) {
+  function tryWebGL(container, nodes, edges, positions, width, height, palette, view, graphKey) {
     if (webglFailed) return false;
 
     var surface = document.createElement("div");
@@ -757,9 +879,11 @@ window.WikiGraphRender = (function () {
     var buffer = gl.createBuffer();
     var STRIDE = 24;
     var geom = null;
+    var geomDirty = true;
+    var bgRgba = cssToRgba(palette.bg);
 
     function upload(hoveredPath) {
-      geom = buildWebGLGeometry(nodes, edges, positions, centerPath, hoveredPath, palette);
+      geom = buildWebGLGeometry(nodes, edges, positions, view, hoveredPath, palette);
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
       gl.bufferData(gl.ARRAY_BUFFER, geom.data, gl.DYNAMIC_DRAW);
     }
@@ -774,18 +898,23 @@ window.WikiGraphRender = (function () {
       return false;
     }
 
-    var camera = { scale: 1, tx: 0, ty: 0 };
+    var camera = cameraFor(graphKey);
     var lastHover = null;
     upload(null);
+    geomDirty = false;
 
     function paint(hoveredPath) {
       if (gl.isContextLost()) return;
-      if (hoveredPath !== lastHover) {
+      if (geomDirty || hoveredPath !== lastHover) {
         lastHover = hoveredPath;
+        geomDirty = false;
         upload(hoveredPath);
       }
       gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.clearColor(0, 0, 0, 0);
+      // Opaque clear so a screenshot/composite of the GL buffer is the
+      // page background, not a transparent hole that some capture paths
+      // paint as white. Labels sit on a separate 2D canvas above this.
+      gl.clearColor(bgRgba[0], bgRgba[1], bgRgba[2], 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -807,7 +936,7 @@ window.WikiGraphRender = (function () {
         camera,
         nodes,
         positions,
-        centerPath,
+        view,
         hoveredPath,
         palette
       );
@@ -825,16 +954,23 @@ window.WikiGraphRender = (function () {
 
     attachCamera(canvas, camera, width, height, paint, {
       hitTest: function (viewPt) {
-        return hitNode(nodes, positions, centerPath, viewPt, camera);
+        return hitNode(nodes, positions, view, viewPt, camera);
       },
       onActivate: navigateTo,
     });
     paint(null);
+    live = {
+      view: view,
+      repaint: function () {
+        geomDirty = true;
+        paint(lastHover);
+      },
+    };
     lastBackend = "webgl";
     return true;
   }
 
-  function tryCanvas(container, nodes, edges, positions, width, height, centerPath, palette) {
+  function tryCanvas(container, nodes, edges, positions, width, height, palette, view, graphKey) {
     var canvas = document.createElement("canvas");
     var ctx = null;
     try {
@@ -850,10 +986,10 @@ window.WikiGraphRender = (function () {
     canvas.setAttribute("role", "img");
     canvas.setAttribute("aria-label", "Document graph");
     var dpr = sizeCanvas(canvas, width, height);
-    var camera = { scale: 1, tx: 0, ty: 0 };
+    var camera = cameraFor(graphKey);
 
     function paint(hoveredPath) {
-      drawGraph2d(ctx, dpr, camera, nodes, edges, positions, centerPath, hoveredPath, palette);
+      drawGraph2d(ctx, dpr, camera, nodes, edges, positions, view, hoveredPath, palette);
     }
 
     surface.appendChild(canvas);
@@ -862,16 +998,22 @@ window.WikiGraphRender = (function () {
 
     attachCamera(canvas, camera, width, height, paint, {
       hitTest: function (viewPt) {
-        return hitNode(nodes, positions, centerPath, viewPt, camera);
+        return hitNode(nodes, positions, view, viewPt, camera);
       },
       onActivate: navigateTo,
     });
     paint(null);
+    live = {
+      view: view,
+      repaint: function () {
+        paint(null);
+      },
+    };
     lastBackend = "canvas";
     return true;
   }
 
-  function renderSvg(container, nodes, edges, positions, width, height, centerPath) {
+  function renderSvg(container, nodes, edges, positions, width, height, view, graphKey) {
     var svg = document.createElementNS(NS, "svg");
     svg.setAttribute("viewBox", "0 0 " + width + " " + height);
     svg.setAttribute("class", "graph-svg");
@@ -884,6 +1026,7 @@ window.WikiGraphRender = (function () {
 
     var edgesGroup = document.createElementNS(NS, "g");
     edgesGroup.setAttribute("class", "graph-edges");
+    var edgeEls = [];
     edges.forEach(function (edge) {
       var a = positions[edge.source];
       var b = positions[edge.target];
@@ -893,25 +1036,29 @@ window.WikiGraphRender = (function () {
       line.setAttribute("y1", a.y);
       line.setAttribute("x2", b.x);
       line.setAttribute("y2", b.y);
-      line.setAttribute("class", "graph-edge");
+      var edgeDim = edgeIsDimmed(edge, nodes, view);
+      line.setAttribute("class", "graph-edge" + (edgeDim ? " graph-dim" : ""));
       edgesGroup.appendChild(line);
+      edgeEls.push({ edge: edge, el: line });
     });
     viewport.appendChild(edgesGroup);
 
     var nodesGroup = document.createElementNS(NS, "g");
     nodesGroup.setAttribute("class", "graph-nodes");
+    var labelEls = [];
     nodes.forEach(function (node) {
       var p = positions[node.path];
       if (!p) return;
-      var isCenter = node.path === centerPath;
+      var isCenter = node.path === view.centerPath;
 
       var link = document.createElementNS(NS, "a");
       link.setAttribute("href", nodeHref(node.path));
+      if (isDimmed(node, view, null)) link.setAttribute("class", "graph-dim");
 
       var circle = document.createElementNS(NS, "circle");
       circle.setAttribute("cx", p.x);
       circle.setAttribute("cy", p.y);
-      circle.setAttribute("r", isCenter ? CENTER_R : NODE_R);
+      circle.setAttribute("r", nodeRadius(node, view.centerPath, view.degrees));
       circle.setAttribute("class", "graph-node" + (isCenter ? " graph-node-center" : ""));
 
       // .textContent, never innerHTML/string concatenation -- every node
@@ -924,6 +1071,7 @@ window.WikiGraphRender = (function () {
       label.setAttribute("y", p.y + (isCenter ? CENTER_LABEL_DY : LABEL_DY));
       label.setAttribute("class", "graph-label");
       label.textContent = nodeLabel(node);
+      labelEls.push({ node: node, el: label, link: link });
 
       link.appendChild(circle);
       link.appendChild(label);
@@ -935,19 +1083,61 @@ window.WikiGraphRender = (function () {
     viewport.appendChild(nodesGroup);
     container.appendChild(svg);
 
-    var camera = { scale: 1, tx: 0, ty: 0 };
-    attachCamera(svg, camera, width, height, function () {
+    var camera = cameraFor(graphKey);
+
+    function syncSvgLabels(hoveredPath) {
+      var i;
+      for (i = 0; i < labelEls.length; i++) {
+        var item = labelEls[i];
+        var on = showLabel(item.node, view, hoveredPath, camera.scale);
+        if (on) item.el.classList.remove("is-hidden");
+        else item.el.classList.add("is-hidden");
+      }
+    }
+
+    attachCamera(svg, camera, width, height, function (hoveredPath) {
       viewport.setAttribute(
         "transform",
         "translate(" + camera.tx + "," + camera.ty + ") scale(" + camera.scale + ")"
       );
-    }, {});
+      syncSvgLabels(hoveredPath);
+    }, {
+      hitTest: function (viewPt) {
+        return hitNode(nodes, positions, view, viewPt, camera);
+      },
+      onActivate: navigateTo,
+    });
+    viewport.setAttribute(
+      "transform",
+      "translate(" + camera.tx + "," + camera.ty + ") scale(" + camera.scale + ")"
+    );
+    syncSvgLabels(null);
+    live = {
+      view: view,
+      repaint: function () {
+        var i;
+        for (i = 0; i < labelEls.length; i++) {
+          var item = labelEls[i];
+          if (isDimmed(item.node, view, null)) item.link.setAttribute("class", "graph-dim");
+          else item.link.removeAttribute("class");
+        }
+        for (i = 0; i < edgeEls.length; i++) {
+          var ee = edgeEls[i];
+          var dim = edgeIsDimmed(ee.edge, nodes, view);
+          ee.el.setAttribute("class", "graph-edge" + (dim ? " graph-dim" : ""));
+        }
+        syncSvgLabels(null);
+      },
+    };
     lastBackend = "svg";
   }
 
-  function paintGraph(container, nodes, edges, positions, width, height, centerPath, options) {
+  function paintGraph(container, nodes, edges, positions, width, height, options) {
+    live = null;
     container.innerHTML = "";
     var palette = readPalette(container);
+    var view = makeView(edges, options);
+    var graphKey = options.graphKey || "";
     var forced = options.backend;
     var order;
     if (forced === "webgl" || forced === "canvas" || forced === "svg") {
@@ -961,20 +1151,20 @@ window.WikiGraphRender = (function () {
     var i;
     for (i = 0; i < order.length; i++) {
       if (order[i] === "webgl") {
-        if (tryWebGL(container, nodes, edges, positions, width, height, centerPath, palette)) {
+        if (tryWebGL(container, nodes, edges, positions, width, height, palette, view, graphKey)) {
           return;
         }
         container.innerHTML = "";
         continue;
       }
       if (order[i] === "canvas") {
-        if (tryCanvas(container, nodes, edges, positions, width, height, centerPath, palette)) {
+        if (tryCanvas(container, nodes, edges, positions, width, height, palette, view, graphKey)) {
           return;
         }
         container.innerHTML = "";
         continue;
       }
-      renderSvg(container, nodes, edges, positions, width, height, centerPath);
+      renderSvg(container, nodes, edges, positions, width, height, view, graphKey);
       return;
     }
   }
@@ -987,6 +1177,9 @@ window.WikiGraphRender = (function () {
       job.boxW,
       job.boxH
     );
+    var opts = job.options || {};
+    opts.graphKey = job.key;
+    if (!opts.centerPath) opts.centerPath = job.centerPath;
     paintGraph(
       job.container,
       job.nodes,
@@ -994,8 +1187,7 @@ window.WikiGraphRender = (function () {
       applyPad(fitted, job.pad),
       job.width,
       job.height,
-      job.centerPath,
-      job.options
+      opts
     );
   }
 
@@ -1005,6 +1197,11 @@ window.WikiGraphRender = (function () {
   // graph page omits it. `options.backend` may force "webgl" / "canvas"
   // / "svg" (tests); omitted, we walk the ladder and skip a rung that
   // fails to actually initialize.
+  // `options.query` dims non-matching nodes (title/path substring, plus
+  // any paths in `options.matchPaths` from FTS content match).
+  // `options.labels` is "all" (default, local graph), "hover", or "auto"
+  // (hover + hubs + zoomed-in). `options.emptyText` overrides the empty
+  // state copy.
   //
   // Layout is async (Worker). Same node/edge set + a new box (resize)
   // scales the cached coordinates instead of simulating again.
@@ -1027,7 +1224,7 @@ window.WikiGraphRender = (function () {
       container.innerHTML = "";
       var empty = document.createElement("p");
       empty.className = "graph-empty";
-      empty.textContent = "No documents to show.";
+      empty.textContent = options.emptyText || "No documents to show.";
       container.appendChild(empty);
       lastBackend = null;
       layoutCache = { key: "", positions: null, boxW: 0, boxH: 0 };
@@ -1075,11 +1272,29 @@ window.WikiGraphRender = (function () {
     });
   }
 
+  function setView(partial) {
+    if (!live || !live.view || typeof live.repaint !== "function") return false;
+    if (partial.query !== undefined) {
+      live.view.query = String(partial.query || "").trim();
+    }
+    if (partial.labels !== undefined) {
+      var mode = partial.labels;
+      if (mode !== "auto" && mode !== "hover" && mode !== "all") mode = "all";
+      live.view.labelMode = mode;
+    }
+    if (partial.matchPaths !== undefined) {
+      live.view.matchPaths = partial.matchPaths || {};
+    }
+    live.repaint();
+    return true;
+  }
+
   return {
     layout: function (nodes, edges, width, height) {
       return syncLayout(nodes, edges, width, height);
     },
     render: render,
+    setView: setView,
     backend: function () {
       return lastBackend;
     },

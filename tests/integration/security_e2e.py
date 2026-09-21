@@ -477,10 +477,12 @@ def run_checks(sandbox, vault):
           ("notes/graph-pub-source.md", "notes/graph-priv-target.md") in admin_edges,
           f"edges={admin_edges}")
 
-    # --- 6c2. GET /api/graph?around= (server-side 1-hop neighborhood) --
-    # PathGuard + fail-safe-private, hops server-fixed at 1, exact bind
-    # (not LIKE). Same 404-not-403 as GET /api/documents for private/
-    # missing/traversal, and an edge still requires BOTH ends visible.
+    # --- 6c2. GET /api/graph?around= (connected component) -------------
+    # PathGuard + fail-safe-private, depth is the full visible component
+    # (not 1-hop, not a client hops=), exact bind (not LIKE). Same
+    # 404-not-403 as GET /api/documents for private/missing/traversal,
+    # and an edge still requires BOTH ends visible. A private document
+    # is not a stepping stone to a further public one.
     status, _, _ = admin.post_json(
         "/api/documents",
         {"path": "notes/around-center.md", "title": "Around Center", "tags": [],
@@ -518,19 +520,23 @@ def run_checks(sandbox, vault):
           "notes/around-pub.md" in anon_around_paths and
           "notes/around-priv.md" not in anon_around_paths,
           f"paths={anon_around_paths}")
-    check("anon around=center: 1-hop only, two-hop public document excluded",
-          "notes/around-twohop.md" not in anon_around_paths,
+    check("anon around=center: public two-hop (via public neighbor) is included",
+          "notes/around-twohop.md" in anon_around_paths,
           f"paths={anon_around_paths}")
+    check("anon around=center: public two-hop edge is present",
+          ("notes/around-pub.md", "notes/around-twohop.md") in anon_around_edges,
+          f"edges={anon_around_edges}")
     check("anon around=center: public edge present, private-touching edge absent",
           ("notes/around-center.md", "notes/around-pub.md") in anon_around_edges and
           ("notes/around-center.md", "notes/around-priv.md") not in anon_around_edges,
           f"edges={anon_around_edges}")
 
-    # hops= from the client is ignored — still 1 hop, not a recursive walk.
-    status, _, body = anon.get_json(around_center + "&hops=99")
+    # hops= from the client is ignored — depth is the full component, so
+    # hops=0 must NOT shrink the result back to just the center.
+    status, _, body = anon.get_json(around_center + "&hops=0")
     hops_paths = [n["path"] for n in body["nodes"]]
-    check("anon around=center&hops=99 still excludes the two-hop document",
-          "notes/around-twohop.md" not in hops_paths, f"paths={hops_paths}")
+    check("anon around=center&hops=0 still includes the two-hop document",
+          "notes/around-twohop.md" in hops_paths, f"paths={hops_paths}")
 
     status, _, body = anon.get(
         "/api/graph?around=" + urllib.parse.quote("notes/around-priv.md", safe=""))
@@ -549,6 +555,47 @@ def run_checks(sandbox, vault):
     check("admin around=private: the inbound edge is present",
           ("notes/around-center.md", "notes/around-priv.md") in admin_priv_edges,
           f"edges={admin_priv_edges}")
+
+    # Private document as a stepping stone: A(public)→B(private)→C(public)
+    # must not reveal C to an anonymous around=A (they cannot see B, so
+    # they cannot walk through it).
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/around-step-a.md", "title": "Step A", "tags": [],
+         "visibility": "public", "type": "note",
+         "body": "Links to [[notes/around-step-b]]."},
+        headers={"X-CSRF-Token": csrf})
+    check("create around-step-a doc -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/around-step-b.md", "title": "Step B", "tags": [],
+         "visibility": "private", "type": "note",
+         "body": "Links to [[notes/around-step-c]]."},
+        headers={"X-CSRF-Token": csrf})
+    check("create around-step-b doc -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/around-step-c.md", "title": "Step C", "tags": [],
+         "visibility": "public", "type": "note", "body": "only reachable via private B"},
+        headers={"X-CSRF-Token": csrf})
+    check("create around-step-c doc -> 201", status == 201, f"got {status}")
+
+    status, _, body = anon.get_json(
+        "/api/graph?around=" + urllib.parse.quote("notes/around-step-a.md", safe=""))
+    step_paths = [n["path"] for n in body["nodes"]]
+    check("anon around=step-a does not walk through private B to public C",
+          "notes/around-step-a.md" in step_paths and
+          "notes/around-step-b.md" not in step_paths and
+          "notes/around-step-c.md" not in step_paths,
+          f"paths={step_paths}")
+    status, _, body = admin.get_json(
+        "/api/graph?around=" + urllib.parse.quote("notes/around-step-a.md", safe=""))
+    admin_step_paths = [n["path"] for n in body["nodes"]]
+    check("admin around=step-a walks through private B to public C",
+          "notes/around-step-a.md" in admin_step_paths and
+          "notes/around-step-b.md" in admin_step_paths and
+          "notes/around-step-c.md" in admin_step_paths,
+          f"paths={admin_step_paths}")
 
     status, _, body = anon.get(
         "/api/graph?around=" + urllib.parse.quote("../../../etc/passwd"))
@@ -571,6 +618,49 @@ def run_checks(sandbox, vault):
     check("around= injection attempt did not drop the documents table",
           status == 200 and "notes/around-center.md" in [n["path"] for n in body["nodes"]],
           f"status={status} nodes={len(body.get('nodes', [])) if isinstance(body, dict) else 'n/a'}")
+
+    # --- 6c3. GET /api/graph/matches?q= (FTS paths for graph filter) ---
+    # Same visibility gate as /api/search: a private body's unique token
+    # must not appear in an anonymous path list. Empty q is an empty
+    # list, not every document. Paths only — no snippets.
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/graph-match-pub.md", "title": "Graph Match Pub", "tags": [],
+         "visibility": "public", "type": "note",
+         "body": "graphmatchxyzzyquux appears only in this public body."},
+        headers={"X-CSRF-Token": csrf})
+    check("create graph-match public doc -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/graph-match-priv.md", "title": "Graph Match Priv", "tags": [],
+         "visibility": "private", "type": "note",
+         "body": "graphmatchxyzzyquux also appears in this private body."},
+        headers={"X-CSRF-Token": csrf})
+    check("create graph-match private doc -> 201", status == 201, f"got {status}")
+
+    status, _, body = anon.get_json(
+        "/api/graph/matches?q=" + urllib.parse.quote("graphmatchxyzzyquux"))
+    anon_match = body.get("paths", []) if isinstance(body, dict) else []
+    check("anon graph/matches: public body hit, private path absent",
+          "notes/graph-match-pub.md" in anon_match and
+          "notes/graph-match-priv.md" not in anon_match,
+          f"paths={anon_match}")
+    check("anon graph/matches body has paths only, no snippets",
+          isinstance(body, dict) and "results" not in body and "snippet" not in str(body),
+          f"body keys={list(body) if isinstance(body, dict) else type(body)}")
+
+    status, _, body = admin.get_json(
+        "/api/graph/matches?q=" + urllib.parse.quote("graphmatchxyzzyquux"))
+    admin_match = body.get("paths", []) if isinstance(body, dict) else []
+    check("admin graph/matches: both public and private body hits",
+          "notes/graph-match-pub.md" in admin_match and
+          "notes/graph-match-priv.md" in admin_match,
+          f"paths={admin_match}")
+
+    status, _, body = anon.get_json("/api/graph/matches")
+    empty_match = body.get("paths", None) if isinstance(body, dict) else None
+    check("anon graph/matches with empty q is an empty list, not every document",
+          empty_match == [], f"paths={empty_match}")
 
     # --- 7. Attachments: visibility follows the OWNING document --------
     # No extension policy on upload anymore (see AttachmentService) — an

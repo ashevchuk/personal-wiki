@@ -1,6 +1,7 @@
 #include "controllers/GraphRoutes.h"
 
 #include "auth/RequireAdmin.h"
+#include "index/FtsSearch.h"
 #include "vault/PathGuard.h"
 
 #include <drogon/HttpResponse.h>
@@ -57,14 +58,21 @@ HttpResponsePtr graphJson(const std::vector<GraphNode>& nodes,
 
 // GET, read-only, same reasoning as NavRoutes.cpp/QueryRoutes.cpp: no
 // mutation, no CSRF token needed. GET /api/graph is the full visible
-// graph; GET /api/graph?around=path is the 1-hop neighborhood of that
-// document. around= is untrusted caller input — PathGuard first, then
+// graph; GET /api/graph?around=path is the connected component of that
+// document over visible [[wiki-link]] edges (undirected, induced
+// subgraph). around= is untrusted caller input — PathGuard first, then
 // an exact (bound) path lookup, never LIKE. Missing, private-to-anon,
 // and a PathGuard rejection are all 404 with the same body as GET
 // /api/documents (existence of private content is not revealed). hops=
-// from the client is ignored; neighborhood depth is server-fixed at 1.
+// from the client is ignored; depth is the full component, not a
+// client-chosen hop count.
+//
+// GET /api/graph/matches?q= is a path list for the graph page's content
+// filter: FTS5 MATCH (title/body/tags), same visibility gate as
+// /api/search, unranked, no snippets. Empty q is an empty list, not
+// every document. Hybrid semantic ranking is deliberately not used.
 void registerGraphRoutes(HttpAppFramework& app, GraphQueries& graph,
-                         VaultRepository& vault) {
+                         FtsSearch& search, VaultRepository& vault) {
   app.registerHandler(
       "/api/graph",
       [&graph, &vault](const HttpRequestPtr& req,
@@ -95,6 +103,20 @@ void registerGraphRoutes(HttpAppFramework& app, GraphQueries& graph,
           return;
         }
         callback(graphJson(neighborhood->nodes, neighborhood->edges));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
+  app.registerHandler(
+      "/api/graph/matches",
+      [&search](const HttpRequestPtr& req,
+                std::function<void(const HttpResponsePtr&)>&& callback) {
+        const bool includePrivate = isAuthenticated(req);
+        const auto paths = search.matchingPaths(req->getParameter("q"), includePrivate);
+        Json::Value body;
+        Json::Value arr(Json::arrayValue);
+        for (const auto& p : paths) arr.append(p);
+        body["paths"] = arr;
+        callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Get, "wikicore::auth::AuthFilter"});
 }

@@ -91,8 +91,9 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   Layout is a from-scratch Barnes-Hut simulation in a Worker (O(n log n);
   a window resize scales cached coordinates instead of simulating again).
   Paint falls through WebGL → canvas → SVG. Click-drag pans, wheel zooms.
-  A full `/graph` page for the whole vault, plus a "Local graph" widget on
-  each document (itself + its 1-hop neighbors) in a right rail.
+  A full `/graph` page for the whole vault (filter by title or content,
+  hide unlinked, label density), plus a "Local graph" widget on each
+  document (its connected component over `[[wiki-link]]`s) in a right rail.
 - **Document history.** Every edit is snapshotted; diff any two versions, restore any
   of them (which itself snapshots first — restoring is undoable too).
 - **Fail-safe-private visibility.** Missing or malformed front-matter defaults to

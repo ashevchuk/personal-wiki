@@ -243,3 +243,37 @@ TEST_CASE("FtsSearch treats FTS5-syntax-colliding words as literal text, "
   qQuote.includePrivate = true;
   REQUIRE_NOTHROW(search.search(qQuote));
 }
+
+TEST_CASE("FtsSearch matchingPaths is FTS MATCH over body, visibility-gated, "
+          "empty query returns nothing",
+          "[FtsSearch]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("pub.md", "Public Title", "public", "note", {},
+                               "uniquebodytoken lives only in this public body"));
+  updater.upsertOne(makeEntry("priv.md", "Private Title", "private", "note", {},
+                               "uniquebodytoken also lives in this private body"));
+  updater.upsertOne(makeEntry("other.md", "Other", "public", "note", {},
+                               "unrelated prose"));
+
+  FtsSearch search(database);
+
+  REQUIRE(search.matchingPaths("", false).empty());
+  REQUIRE(search.matchingPaths("   ", true).empty());
+
+  const auto anon = search.matchingPaths("uniquebodytoken", false);
+  REQUIRE(anon.size() == 1);
+  REQUIRE(anon[0] == "pub.md");
+
+  const auto admin = search.matchingPaths("uniquebodytoken", true);
+  REQUIRE(admin.size() == 2);
+  REQUIRE(admin[0] == "priv.md");  // ORDER BY path
+  REQUIRE(admin[1] == "pub.md");
+
+  // Title column is in the same FTS index as body.
+  const auto byTitle = search.matchingPaths("Public", true);
+  REQUIRE(byTitle.size() == 1);
+  REQUIRE(byTitle[0] == "pub.md");
+}

@@ -373,7 +373,7 @@ body.sidebar-resizing {
    a wide empty gutter beside a clipped 1200×800 SVG (labels chopped at
    the viewBox edge). Found live from a production screenshot, not
    guessed. Drops the cap, pins this pane to one viewport, and lets
-   #graph-container eat whatever the heading+hint don't. Full page
+   #graph-container eat whatever the heading+toolbar don't. Full page
    reload on every navigation, so this class cannot leak onto a later
    page (added in pages/graph.js, never removed). */
 .content--graph {
@@ -388,6 +388,7 @@ body.sidebar-resizing {
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+  background: var(--bg);
 }
 
 form p {
@@ -724,6 +725,7 @@ a.btn:focus {
      drag (or a wheel over the local-graph widget) scrolls the page
      instead. */
   touch-action: none;
+  background: var(--bg);
 }
 .graph-surface {
   position: relative;
@@ -736,6 +738,7 @@ a.btn:focus {
 }
 .graph-canvas-labels {
   pointer-events: none;
+  background: transparent;
 }
 .graph-svg.is-panning,
 .graph-canvas.is-panning,
@@ -799,6 +802,48 @@ a.btn:focus {
 .graph-hint {
   color: var(--fg-dim);
   margin-bottom: 1rem;
+}
+.graph-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 1rem;
+  margin: 0 0 0.75rem;
+  flex: 0 0 auto;
+}
+.graph-toolbar input[type="search"] {
+  flex: 1 1 16rem;
+  min-width: 10rem;
+}
+.graph-toolbar .checkbox-label {
+  margin: 0;
+  color: var(--fg-dim);
+}
+.graph-toolbar-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+.graph-toolbar-field select {
+  width: auto;
+}
+.graph-label.is-hidden {
+  visibility: hidden;
+}
+.graph-nodes a:hover .graph-label,
+.graph-nodes a:focus .graph-label {
+  visibility: visible;
+}
+.graph-dim {
+  opacity: 0.4;
+}
+.graph-nodes a.graph-dim:hover,
+.graph-nodes a.graph-dim:focus {
+  opacity: 1;
 }
 .graph-empty {
   color: var(--fg-dim);

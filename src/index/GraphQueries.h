@@ -49,16 +49,24 @@ class GraphQueries {
   // node for exactly this case, which this app doesn't attempt yet.
   std::vector<GraphEdge> edges(bool includePrivate) const;
 
-  // 1-hop neighborhood of `centerPath` (the document itself plus every
-  // visible document that shares a visible edge with it). std::nullopt
-  // if that path is not a document visible to this caller — missing and
-  // private-to-anon are the same result, so the HTTP handler can map
-  // both to 404 without distinguishing them. An isolated but visible
-  // document returns a neighborhood of just itself (empty edges).
+  // Connected component of `centerPath` over visible [[wiki-link]]
+  // edges, walked undirected: the document itself plus every visible
+  // document reachable from it through any number of visible hops, and
+  // every visible edge among those nodes (the induced subgraph, so an
+  // edge between two neighbors is included even when it doesn't touch
+  // the center). std::nullopt if that path is not a document visible to
+  // this caller — missing and private-to-anon are the same result, so
+  // the HTTP handler can map both to 404 without distinguishing them.
+  // An isolated but visible document returns a neighborhood of just
+  // itself (empty edges). A private document is never a stepping stone:
+  // an anonymous caller does not reach a further public document through
+  // a private one they cannot see.
   //
-  // Hop count is server-fixed at 1: this is a single bound join, not a
-  // recursive CTE, and GraphRoutes ignores any client `hops=` query
-  // param rather than threading it through here.
+  // Depth is the full component, not a client-chosen hop count:
+  // GraphRoutes ignores any `hops=` query param rather than threading
+  // it through here. A vault that's one giant cluster makes this the
+  // same payload as nodes()/edges() for that caller; that's the
+  // correct local graph, not a bug.
   std::optional<GraphNeighborhood> around(const std::string& centerPath,
                                           bool includePrivate) const;
 
