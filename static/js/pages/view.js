@@ -10,19 +10,121 @@ window.WikiPages = window.WikiPages || {};
   var escapeHtml = WikiCommon.escapeHtml;
   var renderBreadcrumbs = WikiCommon.renderBreadcrumbs;
 
-  // Local graph widget: this document plus its 1-hop [[wiki-link]]
-  // neighbors, rendered the same way the full graph page does (see
-  // graph-render.js). Fetches the SAME /api/graph payload the full
-  // graph page uses and filters client-side (WikiGraphRender.neighborsOf)
-  // rather than a dedicated server-side query — see GraphQueries.h's own
-  // comment on why that split isn't worth it at this app's real scale.
-  // Omitted entirely (same "don't show an empty section" discipline as
-  // the backlinks list right above it) when the document has no
-  // neighbors at all — a one-node graph with nothing connected to it
-  // isn't worth a widget.
+  // Local graph: this document plus its 1-hop [[wiki-link]] neighbors,
+  // rendered the same way the full graph page does (see graph-render.js).
+  // Fetches the SAME /api/graph payload the full graph page uses and
+  // filters client-side (WikiGraphRender.neighborsOf) rather than a
+  // dedicated server-side query — see GraphQueries.h's own comment on
+  // why that split isn't worth it at this app's real scale.
+  //
+  // Lives in a right-edge rail, NOT in the document flow: a 500×320
+  // widget under the markdown sat in empty space after the last
+  // paragraph (a real screenshot of a two-node graph, not guessed) and
+  // read as page content rather than navigation chrome. Omitted
+  // entirely (same "don't show an empty section" discipline as the
+  // backlinks list) when the document has no neighbors at all. Hidden
+  // on the stacked/narrow breakpoint and in print — a third column
+  // next to an already-stacked sidebar, or a graph in a print-out, is
+  // worse than no graph.
+  var LOCAL_GRAPH_OPEN_KEY = "wiki.localGraphOpen";
+  var GRAPH_ICON =
+    '<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="6" cy="6" r="2.2"/>' +
+    '<circle cx="18" cy="6" r="2.2"/>' +
+    '<circle cx="12" cy="18" r="2.2"/>' +
+    '<path d="M7.8 7.3 10.6 16M16.2 7.3 13.4 16M8.2 6h7.6"/>' +
+    "</svg>";
+
+  function readLocalGraphOpen() {
+    try {
+      return sessionStorage.getItem(LOCAL_GRAPH_OPEN_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function writeLocalGraphOpen(open) {
+    try {
+      sessionStorage.setItem(LOCAL_GRAPH_OPEN_KEY, open ? "1" : "0");
+    } catch (e) {
+      // Blocked/unavailable sessionStorage — the rail still toggles
+      // in-memory for this page; it just won't reopen after clicking
+      // a neighbor (a full page reload, see router.js).
+    }
+  }
+
+  function drawLocalGraph(wrap, local, docPath) {
+    var rect = wrap.getBoundingClientRect();
+    window.WikiGraphRender.render(wrap, local.nodes, local.edges, {
+      width: Math.max(Math.floor(rect.width), 1),
+      height: Math.max(Math.floor(rect.height), 1),
+      centerPath: docPath,
+      pad: 40,
+    });
+  }
+
+  function mountLocalGraphRail(docPath, local) {
+    var existing = document.querySelector(".local-graph-rail");
+    if (existing) existing.parentNode.removeChild(existing);
+
+    var rail = document.createElement("aside");
+    rail.className = "local-graph-rail";
+    rail.innerHTML =
+      '<button type="button" class="local-graph-toggle" aria-label="Local graph" title="Local graph" aria-expanded="false">' +
+      GRAPH_ICON +
+      "</button>" +
+      '<div class="local-graph-panel">' +
+      "<h3>Local graph</h3>" +
+      '<div id="local-graph-svg"></div>' +
+      "</div>";
+    document.body.appendChild(rail);
+
+    var toggle = rail.querySelector(".local-graph-toggle");
+    var wrap = document.getElementById("local-graph-svg");
+    var resizeTimer = null;
+
+    function setOpen(open) {
+      rail.classList.toggle("is-open", open);
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      writeLocalGraphOpen(open);
+      if (open) {
+        // Panel is display:none while collapsed, so its box is 0×0
+        // until the class lands and the browser lays it out. Draw on
+        // the next frame, once getBoundingClientRect() is the real
+        // leftover under the heading.
+        requestAnimationFrame(function () {
+          drawLocalGraph(wrap, local, docPath);
+        });
+      }
+    }
+
+    toggle.addEventListener("click", function () {
+      setOpen(!rail.classList.contains("is-open"));
+    });
+
+    document.addEventListener("keydown", function (evt) {
+      if (evt.key === "Escape" && rail.classList.contains("is-open")) {
+        setOpen(false);
+      }
+    });
+
+    window.addEventListener("resize", function () {
+      if (!rail.classList.contains("is-open")) return;
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        drawLocalGraph(wrap, local, docPath);
+      }, 150);
+    });
+
+    // sessionStorage, not localStorage: "I opened this to hop to a
+    // neighbor" should survive the full page reload that click causes
+    // (router.js), but a new browser session should still land
+    // collapsed — this is a peek, not a chrome preference like theme
+    // or sidebar width.
+    if (readLocalGraphOpen()) setOpen(true);
+  }
+
   function renderLocalGraph(docPath) {
-    var widgetContainer = document.getElementById("local-graph-container");
-    if (!widgetContainer) return;
     fetch(basePath() + "/api/graph", { credentials: "same-origin" })
       .then(function (resp) {
         if (!resp.ok) throw new Error("HTTP " + resp.status);
@@ -31,15 +133,12 @@ window.WikiPages = window.WikiPages || {};
       .then(function (data) {
         var local = window.WikiGraphRender.neighborsOf(docPath, data.nodes, data.edges, 1);
         if (local.nodes.length <= 1) return;  // just this document, no real neighbors
-        widgetContainer.innerHTML = '<h3>Local graph</h3><div id="local-graph-svg"></div>';
-        widgetContainer.className = "local-graph";
-        window.WikiGraphRender.render(document.getElementById("local-graph-svg"),
-          local.nodes, local.edges, { width: 500, height: 320, centerPath: docPath });
+        mountLocalGraphRail(docPath, local);
       })
       .catch(function () {
         // A failed local-graph fetch is cosmetic, not core page content
-        // (unlike the document body itself) -- leave the placeholder
-        // empty rather than showing an error where a small widget was
+        // (unlike the document body itself) -- leave the page without a
+        // rail rather than showing an error where a small widget was
         // expected.
       });
   }
@@ -152,7 +251,9 @@ window.WikiPages = window.WikiPages || {};
         // after it — WikiSectionZoom needs a container scoped to just
         // the zoomable content, or "zoom into this section" would also
         // hide the Edit/Delete buttons and breadcrumb trail along with
-        // everything else at the same DOM level.
+        // everything else at the same DOM level. The local-graph rail
+        // is appended to document.body, not here, for the same reason
+        // (it's position:fixed chrome, not document content).
         container.innerHTML =
           renderBreadcrumbs(docPath) +
           printBar +
@@ -161,8 +262,7 @@ window.WikiPages = window.WikiPages || {};
           titleHtml +
           doc.renderedHtml +
           "</div>" +
-          backlinksHtml +
-          '<div id="local-graph-container"></div>';
+          backlinksHtml;
 
         if (window.WikiMermaid) {
           window.WikiMermaid.renderIn(container);

@@ -154,6 +154,13 @@ window.WikiGraphRender = (function () {
     var width = options.width || 800;
     var height = options.height || 500;
     var centerPath = options.centerPath || null;
+    // Inset the force simulation so labels (text-anchor:middle under
+    // each node, easily 80-110px wide) stay inside the viewBox instead
+    // of being clipped by SVG's default overflow:hidden. Both the full
+    // graph page and the local-graph rail pass this; a caller that
+    // omits it (pad 0) is laying out into a box that's already padded
+    // by its own CSS.
+    var pad = options.pad || 0;
 
     container.innerHTML = "";
     if (nodes.length === 0) {
@@ -164,11 +171,29 @@ window.WikiGraphRender = (function () {
       return;
     }
 
-    var positions = layout(nodes, edges, width, height);
+    var positions = layout(
+      nodes,
+      edges,
+      Math.max(width - 2 * pad, 1),
+      Math.max(height - 2 * pad, 1)
+    );
+    if (pad) {
+      Object.keys(positions).forEach(function (k) {
+        positions[k].x += pad;
+        positions[k].y += pad;
+      });
+    }
 
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 " + width + " " + height);
     svg.setAttribute("class", "graph-svg");
+
+    // Everything (edges + nodes) lives inside ONE group so a single
+    // transform zooms both together -- wired up by attachWheelZoom()
+    // below, once this group and its own children exist.
+    var viewport = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    viewport.setAttribute("class", "graph-viewport");
+    svg.appendChild(viewport);
 
     var edgesGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     edgesGroup.setAttribute("class", "graph-edges");
@@ -184,7 +209,7 @@ window.WikiGraphRender = (function () {
       line.setAttribute("class", "graph-edge");
       edgesGroup.appendChild(line);
     });
-    svg.appendChild(edgesGroup);
+    viewport.appendChild(edgesGroup);
 
     var nodesGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
     nodesGroup.setAttribute("class", "graph-nodes");
@@ -220,9 +245,182 @@ window.WikiGraphRender = (function () {
       link.appendChild(titleEl);
       nodesGroup.appendChild(link);
     });
-    svg.appendChild(nodesGroup);
+    viewport.appendChild(nodesGroup);
 
     container.appendChild(svg);
+    attachPanZoom(svg, viewport);
+  }
+
+  // Pointer position in the SVG's own user-coordinate space (the
+  // viewBox's units), NOT raw screen pixels -- getScreenCTM() is the
+  // browser's own current screen<->SVG mapping, already accounting for
+  // the viewBox scaling CSS does to fit the SVG's rendered box.
+  // Shared by wheel-zoom (needs the cursor's svg-space point to zoom
+  // toward) and drag-pan (needs the same conversion so a mouse delta
+  // becomes a translate delta in the same space the transform lives in).
+  function clientToSvg(svg, evt) {
+    var ctm = svg.getScreenCTM();
+    if (!ctm) return null;
+    var pt = svg.createSVGPoint();
+    pt.x = evt.clientX;
+    pt.y = evt.clientY;
+    return pt.matrixTransform(ctm.inverse());
+  }
+
+  // Wheel zoom toward the cursor + click-drag pan. Same transform on
+  // the shared viewport group for both -- zooming in on a crowded
+  // cluster is only usable if you can then slide that cluster around
+  // without first zooming back out. Obsidian/maps/image-viewers all
+  // pair these; zoom-only left a zoomed graph stuck off-center.
+  function attachPanZoom(svg, viewport) {
+    var scale = 1;
+    var translateX = 0;
+    var translateY = 0;
+    var MIN_SCALE = 0.4;
+    var MAX_SCALE = 4;
+    // Multiplicative, not additive -- one wheel "click" always feels
+    // like the same proportional zoom step regardless of the current
+    // scale, matching how every other pan/zoom UI (maps, image viewers)
+    // behaves; an additive step would feel enormous when already
+    // zoomed out and imperceptible when already zoomed in.
+    var ZOOM_STEP = 1.12;
+    // Screen pixels, not svg-space -- a threshold in viewBox units
+    // would shrink under zoom and turn a tiny twitch into a pan (and
+    // swallow the click that should have opened the node). Nodes are
+    // real <a href>s; a drag that never moved still has to navigate.
+    // 4 was too tight: a normal click often jitters 4-6px, which
+    // flipped the gesture into a pan and then the capture-phase click
+    // handler below killed the <a>'s navigation (found live after pan
+    // shipped, not guessed).
+    var PAN_THRESHOLD_PX = 8;
+
+    var dragging = false;
+    var panning = false;
+    var suppressClick = false;
+    var lastSvgPt = null;
+    var dragStartClientX = 0;
+    var dragStartClientY = 0;
+
+    function applyTransform() {
+      viewport.setAttribute(
+        "transform",
+        "translate(" + translateX + "," + translateY + ") scale(" + scale + ")"
+      );
+    }
+
+    function endDrag(evt) {
+      if (!dragging) return;
+      dragging = false;
+      lastSvgPt = null;
+      svg.classList.remove("is-panning");
+      // pointercancel is not followed by a click -- drop the flag so
+      // the NEXT real click on a node isn't swallowed. pointerup is:
+      // the capture-phase click handler below consumes suppressClick
+      // if this gesture actually panned.
+      if (evt && evt.type === "pointercancel") suppressClick = false;
+      if (evt && svg.hasPointerCapture && svg.hasPointerCapture(evt.pointerId)) {
+        svg.releasePointerCapture(evt.pointerId);
+      }
+      panning = false;
+    }
+
+    svg.addEventListener(
+      "wheel",
+      function (evt) {
+        // preventDefault so scrolling the wheel over the graph zooms it
+        // instead of scrolling the surrounding page -- a graph embedded
+        // mid-page (the local-graph widget on a document view) would
+        // otherwise fight the page's own scroll on every wheel tick.
+        evt.preventDefault();
+
+        var svgPt = clientToSvg(svg, evt);
+        if (!svgPt) return;
+
+        var factor = evt.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP;
+        var newScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale * factor));
+        // Re-solves translateX/Y so the SAME svg-space point under the
+        // cursor lands back under the cursor after the scale changes --
+        // without this, zooming would visibly drift the graph out from
+        // under the mouse instead of zooming into whatever it's pointing
+        // at. Derivation: screen = scale*local + translate must hold for
+        // the cursor's own point both before and after, with `local`
+        // (the point's position in the untransformed viewport) constant.
+        var ratio = newScale / scale;
+        translateX = svgPt.x - ratio * (svgPt.x - translateX);
+        translateY = svgPt.y - ratio * (svgPt.y - translateY);
+        scale = newScale;
+        applyTransform();
+      },
+      { passive: false }
+    );
+
+    svg.addEventListener("pointerdown", function (evt) {
+      // Left button / primary touch only -- right-click is the
+      // browser's context menu, middle-click is "open in new tab" on
+      // the node <a>s and should stay that.
+      if (evt.button !== 0) return;
+      dragging = true;
+      panning = false;
+      suppressClick = false;
+      dragStartClientX = evt.clientX;
+      dragStartClientY = evt.clientY;
+      lastSvgPt = clientToSvg(svg, evt);
+      // Do NOT setPointerCapture here. Capturing on the <svg> from
+      // the initial pointerdown retargets the subsequent click onto
+      // the svg itself, so the child <a href> never activates --
+      // nodes looked clickable and did nothing. Found live after pan
+      // shipped. Capture only starts once this gesture has actually
+      // become a pan (see pointermove), so a still click still lands
+      // on the node.
+    });
+
+    svg.addEventListener("pointermove", function (evt) {
+      if (!dragging || !lastSvgPt) return;
+      if (!panning) {
+        var dxPx = evt.clientX - dragStartClientX;
+        var dyPx = evt.clientY - dragStartClientY;
+        if (dxPx * dxPx + dyPx * dyPx < PAN_THRESHOLD_PX * PAN_THRESHOLD_PX) {
+          return;
+        }
+        panning = true;
+        suppressClick = true;
+        svg.classList.add("is-panning");
+        // Capture only now, so a drag that leaves the svg keeps
+        // panning, without the click-retarget trap above.
+        if (svg.setPointerCapture) svg.setPointerCapture(evt.pointerId);
+      }
+      // preventDefault only once this is a real pan -- doing it on
+      // every pointerdown would also suppress the click that should
+      // open a node.
+      evt.preventDefault();
+      var svgPt = clientToSvg(svg, evt);
+      if (!svgPt) return;
+      // translate lives in viewBox space (same space clientToSvg
+      // returns). Adding the svg-space mouse delta keeps the point
+      // under the cursor glued to it: svg = scale*local + translate,
+      // local constant, so d(translate) = d(svg).
+      translateX += svgPt.x - lastSvgPt.x;
+      translateY += svgPt.y - lastSvgPt.y;
+      lastSvgPt = svgPt;
+      applyTransform();
+    }, { passive: false });
+
+    svg.addEventListener("pointerup", endDrag);
+    svg.addEventListener("pointercancel", endDrag);
+
+    // Capture so we beat the node <a>'s own navigation. A drag that
+    // started on a node must not follow the link; a click that never
+    // crossed PAN_THRESHOLD_PX still must.
+    svg.addEventListener(
+      "click",
+      function (evt) {
+        if (!suppressClick) return;
+        evt.preventDefault();
+        evt.stopPropagation();
+        suppressClick = false;
+      },
+      true
+    );
   }
 
   return { layout: layout, neighborsOf: neighborsOf, render: render };

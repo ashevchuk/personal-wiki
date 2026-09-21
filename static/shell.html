@@ -197,8 +197,26 @@
   <div class="sidebar-links">
     <a data-href="/search" href="#">Search</a>
     <a data-href="/folder" href="#">Browse</a>
-    <a data-href="/graph" href="#">Graph</a>
-    <button type="button" id="sidebar-new-doc" hidden>+ New</button>
+    <!-- Icon-only, same currentColor-SVG treatment as Admin/Log out/the
+         theme picker below -- was a plain text "Graph" link, inconsistent
+         with the icon-only siblings already in this row. Three nodes in
+         a triangle, joined by edges: a small, literal echo of what the
+         page itself renders, not an abstract stand-in. -->
+    <a data-href="/graph" href="#" aria-label="Graph" title="Graph">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="6" cy="6" r="2.2"/>
+        <circle cx="18" cy="6" r="2.2"/>
+        <circle cx="12" cy="18" r="2.2"/>
+        <path d="M7.8 7.3 10.6 16M16.2 7.3 13.4 16M8.2 6h7.6"/>
+      </svg>
+    </a>
+    <!-- Same icon-only treatment -- was "+ New" as literal text, the one
+         remaining non-icon control in this row. -->
+    <button type="button" id="sidebar-new-doc" hidden aria-label="New document" title="New document">
+      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 5v14M5 12h14"/>
+      </svg>
+    </button>
     <!-- Admin/Log out/Log in are icon-only (aria-label/title carry the
          name text lost from view — a bare glyph means nothing to a
          screen reader on its own, and a sighted visitor gets the same

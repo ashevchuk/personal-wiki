@@ -378,6 +378,26 @@ body.sidebar-resizing {
   padding: 1.5rem 2rem 3rem;
   max-width: 960px;
 }
+/* /graph is a canvas, not a reading column — the 960px cap above left
+   a wide empty gutter beside a clipped 1200×800 SVG (labels chopped at
+   the viewBox edge). Found live from a production screenshot, not
+   guessed. Drops the cap, pins this pane to one viewport, and lets
+   #graph-container eat whatever the heading+hint don't. Full page
+   reload on every navigation, so this class cannot leak onto a later
+   page (added in pages/graph.js, never removed). */
+.content--graph {
+  max-width: none;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 1.5rem;
+  overflow: hidden;
+}
+#graph-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
 
 form p {
   margin: 0.6rem 0;
@@ -613,27 +633,113 @@ a.btn:focus {
 }
 
 /* Graph (static/js/graph-render.js) -- shared by the full graph page
-   (/graph) and the local-graph widget on the document view page. Colors
-   come from this theme's own palette (--link for nodes/edges,
-   --fg-dim for labels) -- same discipline as mermaid/Prism/query-block:
-   no generic styling bolted on top of the theme. */
-.local-graph {
-  margin-top: 2rem;
-  padding-top: 1rem;
-  border-top: 1px solid var(--border);
+   (/graph) and the per-document local-graph rail. Colors come from this
+   theme's own palette (--link for nodes/edges, --fg-dim for labels) --
+   same discipline as mermaid/Prism/query-block: no generic styling
+   bolted on top of the theme.
+
+   The local graph is a right-edge drawer, not a block under the
+   markdown: a 500×320 widget in the document flow sat in empty space
+   after the last paragraph and read as page content. Overlay (does
+   not shrink .content) so opening it doesn't reflow the 960px reading
+   column. pointer-events:none on the rail itself so the full-height
+   strip around the centered toggle doesn't swallow clicks on the
+   page; only the button and the open panel receive them. */
+.local-graph-rail {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
 }
-.local-graph h3 {
+.local-graph-toggle {
+  pointer-events: auto;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 56px;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-bg);
+  color: var(--link);
+  border: 1px solid var(--border);
+  border-right: none;
+  border-radius: 6px 0 0 6px;
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0.7;
+}
+.local-graph-toggle:hover,
+.local-graph-toggle:focus,
+.local-graph-rail.is-open .local-graph-toggle {
+  background: var(--panel-bg);
+  color: var(--fg-bright);
+  opacity: 1;
+}
+.local-graph-toggle .nav-icon {
+  width: 16px;
+  height: 16px;
+  vertical-align: 0;
+}
+.local-graph-panel {
+  pointer-events: auto;
+  display: none;
+  flex-direction: column;
+  height: 100%;
+  width: 340px;
+  min-width: 0;
+  padding: 1rem 0.75rem 1rem;
+  background: var(--panel-bg);
+  border-left: 1px solid var(--border);
+  box-sizing: border-box;
+}
+.local-graph-rail.is-open .local-graph-panel {
+  display: flex;
+}
+.local-graph-panel h3 {
   font-family: inherit;
   font-size: 0.8rem;
   color: var(--fg-dim);
   text-transform: uppercase;
   letter-spacing: 0.05em;
   margin: 0 0 0.5rem;
+  flex: 0 0 auto;
+}
+#local-graph-svg {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
 }
 .graph-svg {
   width: 100%;
   height: auto;
   display: block;
+  cursor: grab;
+  /* Pan/zoom are handled on the SVG itself -- without this a finger
+     drag (or a wheel over the local-graph widget) scrolls the page
+     instead. */
+  touch-action: none;
+}
+.graph-svg.is-panning {
+  cursor: grabbing;
+}
+.graph-nodes a {
+  cursor: pointer;
+}
+/* Full graph page AND the open local-graph rail — both measure their
+   container and pass that size as the viewBox, so the SVG has to fill
+   the flex leftover 1:1, otherwise the simulation runs in the right
+   coordinate space and then CSS letterboxes it back into a short strip. */
+.content--graph .graph-svg,
+.local-graph-rail.is-open .graph-svg {
+  height: 100%;
 }
 .graph-edge {
   stroke: var(--border);
@@ -746,8 +852,24 @@ a.btn:focus {
   .content {
     padding: 1rem;
   }
+  /* Stacked sidebar sits ABOVE .content, so height:100vh on the graph
+     pane would be one full screen PLUS the sidebar, not "the leftover
+     below the nav". Drop the pin; a min-height on the SVG itself is
+     enough to keep the graph usable on a phone. */
+  .content--graph {
+    height: auto;
+    overflow: visible;
+  }
+  .content--graph .graph-svg {
+    height: 60vh;
+  }
   .sidebar-resizer {
     display: none;
+  }
+  /* Third column next to an already-stacked sidebar is worse than no
+     local graph — the full /graph page still exists. */
+  .local-graph-rail {
+    display: none !important;
   }
 }
 
@@ -1095,7 +1217,7 @@ h6:hover > .zoom-btn {
   .breadcrumbs,
   .zoom-btn,
   .zoom-banner,
-  .local-graph {
+  .local-graph-rail {
     display: none !important;
   }
 
@@ -1107,6 +1229,18 @@ h6:hover > .zoom-btn {
   .content {
     max-width: none;
     padding: 0;
+  }
+  /* vh in print resolves against the paper page box, not the window —
+     leaving height:100vh on .content--graph would pin a printed graph
+     to exactly one page and overflow a fraction of a px onto a blank
+     second page, the same trap html/body/.layout already zero out
+     below. */
+  .content--graph {
+    height: auto;
+    overflow: visible;
+  }
+  .content--graph .graph-svg {
+    height: auto;
   }
 
   html,
