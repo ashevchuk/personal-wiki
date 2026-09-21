@@ -245,6 +245,51 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 
+  // --- POST /api/documents/move — rename/move ----------------------------
+  // Exact path, not a regex: PUT/GET `^/api/documents/(.*)$` would
+  // otherwise treat "move" as a document path. Same {oldPath, newPath}
+  // JSON shape as POST /api/folders/move.
+  app.registerHandler(
+      "/api/documents/move",
+      [&documentService](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("oldPath") || !json->isMember("newPath") ||
+            !(*json)["oldPath"].isString() || !(*json)["newPath"].isString()) {
+          callback(jsonError(k400BadRequest, "expected {oldPath, newPath} strings"));
+          return;
+        }
+        const std::string oldPath = (*json)["oldPath"].asString();
+        const std::string newPath = (*json)["newPath"].asString();
+        try {
+          const DocumentRecord rec = documentService.rename(oldPath, newPath);
+          Json::Value body;
+          body["oldPath"] = oldPath;
+          body["newPath"] = rec.path;
+          callback(HttpResponse::newHttpJsonResponse(body));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const InvalidDocumentMoveError& e) {
+          callback(jsonError(k400BadRequest, e.what()));
+        } catch (const DocumentNotFoundError&) {
+          callback(jsonError(k404NotFound, "document not found"));
+        } catch (const DocumentAlreadyExistsError&) {
+          callback(jsonError(k409Conflict, "a document already exists at that path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          // renameDocument's filesystem_error embeds both absolute vault
+          // paths — same "must never reach a client" as FolderRoutes and
+          // the POST /api/documents handler above.
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::exception& e) {
+          callback(jsonError(k500InternalServerError, e.what()));
+        }
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
   // --- PUT /api/documents/{path...} — update -----------------------------
   app.registerHandlerViaRegex(
       "^/api/documents/(.*)$",

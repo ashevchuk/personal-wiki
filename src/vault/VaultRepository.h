@@ -48,6 +48,16 @@ class VaultRepository {
   // filesystem_error if the source doesn't exist.
   void moveToTrash(std::string_view relativePath) const;
 
+  // Renames/moves the document at `oldRelativePath` to `newRelativePath`
+  // (creating parent directories as needed) and, if present, its
+  // co-located "<stem>.assets/" folder to the matching new stem. PathGuard
+  // on both paths. Throws filesystem_error if the source doesn't exist or
+  // the rename fails; if the document moved but its assets folder didn't,
+  // surfaces that rather than rolling the document back (same discipline
+  // as moveToTrash).
+  void renameDocument(std::string_view oldRelativePath,
+                      std::string_view newRelativePath) const;
+
   struct FileStat {
     int64_t size = 0;
     int64_t mtimeUnix = 0;

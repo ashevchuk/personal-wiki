@@ -4,8 +4,10 @@
 
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 
 namespace wikicore::index {
 
@@ -55,27 +57,36 @@ std::optional<std::string> readMeta(sqlite3* db, const char* key) {
 
 }  // namespace
 
+constexpr const char* kEmbeddingLayout = "chunks-v1";
+
 void EmbeddingIndexer::ensureTable(std::size_t dimensions, const std::string& modelIdentifier) {
   const auto existingDims = currentDimensions();
   const auto existingModel = readMeta(db_, "embedding_model_id");
+  const auto existingLayout = readMeta(db_, "embedding_layout");
   if (existingDims.has_value() && *existingDims == dimensions && existingModel.has_value() &&
-      *existingModel == modelIdentifier) {
-    return;  // already at the right width, from the right model — nothing to do
+      *existingModel == modelIdentifier && existingLayout.has_value() &&
+      *existingLayout == kEmbeddingLayout) {
+    return;  // already at the right width, from the right model, current layout
   }
 
   execOrThrow(db_, "BEGIN IMMEDIATE;");
   try {
     // DROP is a no-op the first time (table doesn't exist yet); on a
-    // dimension OR model change it deliberately discards every stored
-    // vector — see the class comment on why that's accepted, not worked
-    // around. document_embedding_state is cleared alongside it: a
+    // dimension OR model OR layout change it deliberately discards every
+    // stored vector — see the class comment on why that's accepted, not
+    // worked around. document_embedding_state is cleared alongside it: a
     // document whose text didn't change still needs a real re-embed
-    // against the new model, so its content-hash tracking can't be left
-    // pointing at a hash that would now wrongly look "still current".
+    // against the new model/layout, so its content-hash tracking can't be
+    // left pointing at a hash that would now wrongly look "still current".
     execOrThrow(db_, "DROP TABLE IF EXISTS document_embeddings;");
     execOrThrow(db_, "DELETE FROM document_embedding_state;");
+    // chunk_id is the vec0 PK (one row per passage); document_rowid is a
+    // metadata INTEGER so DELETE/SELECT by document still work, without
+    // the old "document_rowid INTEGER PRIMARY KEY" constraint that forced
+    // exactly one vector per document.
     execOrThrow(db_, "CREATE VIRTUAL TABLE document_embeddings USING vec0("
-                      "document_rowid INTEGER PRIMARY KEY, "
+                      "chunk_id INTEGER PRIMARY KEY, "
+                      "document_rowid INTEGER, "
                       "embedding float[" +
                           std::to_string(dimensions) +
                           "] distance_metric=cosine"
@@ -83,6 +94,10 @@ void EmbeddingIndexer::ensureTable(std::size_t dimensions, const std::string& mo
     execOrThrow(db_,
                 "INSERT INTO index_meta(key, value) VALUES ('embedding_dimensions', '" +
                     std::to_string(dimensions) +
+                    "') ON CONFLICT(key) DO UPDATE SET value = excluded.value;");
+    execOrThrow(db_,
+                "INSERT INTO index_meta(key, value) VALUES ('embedding_layout', '" +
+                    std::string(kEmbeddingLayout) +
                     "') ON CONFLICT(key) DO UPDATE SET value = excluded.value;");
 
     sqlite3_stmt* modelStmt = nullptr;
@@ -107,21 +122,34 @@ void EmbeddingIndexer::ensureTable(std::size_t dimensions, const std::string& mo
 
 void EmbeddingIndexer::upsertOne(sqlite3_int64 documentRowId,
                                   const std::vector<float>& embedding) {
+  upsertChunks(documentRowId, {embedding});
+}
+
+void EmbeddingIndexer::upsertChunks(sqlite3_int64 documentRowId,
+                                    const std::vector<std::vector<float>>& embeddings) {
   const auto dims = currentDimensions();
   if (!dims.has_value()) {
     throw std::runtime_error(
-        "EmbeddingIndexer::upsertOne: document_embeddings doesn't exist yet — call "
+        "EmbeddingIndexer::upsertChunks: document_embeddings doesn't exist yet — call "
         "ensureTable() first");
   }
-  if (embedding.size() != *dims) {
-    throw std::runtime_error(
-        "EmbeddingIndexer::upsertOne: embedding has " + std::to_string(embedding.size()) +
-        " dimensions, table expects " + std::to_string(*dims));
+  for (const auto& embedding : embeddings) {
+    if (embedding.size() != *dims) {
+      throw std::runtime_error(
+          "EmbeddingIndexer::upsertChunks: embedding has " + std::to_string(embedding.size()) +
+          " dimensions, table expects " + std::to_string(*dims));
+    }
+  }
+
+  if (embeddings.empty()) {
+    removeOne(documentRowId);
+    return;
   }
 
   // vec0 tables don't support ON CONFLICT/UPSERT (confirmed against
   // sqlite-vec's own docs and test suite) — delete-then-insert inside one
-  // transaction gives the same "upsert" observable effect.
+  // transaction gives the same "upsert" observable effect, now for N
+  // chunks rather than a single row.
   execOrThrow(db_, "BEGIN IMMEDIATE;");
   try {
     sqlite3_stmt* del = nullptr;
@@ -135,15 +163,20 @@ void EmbeddingIndexer::upsertOne(sqlite3_int64 documentRowId,
     sqlite3_prepare_v2(db_, "INSERT INTO document_embeddings(document_rowid, embedding) "
                             "VALUES (?, ?)",
                         -1, &ins, nullptr);
-    sqlite3_bind_int64(ins, 1, documentRowId);
-    sqlite3_bind_blob(ins, 2, embedding.data(),
-                       static_cast<int>(embedding.size() * sizeof(float)), SQLITE_TRANSIENT);
-    const int rc = sqlite3_step(ins);
-    sqlite3_finalize(ins);
-    if (rc != SQLITE_DONE) {
-      throw std::runtime_error(std::string("EmbeddingIndexer::upsertOne: insert failed: ") +
-                                sqlite3_errmsg(db_));
+    for (const auto& embedding : embeddings) {
+      sqlite3_reset(ins);
+      sqlite3_clear_bindings(ins);
+      sqlite3_bind_int64(ins, 1, documentRowId);
+      sqlite3_bind_blob(ins, 2, embedding.data(),
+                         static_cast<int>(embedding.size() * sizeof(float)), SQLITE_TRANSIENT);
+      const int rc = sqlite3_step(ins);
+      if (rc != SQLITE_DONE) {
+        sqlite3_finalize(ins);
+        throw std::runtime_error(std::string("EmbeddingIndexer::upsertChunks: insert failed: ") +
+                                  sqlite3_errmsg(db_));
+      }
     }
+    sqlite3_finalize(ins);
 
     execOrThrow(db_, "COMMIT;");
   } catch (...) {
@@ -164,6 +197,22 @@ void EmbeddingIndexer::removeOne(sqlite3_int64 documentRowId) {
   sqlite3_finalize(stmt);
 }
 
+int EmbeddingIndexer::chunkCount(sqlite3_int64 documentRowId) const {
+  if (!currentDimensions().has_value()) {
+    return 0;
+  }
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db_, "SELECT COUNT(*) FROM document_embeddings WHERE document_rowid = ?",
+                      -1, &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, documentRowId);
+  int count = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    count = sqlite3_column_int(stmt, 0);
+  }
+  sqlite3_finalize(stmt);
+  return count;
+}
+
 std::vector<EmbeddingIndexer::Neighbor> EmbeddingIndexer::nearest(
     const std::vector<float>& queryEmbedding, int limit) const {
   const auto dims = currentDimensions();
@@ -177,6 +226,10 @@ std::vector<EmbeddingIndexer::Neighbor> EmbeddingIndexer::nearest(
         std::to_string(*dims));
   }
 
+  if (limit < 1) {
+    return {};
+  }
+
   sqlite3_stmt* stmt = nullptr;
   sqlite3_prepare_v2(db_,
                       "SELECT document_rowid, distance FROM document_embeddings "
@@ -184,12 +237,22 @@ std::vector<EmbeddingIndexer::Neighbor> EmbeddingIndexer::nearest(
                       -1, &stmt, nullptr);
   sqlite3_bind_blob(stmt, 1, queryEmbedding.data(),
                      static_cast<int>(queryEmbedding.size() * sizeof(float)), SQLITE_TRANSIENT);
-  sqlite3_bind_int(stmt, 2, limit);
+  // Fetch extra chunk hits so collapsing to unique documents still fills
+  // `limit` when several of the nearest rows belong to the same document.
+  // 8× covers a typical personal-wiki note (a handful of chunks) without
+  // asking sqlite-vec to scan the whole table; cap keeps a huge `limit`
+  // from turning into an unbounded KNN.
+  const int fetchLimit = std::min(std::max(limit, 1) * 8, 2048);
+  sqlite3_bind_int(stmt, 2, fetchLimit);
 
   std::vector<Neighbor> results;
+  std::unordered_set<sqlite3_int64> seen;
+  results.reserve(static_cast<std::size_t>(limit));
   while (sqlite3_step(stmt) == SQLITE_ROW) {
-    results.push_back(
-        {sqlite3_column_int64(stmt, 0), sqlite3_column_double(stmt, 1)});
+    const sqlite3_int64 rowId = sqlite3_column_int64(stmt, 0);
+    if (!seen.insert(rowId).second) continue;  // worse chunk of a document already kept
+    results.push_back({rowId, sqlite3_column_double(stmt, 1)});
+    if (static_cast<int>(results.size()) >= limit) break;
   }
   sqlite3_finalize(stmt);
   return results;

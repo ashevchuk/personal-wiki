@@ -55,12 +55,17 @@ class FolderService {
   // it — nested documents, their .assets folders, subfolders) to
   // `newRelativePath` via ONE atomic std::filesystem::rename of the whole
   // subtree — not a per-file loop, so there's no window where the
-  // subtree is half-moved. Afterward, re-derives the index row for every
-  // document that was under the old prefix from whatever's now on disk
-  // at its new path — the exact same parse/fallback logic
-  // IndexBuilder::fullRescan() uses per-file, via its public
-  // reindexOneFile(). Document front matter itself (title, id, tags,
-  // visibility, ...) is untouched; only the `path` column changes.
+  // subtree is half-moved. Afterward:
+  //   - every indexed document that was under the old prefix is re-pathed
+  //     in place (`IndexUpdater::repathOne`, same as DocumentService::
+  //     rename — rowid_id and therefore document_snapshots survive);
+  //   - inbound `[[wiki-link]]`s and `assets/<folder>/…` hrefs whose
+  //     vault path sat under the old prefix are rewritten in every
+  //     currently-indexed document (inside the subtree and outside it);
+  //   - rewritten sources are reindexed from disk.
+  // Document front matter itself (title, id, tags, visibility, ...) is
+  // untouched; `updated` is not bumped — this is a path change, not an
+  // edit.
   //
   // Throws FolderNotFoundError if the source isn't an existing directory,
   // FolderAlreadyExistsError if the destination is already occupied,

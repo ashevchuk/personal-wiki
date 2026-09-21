@@ -9,8 +9,12 @@ namespace wikicore::controllers {
 // Registers the folders JSON API:
 //   POST   /api/folders/move          - {oldPath, newPath} in the JSON
 //                                        body; moves an entire folder
-//                                        subtree, reindexing every
-//                                        document under it
+//                                        subtree (documents + .assets/),
+//                                        re-paths index rows in place,
+//                                        rewrites inbound [[wiki-link]]s
+//                                        and asset hrefs under that
+//                                        prefix, reindexes rewritten
+//                                        sources
 //   DELETE /api/folders/{path...}     - removes an EMPTY folder only
 //
 // Both admin+CSRF, same as every other mutating route — see

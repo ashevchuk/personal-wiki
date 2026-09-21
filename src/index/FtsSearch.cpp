@@ -438,10 +438,12 @@ std::optional<std::vector<SearchResultItem>> FtsSearch::tryHybridSearch(
 
   // Cosine-distance cutoff — see maxSemanticDistance_'s own comment in
   // FtsSearch.h for why this is necessary, not optional polish:
-  // EmbeddingIndexer::nearest() has no relevance floor of its own, so on
-  // a small vault "the nearest kCandidatePoolSize neighbors" is
-  // effectively the WHOLE vault, ranked by a distance that's often pure
-  // noise for a genuinely unrelated document. Filtering here, before RRF
+  // EmbeddingIndexer::nearest() has no relevance floor of its own (it
+  // already collapses multi-chunk documents to one unique rowid at the
+  // best chunk distance), so on a small vault "the nearest
+  // kCandidatePoolSize neighbors" is effectively the WHOLE vault, ranked
+  // by a distance that's often pure noise for a genuinely unrelated
+  // document. Filtering here, before RRF
   // ever sees these rowids, is what actually keeps irrelevant documents
   // out of hybrid results — RRF itself has no way to reject a candidate
   // once it's in a ranked list, only rank it.

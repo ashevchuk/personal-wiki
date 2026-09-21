@@ -87,3 +87,42 @@ TEST_CASE("rewriteWikiLinksToMarkdownLinks handles multiple links in one documen
       "Start [[a/one]] middle [[b/two|Two]] end.");
   REQUIRE(out == "Start [a/one](d/a/one.md) middle [Two](d/b/two.md) end.");
 }
+
+TEST_CASE("rewriteWikiLinkTargets preserves author .md convention and |label",
+          "[WikiLinks]") {
+  REQUIRE(rewriteWikiLinkTargets("See [[notes/foo]] please.", "notes/foo.md",
+                                 "notes/bar.md") == "See [[notes/bar]] please.");
+  REQUIRE(rewriteWikiLinkTargets("See [[notes/foo.md]] please.", "notes/foo.md",
+                                 "notes/bar.md") == "See [[notes/bar.md]] please.");
+  REQUIRE(rewriteWikiLinkTargets("[[notes/foo|Friendly]]", "notes/foo.md",
+                                 "archive/foo.md") == "[[archive/foo|Friendly]]");
+  REQUIRE(rewriteWikiLinkTargets("[[/notes/foo]]", "notes/foo.md",
+                                 "notes/bar.md") == "[[/notes/bar]]");
+}
+
+TEST_CASE("rewriteWikiLinkTargets leaves unrelated targets untouched",
+          "[WikiLinks]") {
+  const std::string body = "[[notes/food]] and [[notes/foo-bar]] and [[notes/foo]].";
+  REQUIRE(rewriteWikiLinkTargets(body, "notes/foo.md", "notes/bar.md") ==
+          "[[notes/food]] and [[notes/foo-bar]] and [[notes/bar]].");
+}
+
+TEST_CASE("rewriteWikiLinkTargets is a no-op when paths are equal", "[WikiLinks]") {
+  const std::string body = "[[notes/foo]]";
+  REQUIRE(rewriteWikiLinkTargets(body, "notes/foo.md", "notes/foo.md") == body);
+}
+
+TEST_CASE("rewriteWikiLinkTargetPrefix rewrites children of the folder, not "
+          "a same-named .md or a sibling prefix",
+          "[WikiLinks]") {
+  REQUIRE(rewriteWikiLinkTargetPrefix("See [[notes/cpp/foo]] and [[notes/cpp/bar.md|B]].",
+                                      "notes/cpp", "notes/cxx") ==
+          "See [[notes/cxx/foo]] and [[notes/cxx/bar.md|B]].");
+  // [[notes/cpp]] normalizes to notes/cpp.md — a document, not a child of
+  // the notes/cpp/ folder.
+  REQUIRE(rewriteWikiLinkTargetPrefix("[[notes/cpp]] and [[notes/cpp-extra/x]]",
+                                      "notes/cpp/", "archive/cpp/") ==
+          "[[notes/cpp]] and [[notes/cpp-extra/x]]");
+  REQUIRE(rewriteWikiLinkTargetPrefix("[[notes/foo]]", "notes", "archive/notes") ==
+          "[[archive/notes/foo]]");
+}

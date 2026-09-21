@@ -91,6 +91,7 @@ TEST_CASE("IndexUpdater::upsertOne, with a real provider wired in, actually "
 
   const int64_t rowId = indexUpdater.upsertOne(
       makeEntry("notes/cat.md", "About cats", "The cat sat on the mat."));
+  indexUpdater.flushEmbeddings();
 
   EmbeddingIndexer indexer(env.db().handle());
   REQUIRE(indexer.currentDimensions() == provider.dimensions());
@@ -122,6 +123,7 @@ TEST_CASE("IndexUpdater::upsertOne on an UPDATE re-embeds the new body, not "
       makeEntry("notes/topic.md", "Topic", "The cat sat on the mat."));
   indexUpdater.upsertOne(
       makeEntry("notes/topic.md", "Topic", "Quarterly financial report for the fiscal year."));
+  indexUpdater.flushEmbeddings();
 
   EmbeddingIndexer indexer(env.db().handle());
   const auto catQuery = provider.embed("The cat sat on the mat.");
@@ -149,6 +151,7 @@ TEST_CASE("IndexUpdater::removeOne also removes the row's embedding, not "
   // too-short-to-embed skip (see the dedicated test cases below for that).
   const std::string body = "Some temporary content that will be removed again shortly.";
   indexUpdater.upsertOne(makeEntry("notes/temp.md", "Temp", body));
+  indexUpdater.flushEmbeddings();
   indexUpdater.removeOne("notes/temp.md");
 
   EmbeddingIndexer indexer(env.db().handle());
@@ -178,17 +181,20 @@ TEST_CASE("IndexUpdater::upsertOne skips a real embed() call when content is "
   IndexUpdater indexUpdater(env.db(), &provider);
 
   indexUpdater.upsertOne(makeEntry("notes/skip.md", "Skip", "The cat sat on the mat."));
+  indexUpdater.flushEmbeddings();
   REQUIRE(provider.embedCalls == 1);
 
   // Same path, same title, same body — a real save with nothing actually
   // changed (e.g. a front-matter-only touch upstream, or a plain re-save).
   indexUpdater.upsertOne(makeEntry("notes/skip.md", "Skip", "The cat sat on the mat."));
+  indexUpdater.flushEmbeddings();
   REQUIRE(provider.embedCalls == 1);  // no second real embed() call
 
   // Genuinely different body — must trigger a real re-embed, proving the
   // skip above wasn't a false positive that ignores content changes too.
   indexUpdater.upsertOne(
       makeEntry("notes/skip.md", "Skip", "Quarterly financial report for the fiscal year."));
+  indexUpdater.flushEmbeddings();
   REQUIRE(provider.embedCalls == 2);
 }
 
@@ -230,6 +236,7 @@ TEST_CASE("IndexUpdater::upsertOne removes a STALE embedding when an edit "
   const std::string longBody = "This document originally had enough real content to embed.";
   const int64_t rowId =
       indexUpdater.upsertOne(makeEntry("notes/shrinking.md", "Shrinking Doc", longBody));
+  indexUpdater.flushEmbeddings();
 
   EmbeddingIndexer indexer(env.db().handle());
   const auto queryBeforeShrink = provider.embed(longBody);
@@ -258,6 +265,7 @@ TEST_CASE("IndexUpdater::upsertOne self-heals: a document edited to finally "
 
   const int64_t rowId = indexUpdater.upsertOne(makeEntry(
       "notes/growing.md", "Stub", "Now this document has grown enough real prose to embed."));
+  indexUpdater.flushEmbeddings();
   REQUIRE(provider.embedCalls == 1);
 
   EmbeddingIndexer indexer(env.db().handle());
@@ -296,6 +304,7 @@ TEST_CASE("IndexUpdater::upsertOne: a too-short document processed BEFORE "
   // ensureTable() call used to wipe the row just written above.
   indexUpdater.upsertOne(makeEntry(
       "notes/real.md", "Real Document", "This document has plenty of real content to embed."));
+  indexUpdater.flushEmbeddings();
 
   EmbeddingIndexer indexer(env.db().handle());
   const auto needing = indexer.listNeedingAttention();

@@ -174,29 +174,28 @@ window.WikiPages = window.WikiPages || {};
     });
 
     document.getElementById("mcp-remote-regen-btn").addEventListener("click", function () {
-      if (
-        !window.confirm(
-          "Regenerate the remote MCP bearer token? The CURRENT token stops working immediately."
-        )
-      ) {
-        return;
-      }
-      fetch(basePath() + "/api/admin/mcp-remote-config/regenerate-token", {
-        method: "POST",
-        headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
-        credentials: "same-origin",
-      })
-        .then(function (resp) {
-          if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
-          return resp.json();
+      WikiDialog.confirm(
+        "Regenerate the remote MCP bearer token? The CURRENT token stops working immediately.",
+        { danger: true, okLabel: "Regenerate" }
+      ).then(function (ok) {
+        if (!ok) return;
+        fetch(basePath() + "/api/admin/mcp-remote-config/regenerate-token", {
+          method: "POST",
+          headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+          credentials: "same-origin",
         })
-        .then(function (data) {
-          document.getElementById("mcp-remote-token-reveal").hidden = false;
-          document.getElementById("mcp-remote-token-value").value = data.token;
-          tokenStatus.textContent = "a token is set (hidden — regenerate to see a new one)";
-          showSuccess("New token generated — copy it now, it won't be shown again.");
-        })
-        .catch(showError);
+          .then(function (resp) {
+            if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+            return resp.json();
+          })
+          .then(function (data) {
+            document.getElementById("mcp-remote-token-reveal").hidden = false;
+            document.getElementById("mcp-remote-token-value").value = data.token;
+            tokenStatus.textContent = "a token is set (hidden — regenerate to see a new one)";
+            showSuccess("New token generated — copy it now, it won't be shown again.");
+          })
+          .catch(showError);
+      });
     });
 
     document.getElementById("mcp-remote-cidr-add-btn").addEventListener("click", function () {

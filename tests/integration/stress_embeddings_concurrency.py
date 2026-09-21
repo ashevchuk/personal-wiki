@@ -143,10 +143,10 @@ def stress_embeddings_concurrency(server):
 
     check("server still alive after both bursts", server.is_alive())
 
-    # Give the last few embed() calls a moment to finish (they run
-    # deliberately unlocked/async relative to the HTTP response — see
-    # IndexUpdater::upsertOne's own comment) before checking final state.
-    deadline = time.time() + 20
+    # Give the last few embed() calls a moment to finish (they run on
+    # IndexUpdater's background worker after the HTTP response returns —
+    # see IndexUpdater::upsertOne) before checking final state.
+    deadline = time.time() + 90
     needing = None
     while time.time() < deadline:
         status, _, body = admin.get_json("/api/admin/embeddings-status")

@@ -1,10 +1,15 @@
 #include "index/Database.h"
 #include "index/EmbeddingIndexer.h"
+#include "index/IndexUpdater.h"
 #include "index/Statement.h"
+#include "embeddings/EmbeddingChunks.h"
+#include "embeddings/EmbeddingProvider.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 namespace fs = std::filesystem;
 using namespace wikicore::index;
@@ -291,4 +296,202 @@ TEST_CASE("EmbeddingIndexer: listNeedingAttention() lists never-attempted and "
   }
   REQUIRE(sawFailed);
   REQUIRE(sawNeverTried);
+}
+
+TEST_CASE("EmbeddingIndexer: upsertChunks stores several vectors per document, "
+          "nearest() collapses them to one unique rowid at the best distance",
+          "[EmbeddingIndexer]") {
+  TempDb env;
+  EmbeddingIndexer indexer(env.db().handle());
+  indexer.ensureTable(3, "test-model-a");
+
+  indexer.upsertChunks(1, {vec3(0.0f, 0.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f)});
+  REQUIRE(indexer.chunkCount(1) == 2);
+
+  const auto results = indexer.nearest(vec3(1.0f, 0.0f, 0.0f), 10);
+  REQUIRE(results.size() == 1);
+  REQUIRE(results[0].documentRowId == 1);
+  REQUIRE(results[0].distance < 0.01);  // the identical chunk, not the orthogonal one
+}
+
+TEST_CASE("EmbeddingIndexer: a document's best chunk beats another document's "
+          "merely-close single vector — multi-vector ranking, not mean-pool",
+          "[EmbeddingIndexer]") {
+  TempDb env;
+  EmbeddingIndexer indexer(env.db().handle());
+  indexer.ensureTable(3, "test-model-a");
+
+  // Doc 1: one orthogonal chunk (would lose on its own) + one identical match.
+  indexer.upsertChunks(1, {vec3(0.0f, 0.0f, 1.0f), vec3(1.0f, 0.0f, 0.0f)});
+  // Doc 2: a single close-but-not-identical vector.
+  indexer.upsertOne(2, vec3(0.9f, 0.1f, 0.0f));
+
+  const auto results = indexer.nearest(vec3(1.0f, 0.0f, 0.0f), 2);
+  REQUIRE(results.size() == 2);
+  REQUIRE(results[0].documentRowId == 1);  // exact chunk match
+  REQUIRE(results[1].documentRowId == 2);
+  REQUIRE(results[0].distance < results[1].distance);
+}
+
+TEST_CASE("EmbeddingIndexer: upsertChunks replaces the previous set, does not "
+          "append",
+          "[EmbeddingIndexer]") {
+  TempDb env;
+  EmbeddingIndexer indexer(env.db().handle());
+  indexer.ensureTable(3, "test-model-a");
+  indexer.upsertChunks(1, {vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f)});
+  REQUIRE(indexer.chunkCount(1) == 2);
+
+  indexer.upsertOne(1, vec3(0.0f, 0.0f, 1.0f));
+  REQUIRE(indexer.chunkCount(1) == 1);
+
+  const auto results = indexer.nearest(vec3(0.0f, 0.0f, 1.0f), 10);
+  REQUIRE(results.size() == 1);
+  REQUIRE(results[0].documentRowId == 1);
+}
+
+TEST_CASE("EmbeddingIndexer: ensureTable() with matching dims+model but a "
+          "stale embedding_layout drops and recreates",
+          "[EmbeddingIndexer]") {
+  TempDb env;
+  EmbeddingIndexer indexer(env.db().handle());
+  indexer.ensureTable(3, "test-model-a");
+  indexer.upsertOne(1, vec3(1.0f, 0.0f, 0.0f));
+  REQUIRE(indexer.chunkCount(1) == 1);
+
+  Statement poke(env.db().handle(),
+                 "UPDATE index_meta SET value = 'legacy-single' WHERE key = 'embedding_layout';");
+  poke.run();
+
+  indexer.ensureTable(3, "test-model-a");  // same width, same model, old layout
+  REQUIRE(indexer.nearest(vec3(1.0f, 0.0f, 0.0f), 5).empty());
+}
+
+namespace {
+
+class FakeEmbeddingProvider : public wikicore::embeddings::EmbeddingProvider {
+ public:
+  std::vector<float> embed(const std::string& text) override {
+    embeddedTexts.push_back(text);
+    return {1.0f, 0.0f, 0.0f};
+  }
+  std::size_t dimensions() const override { return 3; }
+  std::string modelIdentifier() const override { return "fake-chunk-test"; }
+  std::vector<std::string> embeddedTexts;
+};
+
+DocumentIndexEntry makeIndexEntry(const std::string& path, const std::string& title,
+                                  const std::string& body) {
+  DocumentIndexEntry e;
+  e.uuid = "test-uuid-" + path;
+  e.path = path;
+  e.title = title;
+  e.docType = "note";
+  e.visibility = "public";
+  e.createdAt = "2026-01-01T00:00:00Z";
+  e.updatedAt = "2026-01-01T00:00:00Z";
+  e.body = body;
+  e.excerpt = body.substr(0, 80);
+  return e;
+}
+
+}  // namespace
+
+TEST_CASE("IndexUpdater::upsertOne embeds overlapping chunks of a long document, "
+          "not one vector of the whole body",
+          "[IndexUpdater][EmbeddingIndexer]") {
+  TempDb env;
+  FakeEmbeddingProvider provider;
+  IndexUpdater indexUpdater(env.db(), &provider);
+
+  std::string body;
+  body.reserve(4000);
+  for (int i = 0; i < 120; ++i) {
+    body += "Paragraph " + std::to_string(i) + " has enough filler text to force a split.\n\n";
+  }
+  REQUIRE(wikicore::embeddings::chunkForEmbedding("Long", body).size() >= 2);
+
+  const int64_t rowId =
+      indexUpdater.upsertOne(makeIndexEntry("notes/long.md", "Long", body));
+  indexUpdater.flushEmbeddings();
+
+  EmbeddingIndexer indexer(env.db().handle());
+  REQUIRE(indexer.chunkCount(rowId) == static_cast<int>(provider.embeddedTexts.size()));
+  REQUIRE(provider.embeddedTexts.size() >= 2);
+  for (const auto& text : provider.embeddedTexts) {
+    REQUIRE(text.find("Long\n\n") == 0);
+  }
+}
+
+class SlowFakeEmbeddingProvider : public wikicore::embeddings::EmbeddingProvider {
+ public:
+  std::vector<float> embed(const std::string& text) override {
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    lastText = text;
+    ++calls;
+    return {1.0f, 0.0f, 0.0f};
+  }
+  std::size_t dimensions() const override { return 3; }
+  std::string modelIdentifier() const override { return "fake-async-test"; }
+  std::string lastText;
+  int calls = 0;
+};
+
+TEST_CASE("IndexUpdater::upsertOne returns before embed() finishes, and a "
+          "later too-short save drops the in-flight job's stale vectors",
+          "[IndexUpdater][EmbeddingIndexer]") {
+  TempDb env;
+  SlowFakeEmbeddingProvider provider;
+  IndexUpdater indexUpdater(env.db(), &provider);
+
+  const std::string longBody =
+      "This document originally had enough real content to embed and then some.";
+  const auto t0 = std::chrono::steady_clock::now();
+  const int64_t rowId =
+      indexUpdater.upsertOne(makeIndexEntry("notes/async.md", "Async", longBody));
+  const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - t0)
+                             .count();
+  REQUIRE(elapsedMs < 100);  // must not have waited on the 200ms embed()
+
+  indexUpdater.upsertOne(makeIndexEntry("notes/async.md", "Async", "Too short now."));
+  indexUpdater.flushEmbeddings();
+
+  EmbeddingIndexer indexer(env.db().handle());
+  REQUIRE(indexer.chunkCount(rowId) == 0);
+}
+
+TEST_CASE("IndexUpdater::upsertOne coalesces rapid re-saves so the stored "
+          "vector matches the latest body, not an in-flight stale one",
+          "[IndexUpdater][EmbeddingIndexer]") {
+  TempDb env;
+  SlowFakeEmbeddingProvider provider;
+  IndexUpdater indexUpdater(env.db(), &provider);
+
+  const int64_t rowId = indexUpdater.upsertOne(
+      makeIndexEntry("notes/twice.md", "Twice", "The first version of this document."));
+  indexUpdater.upsertOne(
+      makeIndexEntry("notes/twice.md", "Twice", "The second version of this document."));
+  indexUpdater.flushEmbeddings();
+
+  EmbeddingIndexer indexer(env.db().handle());
+  REQUIRE(indexer.chunkCount(rowId) == 1);
+  REQUIRE(provider.lastText.find("second version") != std::string::npos);
+}
+
+TEST_CASE("IndexUpdater::upsertOne drops duplicate embeds of the same body "
+          "(second Save, or a burst of identical upserts)",
+          "[IndexUpdater][EmbeddingIndexer]") {
+  TempDb env;
+  SlowFakeEmbeddingProvider provider;
+  IndexUpdater indexUpdater(env.db(), &provider);
+
+  const auto entry =
+      makeIndexEntry("notes/dup.md", "Dup", "The same document saved three times in a row.");
+  indexUpdater.upsertOne(entry);
+  indexUpdater.upsertOne(entry);
+  indexUpdater.upsertOne(entry);
+  indexUpdater.flushEmbeddings();
+
+  REQUIRE(provider.calls == 1);
 }

@@ -9,6 +9,12 @@
 #include <string>
 #include <vector>
 
+#ifdef WIKI_ENABLE_SQLITE_VEC
+#include <condition_variable>
+#include <thread>
+#include <unordered_map>
+#endif
+
 namespace wikicore::index {
 
 struct DocumentIndexEntry {
@@ -52,6 +58,9 @@ class IndexUpdater {
   explicit IndexUpdater(Database& db, embeddings::EmbeddingProvider* provider = nullptr,
                          int minEmbeddingWords = 6)
       : db_(db), provider_(provider), minEmbeddingWords_(minEmbeddingWords) {}
+  ~IndexUpdater();
+  IndexUpdater(const IndexUpdater&) = delete;
+  IndexUpdater& operator=(const IndexUpdater&) = delete;
 
   // Swaps the embedding provider after construction — used by wiki-mcp
   // (mcp/McpServer.cpp) to lazily construct a real provider only on the
@@ -69,13 +78,40 @@ class IndexUpdater {
   // Inserts the row for entry.path if new, or updates it in place if the
   // path is already indexed (path is UNIQUE). Replaces the document's tag
   // set and FTS entry to match `entry` exactly. Returns the row's
-  // rowid_id. Runs as a single transaction.
+  // rowid_id. The documents/FTS/tags write is a single transaction and
+  // has finished before this returns. Embedding inference (multi-vector
+  // chunks, slow on ARM) is queued on a background worker so a Web UI
+  // Save is not held open for N×1.3–2.6s — found live: nginx returned
+  // 504 Gateway Time-out on a long-document save while this still ran
+  // inline. Call flushEmbeddings() only when the caller actually needs
+  // vectors to exist before continuing (`--reindex`, tests).
   int64_t upsertOne(const DocumentIndexEntry& entry);
+
+  // Blocks until every queued background embedding job has finished
+  // (success or recorded failure). No-op when embeddings aren't compiled
+  // in, or nothing is pending. IndexBuilder::fullRescan() calls this so
+  // `--reindex` / POST /api/admin/reindex still mean "embeddings are
+  // done"; ordinary document saves do not.
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  void flushEmbeddings();
+#else
+  void flushEmbeddings() {}
+#endif
 
   // Removes the row at `path` (tags/attachments/FTS entry cascade via the
   // schema's ON DELETE CASCADE / explicit FTS cleanup below). No-op if the
   // path isn't indexed.
   void removeOne(const std::string& path);
+
+  // Updates `documents.path` in place for the row currently at `oldPath`
+  // so it becomes `newPath`. Preserves `rowid_id` (and therefore
+  // document_snapshots / embeddings keyed off it) — unlike removeOne +
+  // insert, which would mint a new row and drop history. No-op if
+  // `oldPath` isn't indexed. Does not touch FTS or document_links: the
+  // caller (DocumentService::rename) rewrites bodies and upserts
+  // afterward. Must not be used when `newPath` is already occupied
+  // (UNIQUE on documents.path); the caller checks the vault first.
+  void repathOne(const std::string& oldPath, const std::string& newPath);
 
   // Every currently-indexed document path — used by IndexBuilder's stale
   // sweep to find rows whose file no longer exists on disk.
@@ -99,9 +135,37 @@ class IndexUpdater {
   embeddings::EmbeddingProvider* provider_ = nullptr;
   int minEmbeddingWords_ = 6;
 
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  // One worker thread per IndexUpdater, lazy-started on the first job.
+  // pendingByRowId_ coalesces waiting jobs by document (latest body
+  // wins). Identical (rowId, hash) is also claimed process-wide so a
+  // second Save of the same text — or VaultWatcher's inotify of the
+  // same write — does not start a second embed of the same bytes.
+  struct EmbedJob {
+    int64_t rowId = 0;
+    std::string title;
+    std::string body;
+    std::string contentHash;
+  };
+  void enqueueEmbedJob(EmbedJob job);
+  void dropQueuedEmbedJob(int64_t rowId);
+  void ensureEmbedWorkerStartedLocked();
+  void embedWorkerLoop();
+  void runEmbedJob(const EmbedJob& job);
+  void stopAndJoinEmbedWorker();
+
+  std::mutex queueMutex_;
+  std::condition_variable queueCv_;
+  std::unordered_map<int64_t, EmbedJob> pendingByRowId_;
+  bool stopWorker_ = false;
+  bool embedInFlight_ = false;
+  bool workerStarted_ = false;
+  std::thread embedWorker_;
+#endif
+
   // Guards EVERY BEGIN IMMEDIATE...COMMIT/ROLLBACK sequence this class
   // (and its embedding step) runs against `db_` — documents/tags/FTS in
-  // upsertOne/removeOne, AND EmbeddingIndexer::ensureTable/upsertOne/
+  // upsertOne/removeOne/repathOne, AND EmbeddingIndexer::ensureTable/upsertOne/
   // recordEmbeddingSuccess/recordEmbeddingFailure's own transactions.
   // `db_` is a single sqlite3* connection shared by reference across
   // every Drogon request-handling thread (see main.cpp — the SAME

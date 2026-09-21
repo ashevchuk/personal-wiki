@@ -27,6 +27,9 @@ struct RescanStats {
 // once at every wiki-server startup (the db is a disposable cache, never
 // assumed correct on faith), and on demand via `wiki-server --reindex` /
 // `POST /api/admin/reindex` after external edits or a corrupted/deleted db.
+// Embedding inference is queued by each upsert; this method waits for
+// those jobs at the end so `--reindex` still means "embeddings are done".
+// Ordinary HTTP Save does not wait (see IndexUpdater::upsertOne).
 class IndexBuilder {
  public:
   IndexBuilder(vault::VaultRepository& vault, IndexUpdater& indexUpdater)

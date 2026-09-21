@@ -207,6 +207,9 @@ window.WikiPages = window.WikiPages || {};
             "/history/" +
             encodeVaultPath(docPath) +
             '">History</a>' +
+            '<button type="button" id="doc-rename-btn" data-path="' +
+            escapeHtml(docPath) +
+            '">Rename/Move</button>' +
             '<button type="button" id="doc-delete-btn" data-path="' +
             escapeHtml(docPath) +
             '">Delete</button></div>';
@@ -285,6 +288,10 @@ window.WikiPages = window.WikiPages || {};
         if (deleteBtn && window.WikiDocument) {
           window.WikiDocument.wireDeleteButton(deleteBtn);
         }
+        var renameBtn = document.getElementById("doc-rename-btn");
+        if (renameBtn && window.WikiDocument && window.WikiDocument.wireRenameButton) {
+          window.WikiDocument.wireRenameButton(renameBtn);
+        }
 
         var printBtn = document.getElementById("doc-print-btn");
         if (printBtn) {
@@ -319,7 +326,7 @@ window.WikiPages = window.WikiPages || {};
                 URL.revokeObjectURL(url);
               })
               .catch(function () {
-                alert("Download failed.");
+                WikiDialog.alert("Download failed.");
               });
           });
         }

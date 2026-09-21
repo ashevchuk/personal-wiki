@@ -1,5 +1,6 @@
 #include "index/Database.h"
 #include "index/IndexUpdater.h"
+#include "index/NavQueries.h"
 #include "index/SnapshotStore.h"
 #include "vault/DocumentService.h"
 
@@ -208,4 +209,134 @@ TEST_CASE("DocumentService softDelete moves the file (and assets folder) to "
   REQUIRE(fs::exists(env.vaultRoot() / ".trash/notes/a.md"));
   REQUIRE(fs::exists(env.vaultRoot() / ".trash/notes/a.assets/img.png"));
   REQUIRE_THROWS_AS(svc.softDelete("notes/a.md"), vault::DocumentNotFoundError);
+}
+
+TEST_CASE("DocumentService create appends .md when the caller omitted it",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.title = "No suffix";
+  input.body = "x";
+  const auto created = svc.create("notes/smart-pointers", input);
+  REQUIRE(created.path == "notes/smart-pointers.md");
+  REQUIRE(fs::exists(env.vaultRoot() / "notes/smart-pointers.md"));
+  REQUIRE_FALSE(fs::exists(env.vaultRoot() / "notes/smart-pointers"));
+
+  const auto already = svc.create("notes/other.md", input);
+  REQUIRE(already.path == "notes/other.md");
+
+  const auto mixedCase = svc.create("notes/Legacy.MD", input);
+  REQUIRE(mixedCase.path == "notes/Legacy.md");
+  REQUIRE(fs::exists(env.vaultRoot() / "notes/Legacy.md"));
+
+  REQUIRE_THROWS_AS(svc.create("notes/smart-pointers.md", input),
+                    vault::DocumentAlreadyExistsError);
+}
+
+TEST_CASE("DocumentService::rename moves the file and its .assets folder, "
+          "rewrites inbound wiki-links and asset hrefs, and keeps the index "
+          "rowid (history) intact",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+  index::NavQueries nav(db);
+
+  vault::DocumentInput target;
+  target.title = "Target";
+  target.visibility = "public";
+  target.body =
+      "Self [[notes/foo]] and ![img](assets/notes/foo.assets/diagram.png)\n";
+  svc.create("notes/foo.md", target);
+  fs::create_directories(env.vaultRoot() / "notes/foo.assets");
+  std::ofstream(env.vaultRoot() / "notes/foo.assets/diagram.png") << "fake";
+
+  vault::DocumentInput linker;
+  linker.title = "Linker";
+  linker.visibility = "public";
+  linker.body = "See [[notes/foo]] and [[notes/foo.md|the doc]] and "
+                "also ![x](assets/notes/foo.assets/diagram.png).\n";
+  svc.create("notes/linker.md", linker);
+
+  vault::DocumentInput unrelated;
+  unrelated.title = "Unrelated";
+  unrelated.visibility = "public";
+  unrelated.body = "See [[notes/food]] instead.\n";
+  svc.create("notes/other.md", unrelated);
+
+  const auto rowBefore = indexUpdater.rowIdForPath("notes/foo.md");
+  REQUIRE(rowBefore.has_value());
+  snapshots.record(*rowBefore, "pre-rename snapshot");
+
+  const auto renamed = svc.rename("notes/foo", "archive/bar");
+  REQUIRE(renamed.path == "archive/bar.md");
+  REQUIRE(fs::exists(env.vaultRoot() / "archive/bar.md"));
+  REQUIRE(fs::exists(env.vaultRoot() / "archive/bar.assets/diagram.png"));
+  REQUIRE_FALSE(fs::exists(env.vaultRoot() / "notes/foo.md"));
+  REQUIRE_FALSE(fs::exists(env.vaultRoot() / "notes/foo.assets/diagram.png"));
+
+  REQUIRE(indexUpdater.rowIdForPath("archive/bar.md") == rowBefore);
+  REQUIRE_FALSE(indexUpdater.rowIdForPath("notes/foo.md").has_value());
+  REQUIRE(snapshots.list(*rowBefore).size() == 1);
+
+  const auto moved = svc.get("archive/bar.md");
+  REQUIRE(moved.body.find("[[archive/bar]]") != std::string::npos);
+  REQUIRE(moved.body.find("assets/archive/bar.assets/diagram.png") != std::string::npos);
+  REQUIRE(moved.body.find("assets/notes/foo.assets/") == std::string::npos);
+  REQUIRE(moved.frontMatter.id == renamed.frontMatter.id);
+
+  const auto linkerAfter = svc.get("notes/linker.md");
+  REQUIRE(linkerAfter.body.find("[[archive/bar]]") != std::string::npos);
+  REQUIRE(linkerAfter.body.find("[[archive/bar.md|the doc]]") != std::string::npos);
+  REQUIRE(linkerAfter.body.find("[[notes/foo]]") == std::string::npos);
+  REQUIRE(linkerAfter.body.find("assets/archive/bar.assets/diagram.png") !=
+          std::string::npos);
+
+  const auto otherAfter = svc.get("notes/other.md");
+  REQUIRE(otherAfter.body == "See [[notes/food]] instead.\n");
+
+  const auto backlinks = nav.backlinks("archive/bar.md", true);
+  REQUIRE(backlinks.size() >= 1);
+  bool foundLinker = false;
+  for (const auto& b : backlinks) {
+    if (b.path == "notes/linker.md") foundLinker = true;
+    REQUIRE(b.path != "notes/foo.md");
+  }
+  REQUIRE(foundLinker);
+  REQUIRE(nav.backlinks("notes/foo.md", true).empty());
+}
+
+TEST_CASE("DocumentService::rename rejects missing source, occupied dest, "
+          "and is a no-op when source and dest normalize equal",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.body = "x";
+  svc.create("a.md", input);
+  svc.create("b.md", input);
+
+  REQUIRE_THROWS_AS(svc.rename("missing.md", "c.md"), vault::DocumentNotFoundError);
+  REQUIRE_THROWS_AS(svc.rename("a.md", "b.md"), vault::DocumentAlreadyExistsError);
+
+  const auto same = svc.rename("a.md", "a");
+  REQUIRE(same.path == "a.md");
+  REQUIRE(fs::exists(env.vaultRoot() / "a.md"));
 }

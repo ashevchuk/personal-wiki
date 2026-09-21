@@ -48,4 +48,29 @@ std::vector<std::string> extractWikiLinkTargets(std::string_view markdown);
 // itself stays unaware this syntax exists at all.
 std::string rewriteWikiLinksToMarkdownLinks(std::string_view markdown);
 
+// Rewrites every `[[target]]` / `[[target|label]]` whose *normalized*
+// target equals `oldNormalizedPath` so it points at `newNormalizedPath`
+// instead. Used by DocumentService::rename to keep inbound wiki-links
+// valid after a document moves. Author conventions are preserved:
+// `[[notes/foo]]` (no ".md") becomes `[[notes/bar]]`, `[[notes/foo.md]]`
+// becomes `[[notes/bar.md]]`, and a `|label` is left untouched. Targets
+// that normalize to anything else pass through verbatim, including the
+// surrounding markdown. A no-op (and returns a copy of `markdown`) when
+// the two paths are equal or either is empty.
+std::string rewriteWikiLinkTargets(std::string_view markdown,
+                                   std::string_view oldNormalizedPath,
+                                   std::string_view newNormalizedPath);
+
+// Same author-convention preservation as rewriteWikiLinkTargets, but
+// every normalized target that *starts with* `oldPrefix` (a folder path
+// with a trailing '/', e.g. "notes/cpp/") has that prefix replaced by
+// `newPrefix`. Used by FolderService::move so inbound `[[wiki-link]]`s
+// into a relocated subtree stay valid. A target that is exactly the
+// folder name plus ".md" (`[[notes/cpp]]` → notes/cpp.md) is NOT a
+// child of the folder and is left alone. No-op when the prefixes are
+// equal or either is empty.
+std::string rewriteWikiLinkTargetPrefix(std::string_view markdown,
+                                        std::string_view oldPrefix,
+                                        std::string_view newPrefix);
+
 }  // namespace wikicore::util

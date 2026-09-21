@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 
 namespace wikicore::util {
 
@@ -64,6 +65,78 @@ std::vector<RawLink> scanRawLinks(std::string_view markdown) {
     links.push_back(std::move(link));
   }
   return links;
+}
+
+// The author-facing target to write back after a rename: keep ".md" iff
+// the original raw target had it, and keep a leading '/' iff they typed
+// one. newNormalizedPath is always the vault-relative form (no leading
+// '/', with ".md") that DocumentService/IndexUpdater store.
+std::string displayTargetForRename(std::string_view rawTrimmed,
+                                   std::string_view newNormalized) {
+  std::string t(newNormalized);
+  constexpr std::string_view kExt = ".md";
+  const bool rawHadExt = rawTrimmed.size() >= kExt.size() &&
+                         rawTrimmed.compare(rawTrimmed.size() - kExt.size(),
+                                            kExt.size(), kExt) == 0;
+  if (!rawHadExt && t.size() >= kExt.size() &&
+      t.compare(t.size() - kExt.size(), kExt.size(), kExt) == 0) {
+    t.resize(t.size() - kExt.size());
+  }
+  if (!rawTrimmed.empty() && rawTrimmed.front() == '/' &&
+      (t.empty() || t.front() != '/')) {
+    t.insert(t.begin(), '/');
+  }
+  return t;
+}
+
+template <typename Map>
+std::string rewriteWikiLinksMapped(std::string_view markdown, Map&& mapNormalized) {
+  std::string out;
+  out.reserve(markdown.size());
+  size_t pos = 0;
+  while (true) {
+    const size_t open = markdown.find("[[", pos);
+    if (open == std::string_view::npos) {
+      out.append(markdown.substr(pos));
+      break;
+    }
+    out.append(markdown.substr(pos, open - pos));
+
+    const size_t close = markdown.find("]]", open + 2);
+    if (close == std::string_view::npos) {
+      out.append(markdown.substr(open));
+      break;
+    }
+    const std::string_view inner = markdown.substr(open + 2, close - (open + 2));
+    const size_t bar = inner.find('|');
+    std::string_view rawTarget = bar == std::string_view::npos ? inner : inner.substr(0, bar);
+    const std::string rawTargetTrimmed = trim(rawTarget);
+
+    std::optional<std::string> mapped;
+    if (!rawTargetTrimmed.empty()) {
+      mapped = mapNormalized(normalizeTarget(rawTargetTrimmed));
+    }
+    if (!mapped) {
+      out.append(markdown.substr(open, (close + 2) - open));
+    } else {
+      const std::string newTarget =
+          displayTargetForRename(rawTargetTrimmed, *mapped);
+      out.append("[[").append(newTarget);
+      if (bar != std::string_view::npos) {
+        out.append("|").append(inner.substr(bar + 1));
+      }
+      out.append("]]");
+    }
+    pos = close + 2;
+  }
+  return out;
+}
+
+std::string ensureTrailingSlash(std::string_view p) {
+  std::string s(p);
+  while (!s.empty() && s.back() == '/') s.pop_back();
+  if (!s.empty()) s += '/';
+  return s;
 }
 
 }  // namespace
@@ -137,6 +210,39 @@ std::string rewriteWikiLinksToMarkdownLinks(std::string_view markdown) {
     pos = close + 2;
   }
   return out;
+}
+
+std::string rewriteWikiLinkTargets(std::string_view markdown,
+                                   std::string_view oldNormalizedPath,
+                                   std::string_view newNormalizedPath) {
+  if (oldNormalizedPath.empty() || newNormalizedPath.empty() ||
+      oldNormalizedPath == newNormalizedPath) {
+    return std::string(markdown);
+  }
+  const std::string oldPath(oldNormalizedPath);
+  const std::string newPath(newNormalizedPath);
+  return rewriteWikiLinksMapped(markdown, [&](const std::string& normalized) {
+    if (normalized == oldPath) return std::optional<std::string>(newPath);
+    return std::optional<std::string>();
+  });
+}
+
+std::string rewriteWikiLinkTargetPrefix(std::string_view markdown,
+                                        std::string_view oldPrefixIn,
+                                        std::string_view newPrefixIn) {
+  const std::string oldPrefix = ensureTrailingSlash(oldPrefixIn);
+  const std::string newPrefix = ensureTrailingSlash(newPrefixIn);
+  if (oldPrefix.empty() || newPrefix.empty() || oldPrefix == newPrefix) {
+    return std::string(markdown);
+  }
+  return rewriteWikiLinksMapped(markdown, [&](const std::string& normalized) {
+    if (normalized.size() >= oldPrefix.size() &&
+        normalized.compare(0, oldPrefix.size(), oldPrefix) == 0) {
+      return std::optional<std::string>(newPrefix +
+                                       normalized.substr(oldPrefix.size()));
+    }
+    return std::optional<std::string>();
+  });
 }
 
 }  // namespace wikicore::util

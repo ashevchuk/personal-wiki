@@ -26,6 +26,13 @@ namespace wikicore::controllers {
 //                                           links here (NavQueries).
 //   GET    /api/documents/{path...}/raw  - literal file bytes (unchanged)
 //   POST   /api/documents                - create (path in the JSON body)
+//   POST   /api/documents/move           - rename/move (JSON {oldPath,newPath});
+//                                           moves the .md and its .assets/
+//                                           folder, rewrites inbound
+//                                           [[wiki-link]]s and asset hrefs,
+//                                           reindexes. Not a PUT of path:
+//                                           changing identity is a different
+//                                           operation from saving content.
 //   PUT    /api/documents/{path...}      - update
 //   DELETE /api/documents/{path...}      - soft-delete (-> .trash/)
 //   GET    /api/attachments/{path...}    - list files in the owning

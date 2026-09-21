@@ -154,7 +154,8 @@ Json::Value buildToolsList(bool writeEnabled) {
   if (writeEnabled) {
     {
       Json::Value props;
-      props["path"] = stringParam("Vault-relative path, e.g. \"notes/foo.md\"");
+      props["path"] = stringParam("Vault-relative path, e.g. \"notes/foo.md\" "
+                                 "(the .md suffix is optional)");
       props["title"] = stringParam("Document title");
       props["body"] = stringParam("Markdown body");
       props["type"] = stringParam("Document type, e.g. \"note\"");
@@ -163,7 +164,8 @@ Json::Value buildToolsList(bool writeEnabled) {
       tools.append(toolSchema(
           "create_document",
           "Create a new document in the wiki. Fails if a document already "
-          "exists at that path.",
+          "exists at that path. A path that does not already end in .md has "
+          ".md appended.",
           props, {"path"}));
     }
     {

@@ -611,22 +611,25 @@ window.WikiPages = window.WikiPages || {};
       var assetPath = row.getAttribute("data-path");
       var name = row.querySelector(".edit-att-name");
       name = name ? name.textContent : assetPath;
-      if (!window.confirm('Delete attachment "' + name + '"? The file is removed; markdown links to it stay in the document.')) {
-        return;
-      }
-      fetch(basePath() + "/api/attachments/" + encodeVaultPath(assetPath), {
-        method: "DELETE",
-        headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
-        credentials: "same-origin",
-      })
-        .then(function (resp) {
-          if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
-          setStatus("Deleted " + name + ".", "ok");
-          return loadAttachments();
+      WikiDialog.confirm(
+        'Delete attachment "' + name + '"? The file is removed; markdown links to it stay in the document.',
+        { danger: true, okLabel: "Delete" }
+      ).then(function (ok) {
+        if (!ok) return;
+        fetch(basePath() + "/api/attachments/" + encodeVaultPath(assetPath), {
+          method: "DELETE",
+          headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+          credentials: "same-origin",
         })
-        .catch(function (err) {
-          setStatus("Delete failed: " + err.message, "error");
-        });
+          .then(function (resp) {
+            if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
+            setStatus("Deleted " + name + ".", "ok");
+            return loadAttachments();
+          })
+          .catch(function (err) {
+            setStatus("Delete failed: " + err.message, "error");
+          });
+      });
     });
 
     // Raster images become an image node / ![name](url) (svg is
@@ -757,7 +760,7 @@ window.WikiPages = window.WikiPages || {};
               callback(result.url, result.filename);
             })
             .catch(function (err) {
-              alert("Image upload failed: " + err.message);
+              WikiDialog.alert("Image upload failed: " + err.message);
             });
         },
       },
@@ -839,6 +842,16 @@ window.WikiPages = window.WikiPages || {};
         setStatus("Path is required.", "error");
         return;
       }
+      if (isNew) {
+        path = path.replace(/\/+$/, "");
+        if (!path) {
+          setStatus("Path is required.", "error");
+          return;
+        }
+        if (/\.md$/i.test(path)) path = path.replace(/\.md$/i, ".md");
+        else path = path + ".md";
+        pathInput.value = path;
+      }
 
       var payload = {
         title: titleInput.value.trim(),
@@ -871,8 +884,11 @@ window.WikiPages = window.WikiPages || {};
       })
         .then(function (resp) {
           if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
-          setStatus("Saved.", "ok");
-          window.location.href = basePath() + "/d/" + encodeVaultPath(path);
+          return resp.json().then(function (data) {
+            var savedPath = (data && data.path) || path;
+            setStatus("Saved.", "ok");
+            window.location.href = basePath() + "/d/" + encodeVaultPath(savedPath);
+          });
         })
         .catch(function (err) {
           setStatus("Save failed: " + err.message, "error");
@@ -921,28 +937,33 @@ window.WikiPages = window.WikiPages || {};
       uploadInput.value = ""; // allow re-selecting the same file later
       if (!file) return;
 
-      if (editor.getMarkdown().trim() !== "") {
-        var proceed = window.confirm(
-          "Replace the current editor content with \"" + file.name + "\"?"
-        );
-        if (!proceed) return;
+      function applyFile() {
+        var reader = new FileReader();
+        reader.onload = function () {
+          var parsed = parseFrontMatterClientSide(String(reader.result));
+          var f = parsed.fields;
+          if (f.title !== undefined) titleInput.value = f.title;
+          if (f.type !== undefined) typeInput.value = f.type;
+          if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
+          if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");
+          editor.setMarkdown(parsed.body);
+          setStatus("Loaded " + file.name + ".", "ok");
+        };
+        reader.onerror = function () {
+          setStatus("Failed to read " + file.name + ".", "error");
+        };
+        reader.readAsText(file);
       }
 
-      var reader = new FileReader();
-      reader.onload = function () {
-        var parsed = parseFrontMatterClientSide(String(reader.result));
-        var f = parsed.fields;
-        if (f.title !== undefined) titleInput.value = f.title;
-        if (f.type !== undefined) typeInput.value = f.type;
-        if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
-        if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");
-        editor.setMarkdown(parsed.body);
-        setStatus("Loaded " + file.name + ".", "ok");
-      };
-      reader.onerror = function () {
-        setStatus("Failed to read " + file.name + ".", "error");
-      };
-      reader.readAsText(file);
+      if (editor.getMarkdown().trim() !== "") {
+        WikiDialog.confirm('Replace the current editor content with "' + file.name + '"?', {
+          okLabel: "Replace",
+        }).then(function (ok) {
+          if (ok) applyFile();
+        });
+        return;
+      }
+      applyFile();
     });
 
     var deleteBtn = document.getElementById("doc-delete-btn");

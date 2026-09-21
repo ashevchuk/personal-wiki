@@ -676,6 +676,34 @@ a.btn:focus {
   color: var(--bg);
   text-shadow: none;
 }
+.wiki-dialog {
+  width: min(32rem, calc(100vw - 2.5rem));
+  margin: auto;
+  padding: 1.2rem 1.25rem 1.1rem;
+  border: 1px solid var(--border);
+  background: var(--panel-bg);
+  color: var(--fg);
+  box-shadow: var(--glow);
+}
+.wiki-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.62);
+}
+.wiki-dialog-msg {
+  margin: 0 0 0.9rem;
+  color: var(--fg-bright);
+  white-space: pre-wrap;
+}
+.wiki-dialog-input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 0.9rem;
+}
+.wiki-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
 .folder-list {
   list-style: none;
   padding: 0;

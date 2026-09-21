@@ -129,6 +129,39 @@ void VaultRepository::moveToTrash(std::string_view relativePath) const {
   }
 }
 
+void VaultRepository::renameDocument(std::string_view oldRelativePath,
+                                     std::string_view newRelativePath) const {
+  const fs::path source = guard_.resolve(oldRelativePath);
+  if (!fs::exists(source)) {
+    throw fs::filesystem_error(
+        "document not found", source,
+        std::make_error_code(std::errc::no_such_file_or_directory));
+  }
+
+  const fs::path dest = guard_.resolve(newRelativePath);
+  fs::create_directories(dest.parent_path());
+
+  std::error_code ec;
+  fs::rename(source, dest, ec);
+  if (ec) {
+    throw fs::filesystem_error("failed to rename document", source, dest, ec);
+  }
+
+  const fs::path sourceAssets =
+      source.parent_path() / (source.stem().string() + ".assets");
+  if (fs::exists(sourceAssets)) {
+    const fs::path destAssets =
+        dest.parent_path() / (dest.stem().string() + ".assets");
+    std::error_code assetsEc;
+    fs::rename(sourceAssets, destAssets, assetsEc);
+    if (assetsEc) {
+      throw fs::filesystem_error(
+          "moved document but failed to move its assets folder",
+          sourceAssets, destAssets, assetsEc);
+    }
+  }
+}
+
 VaultRepository::FileStat VaultRepository::statFile(
     std::string_view relativePath) const {
   const fs::path fullPath = guard_.resolve(relativePath);

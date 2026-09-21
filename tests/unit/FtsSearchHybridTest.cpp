@@ -115,6 +115,7 @@ TEST_CASE("FtsSearch: hybrid search (with a real provider) DOES find that same "
   updater.upsertOne(makeEntry("notes/cat.md", "About cats", "The cat sat on the mat."));
   updater.upsertOne(
       makeEntry("notes/finance.md", "Finance", "Quarterly financial report for the fiscal year."));
+  updater.flushEmbeddings();
 
   FtsSearch search(env.db(), &provider);
   SearchQuery q;
@@ -137,6 +138,7 @@ TEST_CASE("FtsSearch: hybrid search still finds an exact keyword match — "
   updater.upsertOne(
       makeEntry("notes/systemd.md", "Systemd", "systemd timers are great for scheduling."));
   updater.upsertOne(makeEntry("notes/unrelated.md", "Unrelated", "A recipe for banana bread."));
+  updater.flushEmbeddings();
 
   FtsSearch search(env.db(), &provider);
   SearchQuery q;
@@ -179,6 +181,7 @@ TEST_CASE("FtsSearch: the runtime embeddings_runtime_config toggle actually "
   updater.upsertOne(makeEntry("notes/cat.md", "About cats", "The cat sat on the mat."));
   updater.upsertOne(
       makeEntry("notes/finance.md", "Finance", "Quarterly financial report for the fiscal year."));
+  updater.flushEmbeddings();
 
   FtsSearch search(env.db(), &provider);
   SearchQuery q;
@@ -229,6 +232,7 @@ TEST_CASE("FtsSearch: a genuinely unrelated document does NOT appear in "
       makeEntry("recipes/borscht.md", "Borscht",
                 "Beets, cabbage, potato, carrot, onion. Simmer broth with beef."));
   updater.upsertOne(makeEntry("welcome.md", "Welcome", "Welcome to the wiki."));
+  updater.flushEmbeddings();
 
   // Default maxSemanticDistance (0.5, same as AppConfig::embeddingsMaxDistance's
   // own default) — deliberately NOT overridden, so this test exercises the
@@ -271,6 +275,7 @@ TEST_CASE("FtsSearch: maxSemanticCandidates caps how many semantic matches "
       makeEntry("notes/systemd.md", "Systemd", "systemd timers are great for scheduling."));
   updater.upsertOne(makeEntry("notes/move.md", "Move Semantics",
                                "std::move casts an lvalue to an rvalue reference."));
+  updater.flushEmbeddings();
 
   // maxSemanticDistance deliberately wide open (cosine distance never
   // exceeds 2.0) so every one of the 5 documents above is a valid semantic
@@ -314,6 +319,7 @@ TEST_CASE("FtsSearch: an active tag filter excludes a document that only "
                          "A hearty vegetable soup recipe for cold days.");
   soup.tags = {"python"};
   updater.upsertOne(soup);
+  updater.flushEmbeddings();
 
   FtsSearch search(env.db(), &provider);
 
@@ -348,6 +354,7 @@ TEST_CASE("FtsSearch: a repeated identical query does NOT call embedQuery() "
   CountingEmbeddingProvider provider(realProvider);
   IndexUpdater updater(env.db(), &provider);
   updater.upsertOne(makeEntry("notes/cat.md", "About cats", "The cat sat on the mat."));
+  updater.flushEmbeddings();
 
   FtsSearch search(env.db(), &provider);
   SearchQuery q;

@@ -118,32 +118,31 @@ window.WikiPages = window.WikiPages || {};
         container.querySelectorAll(".history-restore-btn").forEach(function (btn) {
           btn.addEventListener("click", function () {
             var id = btn.getAttribute("data-id");
-            if (
-              !window.confirm(
-                "Restore this version? The CURRENT content is snapshotted first, so this itself can be undone."
+            WikiDialog.confirm(
+              "Restore this version? The CURRENT content is snapshotted first, so this itself can be undone.",
+              { okLabel: "Restore" }
+            ).then(function (ok) {
+              if (!ok) return;
+              fetch(
+                basePath() +
+                  "/api/document-restore/" +
+                  encodeVaultPath(docPath) +
+                  "?id=" +
+                  id,
+                {
+                  method: "POST",
+                  headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+                  credentials: "same-origin",
+                }
               )
-            ) {
-              return;
-            }
-            fetch(
-              basePath() +
-                "/api/document-restore/" +
-                encodeVaultPath(docPath) +
-                "?id=" +
-                id,
-              {
-                method: "POST",
-                headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
-                credentials: "same-origin",
-              }
-            )
-              .then(function (resp) {
-                if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
-                window.location.href = basePath() + "/d/" + encodeVaultPath(docPath);
-              })
-              .catch(function (err) {
-                alert("Restore failed: " + err.message);
-              });
+                .then(function (resp) {
+                  if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
+                  window.location.href = basePath() + "/d/" + encodeVaultPath(docPath);
+                })
+                .catch(function (err) {
+                  WikiDialog.alert("Restore failed: " + err.message);
+                });
+            });
           });
         });
       })

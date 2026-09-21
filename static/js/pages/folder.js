@@ -103,46 +103,52 @@ window.WikiPages = window.WikiPages || {};
 
     var renameBtn = el("button", { type: "button", text: "Rename/Move" });
     renameBtn.addEventListener("click", function () {
-      var newPath = window.prompt("Move/rename this folder to:", folderPath);
-      if (!newPath || newPath === folderPath) return;
-      fetch(basePath() + "/api/folders/move", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-CSRF-Token": getCookie("wiki_csrf_token"),
-        },
-        credentials: "same-origin",
-        body: JSON.stringify({ oldPath: folderPath, newPath: newPath }),
-      })
-        .then(function (resp) {
-          if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
-          window.location.href = basePath() + "/folder/" + encodeVaultPath(newPath);
+      WikiDialog.prompt("Move/rename this folder to:", folderPath).then(function (newPath) {
+        if (!newPath || newPath === folderPath) return;
+        fetch(basePath() + "/api/folders/move", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": getCookie("wiki_csrf_token"),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({ oldPath: folderPath, newPath: newPath }),
         })
-        .catch(function (err) {
-          alert("Move failed: " + err.message);
-        });
+          .then(function (resp) {
+            if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
+            window.location.href = basePath() + "/folder/" + encodeVaultPath(newPath);
+          })
+          .catch(function (err) {
+            WikiDialog.alert("Move failed: " + err.message);
+          });
+      });
     });
     actionsEl.appendChild(document.createTextNode(" "));
     actionsEl.appendChild(renameBtn);
 
     var deleteBtn = el("button", { type: "button", text: "Delete (if empty)" });
     deleteBtn.addEventListener("click", function () {
-      if (!window.confirm("Delete this folder? Only works if it's completely empty.")) return;
-      fetch(basePath() + "/api/folders/" + encodeVaultPath(folderPath), {
-        method: "DELETE",
-        headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
-        credentials: "same-origin",
-      })
-        .then(function (resp) {
-          if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
-          var parentIdx = folderPath.lastIndexOf("/");
-          var parent = parentIdx === -1 ? "" : folderPath.slice(0, parentIdx);
-          window.location.href =
-            basePath() + "/folder" + (parent ? "/" + encodeVaultPath(parent) : "");
+      WikiDialog.confirm("Delete this folder? Only works if it's completely empty.", {
+        danger: true,
+        okLabel: "Delete",
+      }).then(function (ok) {
+        if (!ok) return;
+        fetch(basePath() + "/api/folders/" + encodeVaultPath(folderPath), {
+          method: "DELETE",
+          headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+          credentials: "same-origin",
         })
-        .catch(function (err) {
-          alert("Delete failed: " + err.message);
-        });
+          .then(function (resp) {
+            if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
+            var parentIdx = folderPath.lastIndexOf("/");
+            var parent = parentIdx === -1 ? "" : folderPath.slice(0, parentIdx);
+            window.location.href =
+              basePath() + "/folder" + (parent ? "/" + encodeVaultPath(parent) : "");
+          })
+          .catch(function (err) {
+            WikiDialog.alert("Delete failed: " + err.message);
+          });
+      });
     });
     actionsEl.appendChild(document.createTextNode(" "));
     actionsEl.appendChild(deleteBtn);

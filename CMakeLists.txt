@@ -78,6 +78,7 @@ add_library(wikicore STATIC
   src/util/YouTubeEmbed.cpp
   src/embeddings/NullEmbeddingProvider.cpp
   src/embeddings/EmbeddingProviderFactory.cpp
+  src/embeddings/EmbeddingChunks.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC

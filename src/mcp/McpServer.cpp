@@ -258,7 +258,7 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 
     try {
       const auto rec = documents.create(path, input);
-      auditLog.record("create_document", path, true, "created");
+      auditLog.record("create_document", rec.path, true, "created");
       return textContent("Created " + rec.path);
     } catch (const vault::DocumentAlreadyExistsError&) {
       auditLog.record("create_document", path, false, "a document already exists at that path");
@@ -484,8 +484,10 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
         ::mcp::tool_builder("create_document")
             .with_description(
                 "Create a new document in the wiki. Fails if a document "
-                "already exists at that path.")
-            .with_string_param("path", "Vault-relative path, e.g. \"notes/foo.md\"", true)
+                "already exists at that path. A path that does not already "
+                "end in .md has .md appended.")
+            .with_string_param("path", "Vault-relative path, e.g. \"notes/foo.md\" "
+                                      "(the .md suffix is optional)", true)
             .with_string_param("title", "Document title", false)
             .with_string_param("body", "Markdown body", false)
             .with_string_param("type", "Document type, e.g. \"note\"", false)

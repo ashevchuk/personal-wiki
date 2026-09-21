@@ -56,6 +56,7 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
 
   std::size_t dimensions() const override;
   std::string modelIdentifier() const override;
+  int maxInputTokens() const override;
 
  private:
   llama_model* model_ = nullptr;

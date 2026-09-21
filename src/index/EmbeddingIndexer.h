@@ -11,14 +11,20 @@ namespace wikicore::index {
 
 // Owns the sqlite-vec-backed `document_embeddings` virtual table:
 // creating/recreating it at the right dimensionality, and upserting or
-// removing one document's vector at a time. Deliberately separate from
-// IndexUpdater (which owns documents/documents_fts/tags) rather than
+// removing one document's chunk vectors at a time. Deliberately separate
+// from IndexUpdater (which owns documents/documents_fts/tags) rather than
 // folded into it — this table's very existence depends on which
 // EmbeddingProvider (if any) is configured, and it can be dropped and
 // recreated independently (switching providers/dimensions) without
 // touching FTS or tag state at all. Only compiled in when at least one
 // embedding provider is (WIKI_ENABLE_SQLITE_VEC — see root
 // CMakeLists.txt); callers must guard use of this class the same way.
+//
+// Multi-vector: one document produces N overlapping passage embeddings
+// (see embeddings/EmbeddingChunks.h), stored as N vec0 rows sharing
+// `document_rowid`. nearest() collapses those back to unique documents
+// by best (minimum) distance before returning — FtsSearch's RRF merge
+// is document-level and must not see the same rowid twice.
 //
 // vec0's own CREATE VIRTUAL TABLE fixes the vector dimensionality at
 // creation time (a literal `float[N]` in the DDL, not a bind parameter —
@@ -36,28 +42,44 @@ class EmbeddingIndexer {
   explicit EmbeddingIndexer(sqlite3* db);
 
   // Ensures document_embeddings exists at exactly `dimensions` width AND
-  // was last populated by the exact model `modelIdentifier` names — see
+  // was last populated by the exact model `modelIdentifier` names AND
+  // uses the current multi-vector layout (`chunks-v1`). See
   // EmbeddingProvider::modelIdentifier()'s own comment for why dimensions
   // alone isn't enough (two different models can share a dimension count
-  // while producing incompatible vector spaces). No-op if BOTH already
-  // match. If EITHER differs (a provider/model swap since the last run),
-  // drops and recreates the table empty AND clears document_embedding_state
-  // (every document's content-hash tracking becomes stale too — a document
-  // whose text didn't change still needs a real re-embed against the new
-  // model, not a skip) — every document's embedding is lost and must be
-  // recomputed, exactly like a fresh index (see class comment). Throws
+  // while producing incompatible vector spaces). No-op if all three
+  // already match. If ANY differs (a provider/model swap, or a leftover
+  // single-vector table from before chunk embeddings), drops and recreates
+  // the table empty AND clears document_embedding_state (every document's
+  // content-hash tracking becomes stale too — a document whose text didn't
+  // change still needs a real re-embed against the new model/layout, not
+  // a skip) — every document's embedding is lost and must be recomputed,
+  // exactly like a fresh index (see class comment). Throws
   // std::runtime_error on a sqlite error.
   void ensureTable(std::size_t dimensions, const std::string& modelIdentifier);
 
   // Inserts or replaces the embedding for `documentRowId`. `embedding`
   // must have exactly the dimensionality ensureTable() was last called
   // with — throws std::runtime_error otherwise (a mismatched-length BLOB
-  // would otherwise corrupt every future KNN query silently).
+  // would otherwise corrupt every future KNN query silently). Convenience
+  // for a single-vector write; IndexUpdater uses upsertChunks() for the
+  // real multi-vector path.
   void upsertOne(sqlite3_int64 documentRowId, const std::vector<float>& embedding);
 
+  // Replaces every stored chunk vector for `documentRowId` with
+  // `embeddings` (delete-all-then-insert, one transaction). Empty
+  // `embeddings` is equivalent to removeOne(). Each inner vector must
+  // match currentDimensions().
+  void upsertChunks(sqlite3_int64 documentRowId,
+                    const std::vector<std::vector<float>>& embeddings);
+
   // No-op if no row exists for this document (matches IndexUpdater's own
-  // removeOne semantics).
+  // removeOne semantics). Deletes every chunk for this document_rowid.
   void removeOne(sqlite3_int64 documentRowId);
+
+  // How many chunk vectors are stored for this document (0 if the table
+  // doesn't exist or the document has none). Test/debug helper — not on
+  // the search hot path.
+  int chunkCount(sqlite3_int64 documentRowId) const;
 
   // The dimensionality document_embeddings currently exists at, or
   // std::nullopt if the table doesn't exist yet. Tracked via an
@@ -67,10 +89,14 @@ class EmbeddingIndexer {
   // back out of sqlite_master.sql.
   std::optional<std::size_t> currentDimensions() const;
 
-  // rowid,distance pairs for the `limit` closest stored embeddings to
-  // `queryEmbedding`, nearest first. `queryEmbedding` must match
-  // currentDimensions() — throws std::runtime_error otherwise. Empty
-  // result (not an error) if document_embeddings doesn't exist yet.
+  // Unique-document,distance pairs for the `limit` closest documents to
+  // `queryEmbedding`, nearest first. A document with several chunk
+  // vectors contributes once, at its best (minimum) chunk distance —
+  // without this collapse a long document would flood the candidate list
+  // with its own passages and starve FtsSearch's RRF merge of other
+  // documents. `queryEmbedding` must match currentDimensions() — throws
+  // std::runtime_error otherwise. Empty result (not an error) if
+  // document_embeddings doesn't exist yet.
   struct Neighbor {
     sqlite3_int64 documentRowId;
     double distance;

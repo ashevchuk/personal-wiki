@@ -130,6 +130,45 @@ early return, before `--reindex`) and passes it to every `IndexUpdater` instance
 including `VaultWatcher`'s own separate one — so a document changed by an external
 editor/`git pull` gets embedded too, not just documents saved through the Web UI.
 
+### Multi-vector (chunk) embeddings
+
+A document is no longer one mean-pooled vector of its entire title+body. Long notes
+drown a relevant paragraph in that average, and a local model with a 512-token
+context window (`bge-small-en-v1.5`) used to reject the whole document when the
+concatenated text tokenized past `n_ctx` (the `_mcp_upload_probe` README was the
+live example: 748 tokens, recorded as a needing-attention failure, never searchable
+semantically).
+
+`embeddings::chunkForEmbedding` splits title+body into overlapping passage windows
+(~384 estimated tokens, 64-token overlap, cap 32 chunks; each chunk prefixed with
+the document title). `IndexUpdater` calls `embed()` once per chunk (outside
+`mutex_`, same as the old single call — `LocalEmbeddingProvider` still serializes
+the actual `llama_decode`). `EmbeddingIndexer` stores N vec0 rows sharing
+`document_rowid`; `nearest()` collapses those back to unique documents at the
+**best (minimum) chunk distance** before FtsSearch's RRF merge sees them. Short
+notes still produce a single `title + "\n\n" + body` chunk — same observable as
+before for anything that already fit.
+
+Token counts in the splitter are estimated (2 UTF-8 bytes/token, conservative for
+mixed English/Cyrillic against BERT-family BPE), not the model's real tokenizer:
+`EmbeddingProvider` stays tokenizer-agnostic, and a leftover oversized chunk is
+still a catchable `embed()` failure rather than a process crash. The vec0 schema
+changed (`chunk_id INTEGER PRIMARY KEY`, `document_rowid` is now a metadata
+column, not the PK) — `ensureTable` tracks `embedding_layout=chunks-v1` in
+`index_meta` and drops+recreates on a mismatch, clearing `document_embedding_state`
+the same way a model swap does. The next `wiki-server` startup rescan therefore
+re-embeds every document once after this change lands; skip-if-unchanged takes
+over after that. ARM cost on save is N × 1.3–2.6s per document (N=1 for short
+notes); that inference runs on a background worker so the HTTP Save returns as
+soon as the markdown and FTS5 index are committed — found live: a long ZX
+Spectrum note's chunk embeds held the request open until nginx returned
+`504 Gateway Time-out`. Semantic search lags those few seconds; keyword search
+does not. The embed worker coalesces by document: a second Save of the same
+file replaces any still-waiting job (latest body wins), and an identical
+body that is already queued or in-flight is dropped rather than embedded
+twice. `--reindex` / POST `/api/admin/reindex` still wait until embeddings
+finish (`IndexUpdater::flushEmbeddings()`).
+
 ### vec0's dimension is fixed at CREATE time — a provider swap loses stored vectors
 
 Confirmed against `sqlite-vec`'s own examples: `CREATE VIRTUAL TABLE ... USING
@@ -293,8 +332,11 @@ document row, the `content_hash` (a plain `std::hash<std::string>` of
 model here; a hash collision would at worst skip a re-embed that a later edit would
 still trigger) as of its **last successful** embed, and `last_error` (`NULL` exactly
 when that attempt succeeded). `IndexUpdater::upsertOne` computes the current hash,
-asks `EmbeddingIndexer::needsEmbedding()` whether it matches, and only calls
-`provider_->embed()` — the slow, real-inference-or-network step — when it doesn't.
+asks `EmbeddingIndexer::needsEmbedding()` whether it matches, and only queues
+`provider_->embed()` on a background worker — the slow, real-inference-or-network
+step — when it doesn't. The HTTP Save itself does not wait for that worker
+(found live: a long document's chunk embeds held the request until nginx
+returned 504). `--reindex` still waits (`flushEmbeddings()`).
 
 **Failure doesn't touch `content_hash`, only `last_error` — deliberately.** If
 `embed()` throws (model unreachable, cloud API down, whatever), `content_hash` keeps
@@ -432,6 +474,13 @@ whole feature was built for, now provably correct for this failure mode too.
 `tests/unit/LocalEmbeddingProviderTest.cpp` has a permanent regression test:
 an oversized text throws `std::runtime_error` (not a crash), and the SAME
 provider instance stays usable for a normal-length text immediately after.
+IndexUpdater no longer feeds whole documents to `embed()` — it chunks first
+(see "Multi-vector (chunk) embeddings" above) — so a long note is supposed
+to succeed as N in-window passages rather than land on this failure path.
+The `n_ctx` check remains load-bearing for anything that still calls
+`embed()` directly (admin retry of a leftover failure, a future caller)
+and as a backstop if the byte-estimate splitter ever packs a chunk the
+real tokenizer still sees as too long.
 
 ## Two more real concurrency bugs, found cross-compiling for a production deploy
 

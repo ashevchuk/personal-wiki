@@ -208,4 +208,6 @@ std::size_t LocalEmbeddingProvider::dimensions() const { return dimensions_; }
 
 std::string LocalEmbeddingProvider::modelIdentifier() const { return modelIdentifier_; }
 
+int LocalEmbeddingProvider::maxInputTokens() const { return static_cast<int>(maxTokens_); }
+
 }  // namespace wikicore::embeddings

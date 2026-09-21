@@ -81,7 +81,9 @@ Set `write_access = true` under `[mcp]` in `config.toml` to expose three more to
 
 - **create_document**(path: string, title?: string, body?: string, type?: string,
   visibility?: string, tags?: string[]) — fails if a document already exists at
-  `path`. `visibility` defaults to `"private"` (fail-safe, same as the HTTP create
+  `path`. A path that doesn't already end in `.md` gets `.md` appended (same as
+  the HTTP create route — IndexBuilder only walks `.md` files). `visibility`
+  defaults to `"private"` (fail-safe, same as the HTTP create
   route) if omitted.
 - **update_document**(path: string, title?: string, body?: string, type?: string,
   visibility?: string, tags?: string[]) — a genuine PARTIAL update: any field left out

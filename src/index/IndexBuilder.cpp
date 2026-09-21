@@ -118,6 +118,10 @@ RescanStats IndexBuilder::fullRescan(RescanProgress* progress) {
     }
   }
 
+  // Wait for any embeddings queued by the upserts above. Ordinary Save
+  // does not wait (that's how a long document avoids nginx 504); this
+  // path is the explicit "reindex is done" contract.
+  indexUpdater_.flushEmbeddings();
   return stats;
 }
 

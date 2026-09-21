@@ -12,7 +12,11 @@ static shell (`static/shell.html`) + client-side JS rendering from `fetch()` res
 (see `CMakeLists.txt`'s own comment: "No CSP views (`views/*.csp`) anymore — the backend
 is a JSON API only now"). `htmx` was vendored for the CSP-view era's server-rendered
 fragments and removed once there was nothing left for it to swap — `static/js/htmx/`
-does not exist in this repo. The CSP-view-specific gotchas below (M2) are kept as
+does not exist in this repo. Confirm/prompt/alert from the JS pages go
+through `WikiDialog` (`static/js/dialog.js`) — a themed `<dialog>`, not
+the host browser's `window.prompt` (which cannot pick up this app's
+palette and punched a grey OS box over the page on folder Rename/Move).
+The CSP-view-specific gotchas below (M2) are kept as
 engineering history — real lessons from real bugs — not as a description of the current
 codebase; don't relearn them by touching a `.csp` file that also no longer exists.
 
@@ -123,7 +127,20 @@ codebase; don't relearn them by touching a `.csp` file that also no longer exist
   `rename()` (atomic within one filesystem). Soft-delete: `rename()` the document and,
   if present, its `<stem>.assets/` folder into `.trash/<same relative path>` —
   separately, returning an error if the document moved but the assets folder didn't
-  (doesn't try to roll the document itself back).
+  (doesn't try to roll the document itself back). Document rename/move
+  (`DocumentService::rename`, `POST /api/documents/move`): same file + `.assets/`
+  `rename()`, then inbound `[[wiki-link]]`s and `assets/<stem>.assets/` hrefs in
+  other documents are rewritten and those sources reindexed. The SQLite row is
+  *re-pathed in place* (`IndexUpdater::repathOne`) so `rowid_id` — and therefore
+  `document_snapshots` / history — survives; `removeOne` + insert would mint a
+  new row and drop it. Folder move (`FolderService::move`,
+  `POST /api/folders/move`) is the same contract over a prefix: the directory
+  rename is atomic (documents + nested `.assets/`), then inbound `[[wiki-link]]`s
+  and `assets/<old-folder>/` hrefs whose vault path sat under that prefix are
+  rewritten (inside the subtree and outside it) and those sources reindexed,
+  with each moved document's index row re-pathed in place for the same
+  history-preserving reason. A forgotten `.md` on create (and on rename's destination)
+  is appended server-side; `.MD` is canonicalized to `.md`.
 - **Attachments**: no extension allowlist (removed; serving-side
   `isSafeToRenderInline` is the actual safety boundary), filename sanitization
   (`[A-Za-z0-9._-]`, everything else → `_`), **no app-level size cap** (a 120 MiB
@@ -1532,9 +1549,9 @@ button right next to it. Both new buttons are deliberately thin:
   `[a, b]`), populates the matching form fields, and replaces the editor's
   content with the body. Nothing touches the network — the file only
   ever reaches the server if the user hits Save afterward. If the editor
-  already has non-empty content, a `window.confirm` guards against
-  silently discarding unsaved work; a brand-new empty document skips the
-  prompt entirely.
+  already has non-empty content, a themed confirm (`WikiDialog`, not
+  `window.confirm`) guards against silently discarding unsaved work; a
+  brand-new empty document skips the prompt entirely.
 
 **A real, previously-shipped bug found and fixed building Download, not
 hypothetical**: `GET /api/documents/{path}/raw` (`DocumentRoutes.cpp`)

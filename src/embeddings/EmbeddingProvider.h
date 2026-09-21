@@ -40,6 +40,15 @@ class EmbeddingProvider {
   // caller needs this up front to size whatever storage/index it builds.
   virtual std::size_t dimensions() const = 0;
 
+  // Model's trained context window in tokens (n_ctx), or 0 if unknown.
+  // chunkForEmbedding() uses this to keep each passage under the real
+  // limit (LocalEmbeddingProvider reports 512 for bge-small-en-v1.5);
+  // 0 falls back to kEmbeddingChunkTargetTokens. Cloud endpoints that
+  // accept 8k+ tokens still chunk at the retrieval-sized default —
+  // a 4k-token mean-pooled vector is a worse search unit than overlapping
+  // ~384-token passages, even when the API would accept the whole doc.
+  virtual int maxInputTokens() const { return 0; }
+
   // A stable string identifying WHICH model/configuration this provider
   // instance actually embeds with — NOT just its dimensionality.
   // EmbeddingIndexer::ensureTable() compares this (see

@@ -238,6 +238,8 @@ def run_checks(sandbox, vault):
     check("anon update -> 401", status == 401, f"got {status}")
     status, _, _ = anon.delete("/api/documents/x.md")
     check("anon delete -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/documents/move", {"oldPath": "x.md", "newPath": "y.md"})
+    check("anon document move -> 401", status == 401, f"got {status}")
     status, _, _ = anon.upload("/api/attachments/x.md", "a.png", b"data")
     check("anon upload -> 401", status == 401, f"got {status}")
     status, _, _ = anon.delete("/api/attachments/x.assets/a.png")
@@ -322,6 +324,8 @@ def run_checks(sandbox, vault):
     # --- 4. CSRF enforcement ---------------------------------------------
     status, _, _ = admin.put_json("/api/documents/nope.md", {"title": "x", "body": "y"})
     check("mutating request without csrf header -> 403", status == 403, f"got {status}")
+    status, _, _ = admin.post_json("/api/documents/move", {"oldPath": "x.md", "newPath": "y.md"})
+    check("document move without csrf header -> 403", status == 403, f"got {status}")
 
     # --- 5. Path traversal ------------------------------------------------
     # The shell route itself touches no filesystem (see check 0) — the
@@ -354,6 +358,28 @@ def run_checks(sandbox, vault):
     check("anon private doc -> 404 (not 403)", status == 404, f"got {status}")
     status, _, _ = admin.get("/api/documents/notes/private.md")
     check("admin sees private doc", status == 200, f"got {status}")
+
+    status, _, body = admin.post_json(
+        "/api/documents",
+        {"path": "notes/no-suffix", "title": "No Suffix", "visibility": "public",
+         "body": "created without .md"},
+        headers={"X-CSRF-Token": csrf})
+    check("create without .md suffix -> 201", status == 201, f"got {status}")
+    nosuffix = json.loads(body.decode()) if body else {}
+    check("create without .md returns path with .md",
+          nosuffix.get("path") == "notes/no-suffix.md", f"got {nosuffix}")
+    status, _, _ = admin.get("/api/documents/notes/no-suffix.md")
+    check("appended-.md document is readable", status == 200, f"got {status}")
+
+    status, _, body = admin.post_json(
+        "/api/documents/move",
+        {"oldPath": "notes/no-suffix.md", "newPath": "../../etc/evil.md"},
+        headers={"X-CSRF-Token": csrf})
+    check("path traversal in document move -> 400, not leaked",
+          status == 400 and b"root:" not in body and b"/home/" not in body,
+          f"got {status} {body[:200]!r}")
+    status, _, _ = admin.get("/api/documents/notes/no-suffix.md")
+    check("document still in place after rejected move", status == 200, f"got {status}")
 
     # --- 6a2. /api/documents/{path}/raw (literal on-disk bytes) -----------
     # This route sat behind a general "^/api/documents/(.*)$" handler

@@ -1,6 +1,7 @@
 #include "index/Database.h"
 #include "index/IndexBuilder.h"
 #include "index/IndexUpdater.h"
+#include "index/NavQueries.h"
 #include "index/SnapshotStore.h"
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
@@ -86,6 +87,93 @@ TEST_CASE("FolderService move relocates a whole subtree and reindexes every "
   const auto indexedPaths = indexUpdater.allIndexedPaths();
   REQUIRE(std::find(indexedPaths.begin(), indexedPaths.end(), "notes/sub/deep.md") ==
           indexedPaths.end());
+}
+
+TEST_CASE("FolderService move rewrites inbound wiki-links and asset hrefs "
+          "and keeps the index rowid (history) intact",
+          "[FolderService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  index::IndexBuilder indexBuilder(repo, indexUpdater);
+  vault::DocumentService docSvc(repo, indexUpdater, snapshots);
+  vault::FolderService folderSvc(repo, indexUpdater, indexBuilder);
+  index::NavQueries nav(db);
+
+  vault::DocumentInput deep;
+  deep.title = "Deep";
+  deep.visibility = "public";
+  deep.body = "Self [[notes/cpp/deep]] and ![img](assets/notes/cpp/deep.assets/img.png)\n"
+              "and sibling [[notes/cpp/sibling]].\n";
+  docSvc.create("notes/cpp/deep.md", deep);
+  fs::create_directories(env.vaultRoot() / "notes/cpp/deep.assets");
+  std::ofstream(env.vaultRoot() / "notes/cpp/deep.assets/img.png") << "fake";
+
+  vault::DocumentInput sibling;
+  sibling.title = "Sibling";
+  sibling.visibility = "public";
+  sibling.body = "Back to [[notes/cpp/deep.md|Deep]].\n";
+  docSvc.create("notes/cpp/sibling.md", sibling);
+
+  vault::DocumentInput outsider;
+  outsider.title = "Outsider";
+  outsider.visibility = "public";
+  outsider.body = "See [[notes/cpp/deep]] and ![x](assets/notes/cpp/deep.assets/img.png).\n";
+  docSvc.create("notes/other.md", outsider);
+
+  vault::DocumentInput decoy;
+  decoy.title = "Decoy";
+  decoy.visibility = "public";
+  decoy.body = "Not this folder: [[notes/cpp-extra/x]] and [[notes/cpp]].\n";
+  docSvc.create("notes/decoy.md", decoy);
+
+  const auto rowBefore = indexUpdater.rowIdForPath("notes/cpp/deep.md");
+  REQUIRE(rowBefore.has_value());
+  snapshots.record(*rowBefore, "pre-folder-move snapshot");
+
+  const int64_t reindexed = folderSvc.move("notes/cpp", "archive/cxx");
+  REQUIRE(reindexed == 2);
+
+  REQUIRE(fs::exists(env.vaultRoot() / "archive/cxx/deep.md"));
+  REQUIRE(fs::exists(env.vaultRoot() / "archive/cxx/deep.assets/img.png"));
+  REQUIRE_FALSE(fs::exists(env.vaultRoot() / "notes/cpp"));
+
+  REQUIRE(indexUpdater.rowIdForPath("archive/cxx/deep.md") == rowBefore);
+  REQUIRE(snapshots.list(*rowBefore).size() == 1);
+
+  const auto movedDeep = docSvc.get("archive/cxx/deep.md");
+  REQUIRE(movedDeep.body.find("[[archive/cxx/deep]]") != std::string::npos);
+  REQUIRE(movedDeep.body.find("[[archive/cxx/sibling]]") != std::string::npos);
+  REQUIRE(movedDeep.body.find("assets/archive/cxx/deep.assets/img.png") !=
+          std::string::npos);
+  REQUIRE(movedDeep.body.find("notes/cpp/") == std::string::npos);
+
+  const auto movedSibling = docSvc.get("archive/cxx/sibling.md");
+  REQUIRE(movedSibling.body.find("[[archive/cxx/deep.md|Deep]]") != std::string::npos);
+
+  const auto outsiderAfter = docSvc.get("notes/other.md");
+  REQUIRE(outsiderAfter.body.find("[[archive/cxx/deep]]") != std::string::npos);
+  REQUIRE(outsiderAfter.body.find("assets/archive/cxx/deep.assets/img.png") !=
+          std::string::npos);
+  REQUIRE(outsiderAfter.body.find("notes/cpp/") == std::string::npos);
+
+  const auto decoyAfter = docSvc.get("notes/decoy.md");
+  REQUIRE(decoyAfter.body == "Not this folder: [[notes/cpp-extra/x]] and [[notes/cpp]].\n");
+
+  const auto backlinks = nav.backlinks("archive/cxx/deep.md", true);
+  bool foundOutsider = false;
+  bool foundSibling = false;
+  for (const auto& b : backlinks) {
+    if (b.path == "notes/other.md") foundOutsider = true;
+    if (b.path == "archive/cxx/sibling.md") foundSibling = true;
+    REQUIRE(b.path != "notes/cpp/deep.md");
+  }
+  REQUIRE(foundOutsider);
+  REQUIRE(foundSibling);
+  REQUIRE(nav.backlinks("notes/cpp/deep.md", true).empty());
 }
 
 TEST_CASE("FolderService move rejects missing source, occupied destination, "

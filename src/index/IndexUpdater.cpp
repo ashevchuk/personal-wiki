@@ -4,12 +4,15 @@
 #include "util/WikiLinks.h"
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
+#include "embeddings/EmbeddingChunks.h"
 #include "index/EmbeddingIndexer.h"
 
 #include <cctype>
 #include <functional>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
+#include <unordered_map>
 #endif
 
 #include <optional>
@@ -69,6 +72,48 @@ int wordCount(const std::string& text) {
     }
   }
   return count;
+}
+
+// Title+body as they currently sit in documents/documents_fts, hashed
+// the same way the job was queued. The background worker uses this to
+// drop a job whose document was edited, shortened, or deleted while
+// inference ran — otherwise the in-flight write would resurrect a
+// stale vector (and its content_hash) over the newer FTS row.
+std::optional<std::string> liveContentHash(Database& db, int64_t rowId) {
+  Statement stmt(db.handle(),
+                  "SELECT d.title, f.body FROM documents d "
+                  "JOIN documents_fts f ON f.rowid = d.rowid_id "
+                  "WHERE d.rowid_id = ?1;");
+  stmt.bind(1, rowId);
+  if (!stmt.step()) return std::nullopt;
+  return contentHashForEmbedding(stmt.columnText(0), stmt.columnText(1));
+}
+
+// Process-wide, not per IndexUpdater: wiki-server has TWO IndexUpdaters
+// (HTTP request threads + VaultWatcher), each with its own worker. A
+// Save writes the file AND queues an embed; inotify then fires
+// VaultWatcher on the same path. Without a shared claim, both workers
+// embed the same body — two llama_decode passes of identical text.
+// Identical (rowId, hash) is claimed once; a second Save of the same
+// text, or the watcher, is a no-op. A different hash updates the claim
+// so the latest body still runs after whatever is already in-flight.
+std::mutex g_claimedMutex;
+std::unordered_map<int64_t, std::string> g_claimedHashByRowId;
+
+bool claimEmbedHash(int64_t rowId, const std::string& hash) {
+  std::lock_guard<std::mutex> lock(g_claimedMutex);
+  auto it = g_claimedHashByRowId.find(rowId);
+  if (it != g_claimedHashByRowId.end() && it->second == hash) return false;
+  g_claimedHashByRowId[rowId] = hash;
+  return true;
+}
+
+void releaseEmbedClaim(int64_t rowId, const std::string& hash) {
+  std::lock_guard<std::mutex> lock(g_claimedMutex);
+  auto it = g_claimedHashByRowId.find(rowId);
+  if (it != g_claimedHashByRowId.end() && it->second == hash) {
+    g_claimedHashByRowId.erase(it);
+  }
 }
 #endif
 
@@ -137,6 +182,12 @@ void replaceFtsEntry(Database& db, int64_t documentRowId,
 }
 
 }  // namespace
+
+IndexUpdater::~IndexUpdater() {
+#ifdef WIKI_ENABLE_SQLITE_VEC
+  stopAndJoinEmbedWorker();
+#endif
+}
 
 int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
   // rowId is set inside the locked block below and used again afterward
@@ -243,6 +294,7 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
     // document just fine for anyone actually searching its own words
     // ("welcome").
     if (wordCount(entry.title) + wordCount(entry.body) < minEmbeddingWords_) {
+      dropQueuedEmbedJob(rowId);
       // Not a failure — record success-with-no-vector so this document
       // never shows up in the admin "needing attention" list (that list
       // means "something's broken", not "this is fine, just short") and
@@ -281,13 +333,12 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
     // provider/model swap since the last run clears
     // document_embedding_state entirely; needsEmbedding() has to see
     // that POST-clear state, not a stale pre-clear one.
-    std::string currentHash;
+    const std::string currentHash = contentHashForEmbedding(entry.title, entry.body);
     bool needsEmbed = true;
     try {
       std::lock_guard<std::mutex> lock(mutex_);
       EmbeddingIndexer indexer(db_.handle());
       indexer.ensureTable(provider_->dimensions(), provider_->modelIdentifier());
-      currentHash = contentHashForEmbedding(entry.title, entry.body);
       needsEmbed = indexer.needsEmbedding(rowId, currentHash);
     } catch (...) {
       // ensureTable() itself hit a real sqlite error — fall through and
@@ -297,38 +348,13 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
     }
 
     if (needsEmbed) {
-      // Step 2: the actual embed() call — deliberately OUTSIDE mutex_. A
-      // network call for the cloud provider, or real model inference for
-      // local, must never hold the lock other threads' document/FTS
-      // saves or their own embedding writes are waiting on (see mutex_'s
-      // own comment in the header for why this is the ONLY step that
-      // stays unlocked — every actual DB write, embedding-related or
-      // not, uses the same mutex_).
-      try {
-        const auto embedding = provider_->embed(entry.title + "\n\n" + entry.body);
-        std::lock_guard<std::mutex> lock(mutex_);
-        EmbeddingIndexer indexer(db_.handle());
-        indexer.upsertOne(rowId, embedding);
-        indexer.recordEmbeddingSuccess(rowId, currentHash);
-      } catch (const std::exception& e) {
-        try {
-          std::lock_guard<std::mutex> lock(mutex_);
-          EmbeddingIndexer(db_.handle()).recordEmbeddingFailure(rowId, e.what());
-        } catch (...) {
-          // Even recording the failure failed (a real sqlite error) —
-          // nothing left to do but let this document stay silently
-          // unindexed for now; the NEXT rescan/save attempt still finds
-          // needsEmbed=true (no successful hash was ever recorded) and
-          // tries again.
-        }
-      } catch (...) {
-        try {
-          std::lock_guard<std::mutex> lock(mutex_);
-          EmbeddingIndexer(db_.handle())
-              .recordEmbeddingFailure(rowId, "unknown error (non-std::exception thrown)");
-        } catch (...) {
-        }
-      }
+      // Queue the slow embed() work instead of running it on this thread.
+      // Found live on production ARM: a long document's N chunk embeds
+      // (1.3–2.6s each) held the HTTP Save open until nginx returned
+      // 504 Gateway Time-out, even though the markdown was already on
+      // disk and FTS had already committed. The worker still runs
+      // embed() outside mutex_ (same as before); Save just doesn't wait.
+      enqueueEmbedJob(EmbedJob{rowId, entry.title, entry.body, currentHash});
     }
   }
 #endif
@@ -393,12 +419,163 @@ void IndexUpdater::removeOne(const std::string& path) {
      // already-open one, a real sqlite error, not just untidy.
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
-  if (provider_ != nullptr && rowId.has_value()) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    EmbeddingIndexer indexer(db_.handle());
-    indexer.removeOne(*rowId);
+  if (rowId.has_value()) {
+    dropQueuedEmbedJob(*rowId);
+    if (provider_ != nullptr) {
+      std::lock_guard<std::mutex> lock(mutex_);
+      EmbeddingIndexer indexer(db_.handle());
+      indexer.removeOne(*rowId);
+    }
   }
 #endif
 }
+
+void IndexUpdater::repathOne(const std::string& oldPath, const std::string& newPath) {
+  if (oldPath.empty() || newPath.empty() || oldPath == newPath) return;
+
+  std::lock_guard<std::mutex> lock(mutex_);
+  Statement begin(db_.handle(), "BEGIN IMMEDIATE;");
+  begin.run();
+  try {
+    const auto rowId = findRowIdByPath(db_, oldPath);
+    if (rowId) {
+      Statement update(db_.handle(),
+                        "UPDATE documents SET path = ?1 WHERE rowid_id = ?2;");
+      update.bind(1, newPath).bind(2, *rowId);
+      update.run();
+    }
+    Statement commit(db_.handle(), "COMMIT;");
+    commit.run();
+  } catch (...) {
+    Statement rollback(db_.handle(), "ROLLBACK;");
+    rollback.run();
+    throw;
+  }
+}
+
+#ifdef WIKI_ENABLE_SQLITE_VEC
+
+void IndexUpdater::enqueueEmbedJob(EmbedJob job) {
+  // Duplicate of an already-queued or in-flight (rowId, hash) — second
+  // Save of the same text, or VaultWatcher seeing this Save's write.
+  if (!claimEmbedHash(job.rowId, job.contentHash)) return;
+  {
+    std::lock_guard<std::mutex> qlock(queueMutex_);
+    pendingByRowId_[job.rowId] = std::move(job);
+    ensureEmbedWorkerStartedLocked();
+  }
+  queueCv_.notify_one();
+}
+
+void IndexUpdater::dropQueuedEmbedJob(int64_t rowId) {
+  std::string hash;
+  bool had = false;
+  {
+    std::lock_guard<std::mutex> qlock(queueMutex_);
+    auto it = pendingByRowId_.find(rowId);
+    if (it != pendingByRowId_.end()) {
+      hash = it->second.contentHash;
+      pendingByRowId_.erase(it);
+      had = true;
+    }
+  }
+  if (had) releaseEmbedClaim(rowId, hash);
+}
+
+void IndexUpdater::ensureEmbedWorkerStartedLocked() {
+  if (workerStarted_) return;
+  workerStarted_ = true;
+  embedWorker_ = std::thread([this] { embedWorkerLoop(); });
+}
+
+void IndexUpdater::embedWorkerLoop() {
+  for (;;) {
+    EmbedJob job;
+    {
+      std::unique_lock<std::mutex> qlock(queueMutex_);
+      queueCv_.wait(qlock, [this] { return stopWorker_ || !pendingByRowId_.empty(); });
+      if (pendingByRowId_.empty()) {
+        return;  // stopWorker_ and the queue is drained
+      }
+      auto it = pendingByRowId_.begin();
+      job = std::move(it->second);
+      pendingByRowId_.erase(it);
+      embedInFlight_ = true;
+    }
+    runEmbedJob(job);
+    {
+      std::lock_guard<std::mutex> qlock(queueMutex_);
+      embedInFlight_ = false;
+    }
+    queueCv_.notify_all();  // flushEmbeddings() waiters
+  }
+}
+
+void IndexUpdater::runEmbedJob(const EmbedJob& job) {
+  if (provider_ == nullptr) {
+    releaseEmbedClaim(job.rowId, job.contentHash);
+    return;
+  }
+  try {
+    // Multi-vector: overlapping title-prefixed passages, each small
+    // enough to fit the model's n_ctx (see EmbeddingChunks.h). Short
+    // notes still embed as a single title+"\n\n"+body string. Embed
+    // every chunk BEFORE taking mutex_: N slow inferences must not hold
+    // the lock other threads' document/FTS saves need.
+    // LocalEmbeddingProvider serializes the actual llama_decode.
+    const auto chunks = embeddings::chunkForEmbedding(
+        job.title, job.body, provider_->maxInputTokens());
+    std::vector<std::vector<float>> vectors;
+    vectors.reserve(chunks.size());
+    for (const auto& chunk : chunks) {
+      vectors.push_back(provider_->embed(chunk));
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Drop the write if the document vanished, was shortened below the
+    // embed threshold, or was saved again with different body while we
+    // were inferring — an in-flight job can't be cancelled, but it must
+    // not overwrite the newer FTS/state row with stale vectors.
+    const auto live = liveContentHash(db_, job.rowId);
+    if (!live || *live != job.contentHash) {
+      releaseEmbedClaim(job.rowId, job.contentHash);
+      return;
+    }
+    EmbeddingIndexer indexer(db_.handle());
+    indexer.upsertChunks(job.rowId, vectors);
+    indexer.recordEmbeddingSuccess(job.rowId, job.contentHash);
+    releaseEmbedClaim(job.rowId, job.contentHash);
+  } catch (const std::exception& e) {
+    try {
+      std::lock_guard<std::mutex> lock(mutex_);
+      EmbeddingIndexer(db_.handle()).recordEmbeddingFailure(job.rowId, e.what());
+    } catch (...) {
+    }
+    releaseEmbedClaim(job.rowId, job.contentHash);
+  } catch (...) {
+    try {
+      std::lock_guard<std::mutex> lock(mutex_);
+      EmbeddingIndexer(db_.handle())
+          .recordEmbeddingFailure(job.rowId, "unknown error (non-std::exception thrown)");
+    } catch (...) {
+    }
+    releaseEmbedClaim(job.rowId, job.contentHash);
+  }
+}
+
+void IndexUpdater::flushEmbeddings() {
+  std::unique_lock<std::mutex> qlock(queueMutex_);
+  queueCv_.wait(qlock, [this] { return pendingByRowId_.empty() && !embedInFlight_; });
+}
+
+void IndexUpdater::stopAndJoinEmbedWorker() {
+  {
+    std::lock_guard<std::mutex> qlock(queueMutex_);
+    stopWorker_ = true;
+  }
+  queueCv_.notify_all();
+  if (embedWorker_.joinable()) embedWorker_.join();
+}
+
+#endif
 
 }  // namespace wikicore::index
