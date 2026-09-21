@@ -1034,7 +1034,11 @@ a.btn:focus {
   max-height: 70vh;
   display: flex;
   flex-direction: column;
-  background: var(--panel-bg-2);
+  /* Neutral black, NOT var(--panel-bg-2) — same scoped de-green as
+     .ms-menu/.typeahead-menu. The list of documents is a panel, not an
+     input; --panel-bg-2 stays green-tinted for actual <input>s
+     (.quick-open-input included, via the generic `input` rule). */
+  background: #0a0a0a;
   border: 1px solid var(--border);
   box-shadow: var(--glow);
 }
