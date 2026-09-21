@@ -42,7 +42,8 @@ window.WikiPages = window.WikiPages || {};
       // ran in a fixed box and CSS letterboxed/clipped it into the
       // reading column. Measuring here (after .content--graph has
       // given the container a real height) means nodes spread across
-      // whatever is actually on screen; a resize re-runs it.
+      // whatever is actually on screen; a resize scales the cached
+      // coordinates (graph-render.js) instead of simulating again.
       var rect = graphContainer.getBoundingClientRect();
       window.WikiGraphRender.render(graphContainer, lastData.nodes, lastData.edges, {
         width: Math.max(Math.floor(rect.width), 1),

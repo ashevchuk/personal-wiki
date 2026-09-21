@@ -1,20 +1,21 @@
-// Shared force-directed layout + graph paint, used by both the full
-// graph page (pages/graph.js) and the per-document local graph widget
-// (pages/view.js). Layout is a from-scratch spring/repulsion simulation
-// rather than a vendored physics library (d3-force or similar) -- a
-// basic one is a well-understood, small algorithm, and this app's real
-// scale (a personal vault, tens of documents) never needs the extra
-// sophistication a real library buys (barrier collision, incremental
-// re-layout). Matches the same "write it ourselves when it's small,
-// vendor when it's genuinely complex" split as query-block.js/
-// section-zoom.js vs. mermaid.js/Prism.js elsewhere in this app.
+// Shared graph paint, used by both the full graph page (pages/graph.js)
+// and the per-document local graph widget (pages/view.js).
+//
+// Layout lives in graph-layout.js (Barnes-Hut, O(n log n)): run in a
+// Worker so a large vault does not freeze the UI thread, with a sync
+// fallback on the same file if Worker construction fails. Resize does
+// NOT re-run the simulation — cached coordinates are uniformly scaled
+// to the new box (compounding-free: always from the original layout
+// space). Matches the same "write it ourselves when it's small, vendor
+// when it's genuinely complex" split as query-block.js/section-zoom.js
+// vs. mermaid.js/Prism.js; Barnes-Hut is the "genuinely complex" part
+// of THIS algorithm, still ours rather than d3-force.
 //
 // Paint is a capability ladder, not a single backend: WebGL, then
 // canvas 2D, then SVG-in-the-DOM (the original renderer). Feature-
 // detect a REAL getContext, not "does WebGLRenderingContext exist" --
 // the constructor can be present while context creation/shader compile
 // fails (blocked, software rasterizer that throws, context lost).
-// Layout stays CPU O(n²) either way; this chain is only the draw.
 window.WikiGraphRender = (function () {
   "use strict";
 
@@ -56,102 +57,144 @@ window.WikiGraphRender = (function () {
     "varying vec4 v_color;\n" +
     "void main() { gl_FragColor = v_color; }\n";
 
-  // Runs a fixed number of iterations synchronously and returns the
-  // already-settled positions, rather than animating with
-  // requestAnimationFrame -- cheap enough at this app's real scale that
-  // the simulation finishes before the next paint anyway, so there's no
-  // user-visible benefit to spreading it across frames, only added
-  // complexity (start/stop/cleanup on every re-render).
-  function layout(nodes, edges, width, height) {
-    var n = nodes.length;
-    var positions = {};
-    if (n === 0) return positions;
+  var layoutCache = { key: "", positions: null, boxW: 0, boxH: 0 };
+  var layoutGen = 0;
+  var layoutWorker = null;
+  var workerFailed = false;
+  var inflight = null;
+  var pendingLayout = null;
 
-    // Deterministic initial placement (an even circle), not
-    // Math.random() -- the SAME graph settles into a recognizable, only
-    // mildly-different layout across page reloads instead of a jarring
-    // fresh scatter every single time.
-    nodes.forEach(function (node, i) {
+  function graphKey(nodes, edges) {
+    var np = [];
+    var ep = [];
+    var i;
+    for (i = 0; i < nodes.length; i++) np.push(nodes[i].path);
+    np.sort();
+    for (i = 0; i < edges.length; i++) {
+      ep.push(edges[i].source + "\t" + edges[i].target);
+    }
+    ep.sort();
+    return np.join("\n") + "\n---\n" + ep.join("\n");
+  }
+
+  // Uniform scale + center, always from the ORIGINAL simulation box,
+  // so a chain of resizes cannot compound. Non-uniform stretch would
+  // squash the settled layout when the window aspect changes.
+  function fitPositions(pos, fromW, fromH, toW, toH) {
+    var sx = toW / (fromW || 1);
+    var sy = toH / (fromH || 1);
+    var s = Math.min(sx, sy);
+    var ox = (toW - fromW * s) / 2;
+    var oy = (toH - fromH * s) / 2;
+    var out = {};
+    Object.keys(pos).forEach(function (k) {
+      out[k] = { x: pos[k].x * s + ox, y: pos[k].y * s + oy };
+    });
+    return out;
+  }
+
+  function applyPad(pos, pad) {
+    if (!pad) return pos;
+    var out = {};
+    Object.keys(pos).forEach(function (k) {
+      out[k] = { x: pos[k].x + pad, y: pos[k].y + pad };
+    });
+    return out;
+  }
+
+  function syncLayout(nodes, edges, width, height) {
+    if (window.WikiGraphLayout && typeof window.WikiGraphLayout.layout === "function") {
+      return window.WikiGraphLayout.layout(nodes, edges, width, height);
+    }
+    // Page script didn't load and Worker failed — circle only, no
+    // physics. Better a readable ring than a thrown render.
+    var positions = {};
+    var n = nodes.length;
+    var i;
+    for (i = 0; i < n; i++) {
       var angle = (2 * Math.PI * i) / n;
       var radius = Math.min(width, height) / 3;
-      positions[node.path] = {
+      positions[nodes[i].path] = {
         x: width / 2 + radius * Math.cos(angle),
         y: height / 2 + radius * Math.sin(angle),
-        vx: 0,
-        vy: 0,
       };
-    });
-
-    var REPULSION = 6000;
-    var SPRING = 0.02;
-    // 90 was too short: each node's own label is text-anchor:middle,
-    // centered directly under it (see render()'s own comment on that
-    // choice) -- a typical document-title label (a few words) at this
-    // theme's own font-size/font-family runs 80-110px wide on its own,
-    // so two directly-connected nodes at the OLD 90px rest length left
-    // literally no room for either label without the two overlapping.
-    // Found live on real vault content (two linked short-title
-    // documents), not a synthetic worst case -- 150 gives enough margin
-    // for realistic multi-word titles without visibly stretching out
-    // small graphs that don't need it.
-    var SPRING_LENGTH = 150;
-    var DAMPING = 0.85;
-    var CENTER_PULL = 0.01;
-    var ITERATIONS = 250;
-
-    for (var iter = 0; iter < ITERATIONS; iter++) {
-      // Repulsion between every pair -- O(n^2), fine at real scale
-      // (this app's vaults are tens of documents, not thousands).
-      for (var i = 0; i < n; i++) {
-        for (var j = i + 1; j < n; j++) {
-          var a = positions[nodes[i].path];
-          var b = positions[nodes[j].path];
-          var dx = a.x - b.x;
-          var dy = a.y - b.y;
-          var distSq = dx * dx + dy * dy || 0.01;
-          var dist = Math.sqrt(distSq);
-          var force = REPULSION / distSq;
-          var fx = (dx / dist) * force;
-          var fy = (dy / dist) * force;
-          a.vx += fx;
-          a.vy += fy;
-          b.vx -= fx;
-          b.vy -= fy;
-        }
-      }
-
-      // Spring attraction along each real edge.
-      for (var e = 0; e < edges.length; e++) {
-        var pa = positions[edges[e].source];
-        var pb = positions[edges[e].target];
-        if (!pa || !pb) continue;
-        var edx = pb.x - pa.x;
-        var edy = pb.y - pa.y;
-        var edist = Math.sqrt(edx * edx + edy * edy) || 0.01;
-        var displacement = edist - SPRING_LENGTH;
-        var sforce = SPRING * displacement;
-        var sfx = (edx / edist) * sforce;
-        var sfy = (edy / edist) * sforce;
-        pa.vx += sfx;
-        pa.vy += sfy;
-        pb.vx -= sfx;
-        pb.vy -= sfy;
-      }
-
-      // Weak pull toward center (keeps a disconnected node from
-      // drifting off into empty space) + damping + integrate.
-      nodes.forEach(function (node) {
-        var p = positions[node.path];
-        p.vx += (width / 2 - p.x) * CENTER_PULL;
-        p.vy += (height / 2 - p.y) * CENTER_PULL;
-        p.vx *= DAMPING;
-        p.vy *= DAMPING;
-        p.x += p.vx;
-        p.y += p.vy;
-      });
     }
-
     return positions;
+  }
+
+  function workerUrl() {
+    var path = (basePath() || "") + "/js/graph-layout.js";
+    if (path.charAt(0) !== "/") path = "/" + path;
+    return path;
+  }
+
+  function finishPending(positions) {
+    var p = pendingLayout;
+    pendingLayout = null;
+    if (p) p.cb(positions);
+  }
+
+  function bindWorker() {
+    layoutWorker.onmessage = function (ev) {
+      var msg = ev.data;
+      if (!pendingLayout || !msg || msg.id !== pendingLayout.id) return;
+      if (msg.ok && msg.positions) {
+        finishPending(msg.positions);
+        return;
+      }
+      workerFailed = true;
+      var fail = pendingLayout;
+      finishPending(syncLayout(fail.nodes, fail.edges, fail.boxW, fail.boxH));
+    };
+    layoutWorker.onerror = function () {
+      workerFailed = true;
+      try {
+        layoutWorker.terminate();
+      } catch (err) {}
+      layoutWorker = null;
+      if (pendingLayout) {
+        var fail = pendingLayout;
+        finishPending(syncLayout(fail.nodes, fail.edges, fail.boxW, fail.boxH));
+      }
+    };
+  }
+
+  function requestLayout(nodes, edges, boxW, boxH, id, cb) {
+    if (!workerFailed && typeof Worker !== "undefined") {
+      try {
+        if (!layoutWorker) {
+          layoutWorker = new Worker(workerUrl());
+          bindWorker();
+        }
+        var slimNodes = [];
+        var slimEdges = [];
+        var i;
+        for (i = 0; i < nodes.length; i++) slimNodes.push({ path: nodes[i].path });
+        for (i = 0; i < edges.length; i++) {
+          slimEdges.push({ source: edges[i].source, target: edges[i].target });
+        }
+        pendingLayout = {
+          id: id,
+          cb: cb,
+          nodes: nodes,
+          edges: edges,
+          boxW: boxW,
+          boxH: boxH,
+        };
+        layoutWorker.postMessage({
+          id: id,
+          nodes: slimNodes,
+          edges: slimEdges,
+          width: boxW,
+          height: boxH,
+        });
+        return;
+      } catch (err) {
+        workerFailed = true;
+        pendingLayout = null;
+      }
+    }
+    cb(syncLayout(nodes, edges, boxW, boxH));
   }
 
   function nodeHref(path) {
@@ -902,48 +945,8 @@ window.WikiGraphRender = (function () {
     lastBackend = "svg";
   }
 
-  // Renders `nodes`/`edges` as a force-directed graph into `container`.
-  // `options.centerPath`, if given, marks that one node as "you are
-  // here" (larger fill) -- used by the local graph widget; the full
-  // graph page omits it. `options.backend` may force "webgl" / "canvas"
-  // / "svg" (tests); omitted, we walk the ladder and skip a rung that
-  // fails to actually initialize.
-  function render(container, nodes, edges, options) {
-    options = options || {};
-    var width = options.width || 800;
-    var height = options.height || 500;
-    var centerPath = options.centerPath || null;
-    // Inset the force simulation so labels (text-anchor:middle under
-    // each node, easily 80-110px wide) stay inside the viewBox instead
-    // of being clipped by SVG's default overflow:hidden. Both the full
-    // graph page and the local-graph rail pass this; a caller that
-    // omits it (pad 0) is laying out into a box that's already padded
-    // by its own CSS.
-    var pad = options.pad || 0;
-
+  function paintGraph(container, nodes, edges, positions, width, height, centerPath, options) {
     container.innerHTML = "";
-    if (nodes.length === 0) {
-      var empty = document.createElement("p");
-      empty.className = "graph-empty";
-      empty.textContent = "No documents to show.";
-      container.appendChild(empty);
-      lastBackend = null;
-      return;
-    }
-
-    var positions = layout(
-      nodes,
-      edges,
-      Math.max(width - 2 * pad, 1),
-      Math.max(height - 2 * pad, 1)
-    );
-    if (pad) {
-      Object.keys(positions).forEach(function (k) {
-        positions[k].x += pad;
-        positions[k].y += pad;
-      });
-    }
-
     var palette = readPalette(container);
     var forced = options.backend;
     var order;
@@ -976,8 +979,106 @@ window.WikiGraphRender = (function () {
     }
   }
 
+  function paintFromCache(job) {
+    var fitted = fitPositions(
+      layoutCache.positions,
+      layoutCache.boxW,
+      layoutCache.boxH,
+      job.boxW,
+      job.boxH
+    );
+    paintGraph(
+      job.container,
+      job.nodes,
+      job.edges,
+      applyPad(fitted, job.pad),
+      job.width,
+      job.height,
+      job.centerPath,
+      job.options
+    );
+  }
+
+  // Renders `nodes`/`edges` as a force-directed graph into `container`.
+  // `options.centerPath`, if given, marks that one node as "you are
+  // here" (larger fill) -- used by the local graph widget; the full
+  // graph page omits it. `options.backend` may force "webgl" / "canvas"
+  // / "svg" (tests); omitted, we walk the ladder and skip a rung that
+  // fails to actually initialize.
+  //
+  // Layout is async (Worker). Same node/edge set + a new box (resize)
+  // scales the cached coordinates instead of simulating again.
+  function render(container, nodes, edges, options) {
+    options = options || {};
+    var width = options.width || 800;
+    var height = options.height || 500;
+    var centerPath = options.centerPath || null;
+    // Inset the force simulation so labels (text-anchor:middle under
+    // each node, easily 80-110px wide) stay inside the viewBox instead
+    // of being clipped by SVG's default overflow:hidden. Both the full
+    // graph page and the local-graph rail pass this; a caller that
+    // omits it (pad 0) is laying out into a box that's already padded
+    // by its own CSS.
+    var pad = options.pad || 0;
+    var boxW = Math.max(width - 2 * pad, 1);
+    var boxH = Math.max(height - 2 * pad, 1);
+
+    if (nodes.length === 0) {
+      container.innerHTML = "";
+      var empty = document.createElement("p");
+      empty.className = "graph-empty";
+      empty.textContent = "No documents to show.";
+      container.appendChild(empty);
+      lastBackend = null;
+      layoutCache = { key: "", positions: null, boxW: 0, boxH: 0 };
+      return;
+    }
+
+    var key = graphKey(nodes, edges);
+    var job = {
+      container: container,
+      nodes: nodes,
+      edges: edges,
+      options: options,
+      width: width,
+      height: height,
+      pad: pad,
+      boxW: boxW,
+      boxH: boxH,
+      centerPath: centerPath,
+      key: key,
+    };
+
+    if (layoutCache.key === key && layoutCache.positions) {
+      paintFromCache(job);
+      return;
+    }
+
+    // Same graph already simulating (typically a resize that landed
+    // before the first Worker result) — keep the in-flight run, just
+    // remember the latest box to paint into.
+    if (inflight && inflight.key === key) {
+      inflight.job = job;
+      return;
+    }
+
+    var gen = ++layoutGen;
+    inflight = { gen: gen, key: key, job: job, simW: boxW, simH: boxH };
+    requestLayout(nodes, edges, boxW, boxH, gen, function (positions) {
+      if (gen !== layoutGen) return;
+      var current = inflight && inflight.gen === gen ? inflight.job : job;
+      var simW = inflight ? inflight.simW : boxW;
+      var simH = inflight ? inflight.simH : boxH;
+      inflight = null;
+      layoutCache = { key: key, positions: positions, boxW: simW, boxH: simH };
+      paintFromCache(current);
+    });
+  }
+
   return {
-    layout: layout,
+    layout: function (nodes, edges, width, height) {
+      return syncLayout(nodes, edges, width, height);
+    },
     render: render,
     backend: function () {
       return lastBackend;

@@ -1386,30 +1386,37 @@ private content is not revealed. Hop count is server-fixed at 1;
 a client `hops=` query param is ignored. The full `GET /api/graph` (no
 `around=`) is unchanged and still backs the dedicated graph page.
 
-**Rendering is a from-scratch force-directed layout**
-(`static/js/graph-render.js`), not a vendored physics library like
-d3-force: repulsion between every node pair (O(n²), fine at this app's
-real scale), spring attraction along real edges, a weak pull toward
-center so a disconnected node doesn't drift off-screen, velocity
-damping, run for a fixed iteration count synchronously (the simulation
-finishes before the next paint at this scale, so there's no user-visible
-benefit to animating it frame-by-frame with `requestAnimationFrame`,
-only added start/stop/cleanup complexity). Initial node placement is a
+**Rendering is a from-scratch Barnes-Hut force layout**
+(`static/js/graph-layout.js`), not a vendored physics library like
+d3-force: repulsion approximated through a quadtree (O(n log n) per
+iteration instead of the original pairwise O(n²)), spring attraction
+along real edges, a weak pull toward center so a disconnected node
+doesn't drift off-screen, velocity damping, run for a fixed iteration
+count. Graphs small enough that the tree overhead would dominate (the
+local-graph case) still use the exact pairwise repulsion; the quadtree
+kicks in above that. The simulation runs in a dedicated Worker so a
+large vault doesn't freeze the UI thread (same file also loads as a
+page script for a sync fallback if Worker construction fails). Resize
+does not re-run the simulation — cached coordinates are uniformly
+scaled into the new box, always from the original layout space so a
+chain of resizes cannot compound. Initial node placement is a
 deterministic circle, not `Math.random()`, so the SAME graph settles
-into a recognizable, only mildly different layout across reloads rather
-than a jarring fresh scatter every time. Same "write it ourselves when
-it's small, vendor when it's genuinely complex" split this app already
-applies elsewhere (query-block.js/section-zoom.js vs. mermaid.js/
-Prism.js).
+into a recognizable, only mildly different layout across reloads
+rather than a jarring fresh scatter every time. Same "write it
+ourselves when it's small, vendor when it's genuinely complex" split
+this app already applies elsewhere (query-block.js/section-zoom.js vs.
+mermaid.js/Prism.js); Barnes-Hut is the complex part of this algorithm,
+still ours rather than d3-force.
 
 Output is painted by a capability ladder in `graph-render.js`:
 WebGL, then canvas 2D, then SVG-in-the-DOM. Each rung is probed with a
 real `getContext` (and for WebGL, a shader compile), not "does
 `WebGLRenderingContext` exist" — that constructor can be present while
-context creation fails. Layout is still the CPU O(n²) simulation above;
-this chain is only the draw. SVG remains the last fallback because
-nodes are real `<a href="/d/...">` (ordinary navigation, no client-side
-router — this app already does a full page reload on every navigation)
+context creation fails. Layout is the Worker/Barnes-Hut path above,
+independent of which paint backend wins. SVG remains the last fallback
+because nodes are real `<a href="/d/...">` (ordinary navigation, no
+client-side router — this app already does a full page reload on every
+navigation)
 built via `createElementNS` + DOM properties throughout, so a document
 title reaches the page as inert text with no manual escaping needed
 (unlike `query-block.js`'s HTML-string rendering, which genuinely does

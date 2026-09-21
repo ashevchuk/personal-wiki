@@ -363,6 +363,10 @@ int main(int argc, char** argv) {
   // right after it) that a nonce/hash-based script-src would need to
   // track through every PageRoutes.cpp edit — 'unsafe-inline' on
   // script-src is a known, accepted relaxation here, not an oversight.
+  // worker-src 'self' is spelled out (rather than relying on the CSP3
+  // fallback through script-src) because graph-layout.js runs as a
+  // dedicated Worker; a missing worker-src on a pickier engine would
+  // silently fall back to main-thread layout, not a loud CSP error.
   // Everything else stays strict: no remote script/object loading, no
   // framing of this app by anyone, YouTube embeds (the one legitimate
   // cross-origin iframe this app ever renders) are the only frame-src
@@ -392,6 +396,7 @@ int main(int argc, char** argv) {
   static const std::string kCsp =
       "default-src 'self'; "
       "script-src 'self' 'unsafe-inline'; "
+      "worker-src 'self'; "
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
       "font-src 'self' https://fonts.gstatic.com; "
       "img-src 'self' https: data:; "
