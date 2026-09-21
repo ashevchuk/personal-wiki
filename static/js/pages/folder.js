@@ -126,12 +126,15 @@ window.WikiPages = window.WikiPages || {};
     actionsEl.appendChild(document.createTextNode(" "));
     actionsEl.appendChild(renameBtn);
 
-    var deleteBtn = el("button", { type: "button", text: "Delete (if empty)" });
+    var deleteBtn = el("button", { type: "button", text: "Delete (if no documents)" });
     deleteBtn.addEventListener("click", function () {
-      WikiDialog.confirm("Delete this folder? Only works if it's completely empty.", {
-        danger: true,
-        okLabel: "Delete",
-      }).then(function (ok) {
+      WikiDialog.confirm(
+        "Delete this folder? Only works if it has no documents. Leftover non-document files (if any) are removed with it.",
+        {
+          danger: true,
+          okLabel: "Delete",
+        }
+      ).then(function (ok) {
         if (!ok) return;
         fetch(basePath() + "/api/folders/" + encodeVaultPath(folderPath), {
           method: "DELETE",

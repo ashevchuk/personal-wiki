@@ -15,7 +15,9 @@ namespace wikicore::controllers {
 //                                        and asset hrefs under that
 //                                        prefix, reindexes rewritten
 //                                        sources
-//   DELETE /api/folders/{path...}     - removes an EMPTY folder only
+//   DELETE /api/folders/{path...}     - removes a folder with no
+//                                        markdown documents (leftover
+//                                        non-document files go with it)
 //
 // Both admin+CSRF, same as every other mutating route — see
 // DocumentRoutes.h for the filter-name gotcha this mirrors.

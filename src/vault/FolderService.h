@@ -84,17 +84,20 @@ class FolderService {
   // same reasoning).
   int64_t move(const std::string& oldRelativePath, const std::string& newRelativePath);
 
-  // True only if the directory exists and contains nothing at all (no
-  // files, no subdirectories — including dot-entries). The safety
-  // condition this class enforces before allowing `remove()`.
+  // True if the directory exists and has no markdown documents under it
+  // (recursive; dotdirs like .trash/.git are not walked). Leftover
+  // non-document files do not count — the browse UI never shows them,
+  // and remove() deletes those leftovers with the folder.
   bool isEmpty(const std::string& relativePath) const;
 
-  // Removes an EMPTY directory. Throws FolderNotFoundError if it doesn't
-  // exist, FolderNotEmptyError otherwise. Deliberately no
-  // cascade-delete-everything-inside option — that's a much
-  // higher-blast-radius operation than this ever needs to expose; delete
-  // the documents first (which already soft-deletes to .trash/), then the
-  // now-empty folder.
+  // Removes a directory that contains no markdown documents. Throws
+  // FolderNotFoundError if it doesn't exist, FolderNotEmptyError if any
+  // .md is still underneath. Leftover non-document files (MCP probe
+  // uploads, orphaned binaries) are deleted with the folder — found
+  // live: a folder of only those showed as empty in the UI but 409'd
+  // on a directory_iterator emptiness check. Deliberately no
+  // cascade-delete of documents; delete those first (they already
+  // soft-delete to .trash/), then the now-document-empty folder.
   void remove(const std::string& relativePath);
 
  private:

@@ -227,4 +227,14 @@ TEST_CASE("FolderService remove requires an existing, empty directory",
   docSvc.create("occupied/doc.md", input);
   REQUIRE_FALSE(folderSvc.isEmpty("occupied"));
   REQUIRE_THROWS_AS(folderSvc.remove("occupied"), vault::FolderNotEmptyError);
+  REQUIRE(fs::exists(env.vaultRoot() / "occupied/doc.md"));
+
+  // Leftover non-document files (the browse UI never lists these) must
+  // not block delete — found live on mcp_upload_probe.
+  fs::create_directories(env.vaultRoot() / "probe");
+  std::ofstream(env.vaultRoot() / "probe/leftover.tap") << "tape";
+  std::ofstream(env.vaultRoot() / "probe/extra.txt") << "x";
+  REQUIRE(folderSvc.isEmpty("probe"));
+  folderSvc.remove("probe");
+  REQUIRE_FALSE(fs::exists(env.vaultRoot() / "probe"));
 }

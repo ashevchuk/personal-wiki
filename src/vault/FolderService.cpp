@@ -40,6 +40,35 @@ std::string rewriteAssetPrefix(std::string body, const std::string& oldPrefix,
   return body;
 }
 
+bool isDotEntry(const fs::path& p) {
+  const std::string name = p.filename().string();
+  return !name.empty() && name[0] == '.';
+}
+
+// Wiki folders are implicit in document paths — the browse UI only lists
+// .md files (via /api/nav/tree). Loose leftovers (MCP upload probes,
+// orphaned .tap/.bin) are invisible there, so "empty" for delete means
+// "no markdown documents", not "no directory entries at all". Found
+// live: mcp_upload_probe showed "(none)" documents and still 409'd
+// because of leftover probe files.
+bool containsMarkdownDocument(const fs::path& dir) {
+  std::error_code ec;
+  auto it = fs::recursive_directory_iterator(
+      dir, fs::directory_options::skip_permission_denied, ec);
+  const auto end = fs::recursive_directory_iterator();
+  for (; !ec && it != end; ++it) {
+    if (it->is_directory()) {
+      if (isDotEntry(it->path())) it.disable_recursion_pending();
+      continue;
+    }
+    if (it->is_regular_file() && it->path().extension() == ".md" &&
+        !isDotEntry(it->path())) {
+      return true;
+    }
+  }
+  return false;
+}
+
 }  // namespace
 
 int64_t FolderService::move(const std::string& oldRelativePathIn,
@@ -135,7 +164,7 @@ bool FolderService::isEmpty(const std::string& relativePath) const {
   if (!fs::exists(abs) || !fs::is_directory(abs)) {
     return false;
   }
-  return fs::directory_iterator(abs) == fs::directory_iterator();
+  return !containsMarkdownDocument(abs);
 }
 
 void FolderService::remove(const std::string& relativePathIn) {
@@ -144,11 +173,11 @@ void FolderService::remove(const std::string& relativePathIn) {
   if (!fs::exists(abs) || !fs::is_directory(abs)) {
     throw FolderNotFoundError(relativePath);
   }
-  if (fs::directory_iterator(abs) != fs::directory_iterator()) {
+  if (containsMarkdownDocument(abs)) {
     throw FolderNotEmptyError(relativePath);
   }
   std::error_code ec;
-  fs::remove(abs, ec);
+  fs::remove_all(abs, ec);
   if (ec) {
     throw fs::filesystem_error("failed to remove folder", abs, ec);
   }
