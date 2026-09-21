@@ -4,6 +4,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 namespace fs = std::filesystem;
 using namespace wikicore::config;
@@ -120,6 +121,36 @@ TEST_CASE("AppConfig::load: embeddings.api_key_env is read verbatim as a name, "
   const AppConfig cfg = AppConfig::load(file.path().string());
   REQUIRE(cfg.embeddingsProvider == "cloud");
   REQUIRE(cfg.embeddingsApiKeyEnv == "WIKI_EMBEDDINGS_API_KEY");
+}
+
+TEST_CASE("AppConfig::load: embeddings.api_base/model/dimensions are read for "
+          "an OpenAI-compatible cloud endpoint",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[embeddings]\nprovider = \"cloud\"\n"
+      "api_base = \"http://127.0.0.1:11434/v1\"\n"
+      "model = \"nomic-embed-text\"\n"
+      "dimensions = 768\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.embeddingsApiBase == "http://127.0.0.1:11434/v1");
+  REQUIRE(cfg.embeddingsCloudModel == "nomic-embed-text");
+  REQUIRE(cfg.embeddingsCloudDimensions == 768);
+}
+
+TEST_CASE("AppConfig::load: embeddings.api_base/model/dimensions default empty/"
+          "zero when unset (CloudEmbeddingProvider fills OpenAI defaults)",
+          "[AppConfig]") {
+  TempConfigFile file("[embeddings]\nprovider = \"cloud\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.embeddingsApiBase.empty());
+  REQUIRE(cfg.embeddingsCloudModel.empty());
+  REQUIRE(cfg.embeddingsCloudDimensions == 0);
+}
+
+TEST_CASE("AppConfig::load: a negative embeddings.dimensions is rejected",
+          "[AppConfig]") {
+  TempConfigFile file("[embeddings]\nprovider = \"cloud\"\ndimensions = -1\n");
+  REQUIRE_THROWS_AS(AppConfig::load(file.path().string()), std::runtime_error);
 }
 
 TEST_CASE("AppConfig::load: embeddings.max_distance/min_content_words/"

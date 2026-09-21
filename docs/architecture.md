@@ -27,8 +27,10 @@ codebase; don't relearn them by touching a `.csp` file that also no longer exist
 - **Frontend** *(original M0 decision — superseded, see the callout above)*: Drogon CSP
   views + htmx, Toast UI Editor scoped to the edit page only. No SPA build pipeline at
   runtime.
-- **Deployment**: a bare binary + systemd. arm64 cross-compile — Phase 1.5/2; the MVP
-  builds natively on the target Raspberry Pi.
+- **Deployment** *(original M0 intent — native-on-Pi for MVP, arm64 cross-compile
+  later; what actually shipped and was live-verified is musl-static armv7
+  cross-compile, native-on-device never done — see `docs/deployment.md`)*: a
+  bare binary + systemd.
 
 ## M0 — spike results
 
@@ -233,15 +235,20 @@ handler, don't rely on "the filter's already attached".
   `Database::Database`) exists exactly for this: separate CONNECTIONS to the same file
   coordinate correctly at the file level, unlike one CONNECTION shared by several
   callers unaware of each other.
-- **`wiki.env.example`/`EnvironmentFile` in the systemd unit — a stale artifact from
-  M0**, caught while cross-checking against the actual code: no environment variable is
-  actually read anywhere (admin credentials live in SQLite, sessions are random tokens
-  with no secret-based signature). Without a leading `-` in front of
-  `EnvironmentFile=`, systemd would refuse to start the unit if the file is missing —
-  over a file the app doesn't need. Fixed:
-  `EnvironmentFile=-/etc/wiki/wiki.env` (optional), the file stays as a documented hook
-  for a future real secret (Phase 2, a remote MCP bearer token), not a silent promise
-  the code doesn't keep.
+- **`wiki.env.example` / `EnvironmentFile=-/etc/opt/wiki/wiki.env`.**
+  Install prefix is `/opt/wiki`, so FHS host config lives in
+  `/etc/opt/wiki/` (not `/etc/sysconfig`, not `/etc/default`). The
+  leading `-` keeps the unit startable when the file is absent.
+  `AppConfig` still does not map config keys from the environment; the
+  one runtime secret consumer is `CloudEmbeddingProvider`, which
+  `getenv()`s whatever `[embeddings].api_key_env` names (see
+  `docs/embeddings.md`'s "OpenAI-compatible cloud endpoints" and
+  `systemd/wiki.env.example`).
+  Admin credentials live in SQLite; sessions and remote-MCP tokens are
+  random opaque values, not signed from this file. Most deployments
+  (`provider = "none"` / `"local"`, or a loopback OpenAI-compatible server
+  that doesn't authenticate) never need the file. The file started as an
+  empty M5 hook; the consumer arrived with cloud embeddings.
 - **`tests/integration/security_e2e.py` closes a gap I'd documented myself, four
   milestones running.** A consolidated, committed pass, wired through `ctest` (not a
   one-off bash session in a terminal): anonymous writes against every mutating route,
@@ -792,8 +799,12 @@ more real fixes, not speculative additions, each verified live:
    `<script>` blocks (the `PageRoutes.cpp` config-injection one and the anti-FOUC
    theme bootstrap right after it) that a nonce/hash-based policy would need
    updating on every `PageRoutes.cpp` edit — a known, accepted relaxation, not an
-   oversight. Everything else stays strict: `object-src 'none'`, `frame-ancestors
-   'none'`, `frame-src https://www.youtube.com` as the one legitimate cross-origin
+   oversight. `worker-src 'self'` is spelled out (rather than relying on the
+   CSP3 fallback through `script-src`) because `graph-layout.js` runs as a
+   dedicated Worker; a missing `worker-src` on a pickier engine would silently
+   fall back to main-thread layout. Everything else stays strict:
+   `object-src 'none'`, `frame-ancestors 'none'`,
+   `frame-src https://www.youtube.com` as the one legitimate cross-origin
    iframe exception, `img-src 'self' https: data:` since markdown bodies can
    legitimately link any external image. Verified live in a real browser: login,
    Toast UI Editor (create/edit a document, all vendored JS/CSS loads), and a real
@@ -1347,13 +1358,14 @@ The last item from the SiYuan/Obsidian survey worth actually building:
 Obsidian's Graph View, a force-directed visualization of every note as a
 node and every link as an edge. In a huge Obsidian vault this tends to
 degrade into an unreadable "hairball"; at THIS app's real scale (a
-personal vault, tens of documents) it stays genuinely readable and shows
-real structure — confirmed live against real production content, not
-assumed: the full graph correctly clustered `demo/wiki-links-example`'s
-two cross-linked notes and `notes/linux/systemd-timers.md`'s link to
-`wireguard-setup.md`, with every other real document (most of this
-vault's actual content) sitting isolated, exactly matching what's
-actually in `document_links`.
+personal vault, typically tens to low hundreds of documents) it stays
+useful. Layout later moved to Barnes-Hut in a Worker so a larger vault
+doesn't freeze the UI (see below). Confirmed live against real production
+content, not assumed: the full graph correctly clustered
+`demo/wiki-links-example`'s two cross-linked notes and
+`notes/linux/systemd-timers.md`'s link to `wireguard-setup.md`, with
+every other real document (most of this vault's actual content) sitting
+isolated, exactly matching what's actually in `document_links`.
 
 **Data source**: `index::GraphQueries` (nodes = visible documents,
 edges = real `[[wiki-link]]`s between two documents that both currently
@@ -1408,20 +1420,22 @@ context creation fails. Layout is the Worker/Barnes-Hut path above,
 independent of which paint backend wins. SVG remains the last fallback
 because nodes are real `<a href="/d/...">` (ordinary navigation, no
 client-side router — this app already does a full page reload on every
-navigation)
-built via `createElementNS` + DOM properties throughout, so a document
-title reaches the page as inert text with no manual escaping needed
-(unlike `query-block.js`'s HTML-string rendering, which genuinely does
-need `WikiCommon.escapeHtml`). Canvas/WebGL hit-test in JS and navigate
-the same URLs; a visually-hidden `<nav>` of the same links keeps
-keyboard access when the paint is a bitmap.
+navigation) built via `createElementNS` + DOM properties throughout, so a
+document title reaches the page as inert text with no manual escaping
+needed (unlike `query-block.js`'s HTML-string rendering, which genuinely
+does need `WikiCommon.escapeHtml`). Canvas/WebGL hit-test in JS and
+navigate the same URLs; a visually-hidden `<nav>` of the same links keeps
+keyboard access when the paint is a bitmap. Both surfaces pan (click-drag)
+and zoom (wheel toward the cursor); pointer capture starts only after an
+8px drag so a click on a node still navigates.
 
 **Two places this shows up**: a new `/graph` page (the whole vault,
 wired into the sidebar) and a "Local graph" widget on the document view
-page, appearing right after the backlinks list — this document plus its
-1-hop neighbors, omitted entirely (same "don't show an empty section"
-discipline the backlinks list right above it already follows) when the
-document genuinely has no neighbors at all.
+page — a collapsed right rail (not inline after the backlinks; that
+placement ate reading width) of this document plus its 1-hop neighbors,
+omitted entirely (same "don't show an empty section" discipline the
+backlinks list already follows) when the document genuinely has no
+neighbors at all.
 
 **A real bug found via a user screenshot: labels on two directly-linked
 nodes overlapped each other.** Each node's own label

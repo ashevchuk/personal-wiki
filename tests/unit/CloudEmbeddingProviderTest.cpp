@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <stdexcept>
 
 using namespace wikicore::embeddings;
 
@@ -38,6 +39,8 @@ TEST_CASE("CloudEmbeddingProvider: real OpenAI API call produces a usable "
 
   CloudEmbeddingProvider provider("OPENAI_API_KEY");
   REQUIRE(provider.dimensions() == 1536);
+  REQUIRE(provider.modelIdentifier() ==
+          "cloud:https://api.openai.com/v1:text-embedding-3-small");
 
   const auto cat = provider.embed("The cat sat on the mat.");
   REQUIRE(cat.size() == 1536);
@@ -52,4 +55,33 @@ TEST_CASE("CloudEmbeddingProvider: real OpenAI API call produces a usable "
   INFO("unrelated (cat/stock market): " << apart);
 
   REQUIRE(related > apart);
+}
+
+TEST_CASE("CloudEmbeddingProvider: OpenAI-compatible api_base/model/dimensions "
+          "are reflected in dimensions() and modelIdentifier() without a "
+          "network call",
+          "[CloudEmbeddingProvider]") {
+  CloudEmbeddingProvider provider(
+      /*apiKeyEnvVar=*/"", "http://127.0.0.1:9/v1", "nomic-embed-text", 768);
+  REQUIRE(provider.dimensions() == 768);
+  REQUIRE(provider.modelIdentifier() ==
+          "cloud:http://127.0.0.1:9/v1:nomic-embed-text");
+}
+
+TEST_CASE("CloudEmbeddingProvider: a non-http(s) api_base is rejected at "
+          "construction, not at the first embed() call",
+          "[CloudEmbeddingProvider]") {
+  REQUIRE_THROWS_AS(
+      CloudEmbeddingProvider("", "ftp://example.com/v1", "", 0),
+      std::runtime_error);
+  REQUIRE_THROWS_AS(CloudEmbeddingProvider("", "not-a-url", "", 0),
+                    std::runtime_error);
+}
+
+TEST_CASE("CloudEmbeddingProvider: a named api_key_env whose variable is "
+          "unset fails at construction",
+          "[CloudEmbeddingProvider]") {
+  REQUIRE_THROWS_AS(
+      CloudEmbeddingProvider("WIKI_TEST_MISSING_EMBEDDINGS_KEY_XYZ"),
+      std::runtime_error);
 }

@@ -101,8 +101,25 @@ struct AppConfig {
   // Cloud only — the NAME of an environment variable holding the API key,
   // never the raw key itself: config.toml is plain text and sometimes
   // gets pasted into issues/screenshots, an env var doesn't accidentally
-  // travel with it. Ignored for "none"/"local".
+  // travel with it. Empty is allowed (some OpenAI-compatible local
+  // servers don't authenticate). Ignored for "none"/"local".
   std::string embeddingsApiKeyEnv;
+  // Cloud only — OpenAI-compatible API root, including the `/v1` prefix
+  // `{api_base}/embeddings` is posted to. Empty means OpenAI's own
+  // `https://api.openai.com/v1`. Any server that speaks that POST + JSON
+  // shape works (Ollama, LM Studio, Together, a self-hosted vLLM, …).
+  // Ignored for "none"/"local".
+  std::string embeddingsApiBase;
+  // Cloud only — JSON `"model"` field. Empty means OpenAI's
+  // `text-embedding-3-small`. Ignored for "none"/"local" (`model_path`
+  // is the local GGUF file, a different thing).
+  std::string embeddingsCloudModel;
+  // Cloud only — vector width this endpoint/model returns. sqlite-vec
+  // needs this at CREATE time, before any HTTP call, so it cannot be
+  // inferred from the first response. 0 means 1536 (the default model's
+  // width). A mismatch with what the API actually returns fails embed()
+  // rather than silently truncating. Ignored for "none"/"local".
+  std::size_t embeddingsCloudDimensions = 0;
   // Local only — prepended to a search QUERY (never to a document/passage)
   // before embedding it, via EmbeddingProvider::embedQuery(). Empty
   // (default) means no prefix. Many small local retrieval models,
@@ -111,8 +128,8 @@ struct AppConfig {
   // "Represent this sentence for searching relevant passages: ". Found
   // live to matter a lot for result relevance — see docs/embeddings.md's
   // "hybrid search relevance" writeup for real measured numbers. Ignored
-  // for "none"/"cloud" (OpenAI's embeddings are symmetric — no query-side
-  // convention to apply).
+  // for "none"/"cloud" (OpenAI-compatible embeddings are typically
+  // symmetric — no query-side convention to apply).
   std::string embeddingsQueryPrefix;
   // Local/cloud — the maximum cosine DISTANCE (1 - cosine similarity; 0 =
   // identical, 2 = opposite) a document's embedding may have from the

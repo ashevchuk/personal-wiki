@@ -39,12 +39,9 @@ std::unique_ptr<EmbeddingProvider> createEmbeddingProvider(
 
   if (provider == "cloud") {
 #ifdef WIKI_ENABLE_CLOUD_EMBEDDINGS
-    if (config.embeddingsApiKeyEnv.empty()) {
-      throw std::runtime_error(
-          "embeddings.provider = \"cloud\" requires embeddings.api_key_env to "
-          "be set (the NAME of an environment variable holding the API key)");
-    }
-    return std::make_unique<CloudEmbeddingProvider>(config.embeddingsApiKeyEnv);
+    return std::make_unique<CloudEmbeddingProvider>(
+        config.embeddingsApiKeyEnv, config.embeddingsApiBase,
+        config.embeddingsCloudModel, config.embeddingsCloudDimensions);
 #else
     throw std::runtime_error(
         "embeddings.provider = \"cloud\" requires this binary to be built "

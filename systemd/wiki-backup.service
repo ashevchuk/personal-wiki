@@ -12,7 +12,7 @@ Type=oneshot
 User=wiki
 Group=wiki
 ExecStart=/opt/wiki/bin/wiki-backup.sh
-EnvironmentFile=-/etc/wiki/wiki-backup.env
+EnvironmentFile=-/etc/opt/wiki/wiki-backup.env
 
 # Hardening -- same shape as wiki.service's, but this unit never needs to
 # WRITE the vault itself (ReadOnlyPaths, not ReadWritePaths), only read it

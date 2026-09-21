@@ -4,12 +4,13 @@
 # if it's missing; there's no env var to point at a different path).
 # config.toml is gitignored — never commit a real one.
 #
-# No secret of any kind lives in this file OR in an environment variable
-# — nothing in wiki-server reads one. The admin password is entered once,
-# interactively, via `wiki-server --create-admin` (argon2id hash goes
-# straight into SQLite); session and remote-MCP tokens are random opaque
-# values, not signed by any secret. systemd/wiki.env.example stays a
-# documented hook for a future feature that might genuinely need one.
+# Do not put API keys in this file. The embeddings cloud key (if any)
+# lives in an environment variable whose NAME is embeddings.api_key_env;
+# systemd loads that from /etc/opt/wiki/wiki.env (see
+# systemd/wiki.env.example). Admin password is entered once via
+# wiki-server --create-admin (argon2id hash goes straight into SQLite);
+# session and remote-MCP tokens are random opaque values, not signed by
+# a secret from here or from the environment.
 
 [server]
 listen_addr = "127.0.0.1"   # put behind a reverse proxy for TLS/public exposure
@@ -95,7 +96,8 @@ write_access = false
 
 [embeddings]
 # Semantic search — see docs/embeddings.md. Both "local" (llama.cpp) and
-# "cloud" (OpenAI-compatible embeddings API) are fully implemented, but
+# "cloud" (OpenAI-compatible embeddings API: OpenAI itself, or any
+# server that speaks POST /v1/embeddings) are fully implemented, but
 # each requires the binary to actually be built with the matching
 # -DWIKI_ENABLE_LOCAL_EMBEDDINGS/-DWIKI_ENABLE_CLOUD_EMBEDDINGS flag — a
 # provider that's set but not compiled in fails loudly at startup rather
@@ -109,12 +111,20 @@ write_access = false
 # -DWIKI_ENABLE_LOCAL_EMBEDDINGS=ON).
 # model_path = "/opt/wiki/models/embedding-model.gguf"
 #
-# Cloud only — the NAME of an environment variable holding the API key,
-# NOT the key itself (requires -DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON). Set
-# that environment variable via systemd/wiki.env (see
+# Cloud — OpenAI-compatible POST {api_base}/embeddings. Defaults (when
+# these lines stay commented) match OpenAI itself: api.openai.com/v1,
+# text-embedding-3-small, 1536-dim. Point api_base at any server that
+# speaks that JSON shape (Ollama, LM Studio, Together, vLLM, …).
+# api_key_env is the NAME of an environment variable holding the API
+# key, NOT the key itself (requires -DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON).
+# Set that environment variable via systemd/wiki.env (see
 # systemd/wiki.env.example), never inline here — config.toml is plain
 # text and sometimes ends up pasted into an issue or a screenshot.
+# Leave api_key_env unset for a local server that doesn't authenticate.
 # api_key_env = "WIKI_EMBEDDINGS_API_KEY"
+# api_base = "https://api.openai.com/v1"
+# model = "text-embedding-3-small"
+# dimensions = 1536
 #
 # Local only — prepended to a search QUERY (never to a document) before
 # embedding it. Matters a lot for result relevance: many small local

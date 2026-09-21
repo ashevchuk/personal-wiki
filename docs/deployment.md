@@ -179,11 +179,15 @@ gotcha caught while testing). Run `systemd-analyze security wiki.service` after
 deploying to see its score; more importantly, exercise the app once after any change
 to this unit's hardening (login, create a document, search, upload an attachment) —
 a hardening regression here fails at RUNTIME (a specific route breaks), not at
-`daemon-reload` time. `EnvironmentFile=-/etc/wiki/wiki.env` is optional — right now no
-environment variable is read by the app at all (admin credentials live in SQLite,
-sessions are random tokens with no secret-based signature); the file stays as a
-documented hook for the future (e.g. a bearer token for a remote MCP transport in
-Phase 2).
+`daemon-reload` time. `EnvironmentFile=-/etc/opt/wiki/wiki.env` is optional —
+the leading `-` means systemd will still start the unit if the file is
+missing. Admin credentials live in SQLite and sessions are random tokens
+with no secret-based signature. The one current reader is
+`CloudEmbeddingProvider`: it `getenv()`s the variable named by
+`[embeddings].api_key_env` in `config.toml` (see
+`systemd/wiki.env.example`). For `provider = "none"` / `"local"`, or a
+loopback OpenAI-compatible server that doesn't authenticate, the file can
+stay absent.
 
 ## TLS / public internet access
 
@@ -217,9 +221,9 @@ opt in explicitly:
 
 ```sh
 sudo cp /opt/wiki/share/wiki/systemd/wiki-backup.{service,timer} /etc/systemd/system/
-sudo mkdir -p /etc/wiki
-sudo cp /opt/wiki/share/wiki/systemd/wiki-backup.env.example /etc/wiki/wiki-backup.env
-sudo "$EDITOR" /etc/wiki/wiki-backup.env   # set BACKUP_DIR to a DIFFERENT disk/mount, see below
+sudo mkdir -p /etc/opt/wiki
+sudo cp /opt/wiki/share/wiki/systemd/wiki-backup.env.example /etc/opt/wiki/wiki-backup.env
+sudo "$EDITOR" /etc/opt/wiki/wiki-backup.env   # set BACKUP_DIR to a DIFFERENT disk/mount, see below
 sudo systemctl daemon-reload
 sudo systemctl enable --now wiki-backup.timer
 ```

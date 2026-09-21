@@ -10,7 +10,8 @@ providers, `sqlite-vec` storage, hybrid ranking, and (as of this pass)
 `LocalEmbeddingProvider` actually running inference on real production ARM hardware,
 not just cross-compiled for it. The build-time options, the runtime config schema, the
 `EmbeddingProvider` abstraction, `LocalEmbeddingProvider` (llama.cpp-backed),
-`CloudEmbeddingProvider` (OpenAI `text-embedding-3-small`-backed), `EmbeddingIndexer`
+`CloudEmbeddingProvider` (OpenAI-compatible `POST {api_base}/embeddings`,
+defaults matching OpenAI `text-embedding-3-small`), `EmbeddingIndexer`
 (`sqlite-vec`/`vec0` storage), `IndexUpdater`'s embedding-on-write wiring, and
 `FtsSearch`'s hybrid (BM25 + cosine, via Reciprocal Rank Fusion) ranking all exist and
 have been verified against real inference, a real running server over real HTTP, and
@@ -77,8 +78,10 @@ ctest --test-dir build -R local_embedding_provider_test --output-on-failure
 
 ## Real-API verification (`CloudEmbeddingProvider`)
 
-`CloudEmbeddingProvider` (OpenAI `text-embedding-3-small`, 1536-dim) was verified
-against the real OpenAI API, not just built against httplib. Real observed result:
+`CloudEmbeddingProvider` (OpenAI `text-embedding-3-small`, 1536-dim — the
+defaults when `api_base`/`model`/`dimensions` are left unset; see
+"OpenAI-compatible cloud endpoints" below) was verified against the real
+OpenAI API, not just built against httplib. Real observed result:
 `dimensions() == 1536`, a real 1536-float vector back from a real `embed()` call, and
 `cosine(cat, kitten) > cosine(cat, "the stock market crashed yesterday")` — the same
 related-vs-unrelated shape confirmed for the local provider, now confirmed for cloud
@@ -132,7 +135,8 @@ editor/`git pull` gets embedded too, not just documents saved through the Web UI
 Confirmed against `sqlite-vec`'s own examples: `CREATE VIRTUAL TABLE ... USING
 vec0(embedding float[N])` takes `N` as a literal in the DDL, not a bind parameter —
 there's no way to make one `vec0` table accept both the local provider's 384-dim
-vectors and the cloud provider's 1536-dim ones. `EmbeddingIndexer::ensureTable()`
+vectors and a cloud model's (by default 1536-dim, but `embeddings.dimensions`
+can be any width the endpoint actually returns). `EmbeddingIndexer::ensureTable()`
 tracks the table's current width in `index_meta` (the same key/value table
 `schema_version` already lives in) and, on a mismatch, drops and recreates the table
 empty. This is an accepted cost, not a bug to route around: the whole index (this
@@ -312,8 +316,9 @@ text — comparing a stored vector from one against a fresh query from the other
 produces a meaningless distance, silently, not an error. `EmbeddingProvider` gained
 a `modelIdentifier()` pure virtual (`"local:<path>:<mtime>:<size>"` for
 `LocalEmbeddingProvider` — file identity, not just its path, so swapping the file
-at the same configured path is also caught; `"cloud:<model-name>"` for
-`CloudEmbeddingProvider`) that `EmbeddingIndexer::ensureTable()` now compares
+at the same configured path is also caught; `"cloud:{api_base}:{model}"` for
+`CloudEmbeddingProvider`, so swapping the endpoint or the model name is caught
+even when the width stayed the same) that `EmbeddingIndexer::ensureTable()` now compares
 alongside `dimensions()`. A mismatch on EITHER drops and recreates
 `document_embeddings` AND clears every row of `document_embedding_state` — a
 document whose text never changed still needs a real re-embed against the new
@@ -671,8 +676,8 @@ stays under 0.47 — a real, usable gap for a threshold to sit in.
   `queryPrefix_` (empty by default — no behavior change unless
   `embeddings.query_prefix` is actually set in `config.toml`).
   `FtsSearch::tryHybridSearch()` calls `embedQuery()`, never `embed()`, for
-  the query side. `CloudEmbeddingProvider` needed no change — OpenAI's
-  embeddings are symmetric, the default (`embedQuery() == embed()`) is
+  the query side. `CloudEmbeddingProvider` needed no change — OpenAI-compatible
+  embeddings are typically symmetric, the default (`embedQuery() == embed()`) is
   already correct.
 - `FtsSearch`'s new `maxSemanticDistance_` (from `embeddings.max_distance`,
   default `0.5` — chosen from the measurements above, not guessed) filters
@@ -918,12 +923,15 @@ the RRF merge, not worth that restructure on a vault this size.
 A personal wiki has fail-safe-private documents by default (see `architecture.md`). A
 single mandated embedding source is wrong for this project either way:
 
-- **Cloud API** (OpenAI/Gemini/Voyage-style embeddings endpoint) is the cheap, fast
-  path to a working feature, but it means every indexed document's content leaves the
-  machine to a third party — a real, material privacy regression for a tool whose whole
-  premise is "your own private notes, self-hosted." Not acceptable as the *only* option,
-  but reasonable as an explicit, opt-in one for someone who doesn't keep sensitive
-  content in their vault or who already trusts a given provider.
+- **Cloud API** (any OpenAI-compatible `POST {api_base}/embeddings`) is the cheap, fast
+  path to a working feature. Against `api.openai.com` that means every indexed
+  document's content leaves the machine to a third party — a real, material privacy
+  regression for a tool whose whole premise is "your own private notes, self-hosted."
+  Not acceptable as the *only* option, but reasonable as an explicit, opt-in one for
+  someone who doesn't keep sensitive content in their vault, already trusts a given
+  host, or points `api_base` at a loopback server (Ollama, LM Studio) so nothing
+  actually leaves the box. Native Gemini/Voyage/Azure OpenAI URLs are **not** this
+  API; see "OpenAI-compatible cloud endpoints" below.
 - **Local inference** (a small quantized model run in-process) keeps every document on
   the machine, matching the project's existing privacy posture. The cost is a heavier
   binary and a real, now-confirmed-nontrivial cross-compilation story for the ARM/SBC
@@ -1021,8 +1029,9 @@ are NOT being edited to add `+fp16` to their own default `-mcpu` — that would 
 change codegen for every existing target (`wiki-server`, `wiki-mcp`, every overlay
 port) for a feature only the new, optional local-embeddings path needs. Instead,
 `CMAKE_C_FLAGS`/`CMAKE_CXX_FLAGS` are overridden only around the `llama.cpp`
-`FetchContent_MakeAvailable()` call — see the CMake skeleton section below — leaving
-every other target's compile flags untouched.
+`FetchContent_MakeAvailable()` call — see `CMakeLists.txt`'s
+`WIKI_ENABLE_LOCAL_EMBEDDINGS` block — leaving every other target's
+compile flags untouched.
 
 ## `EmbeddingProvider` abstraction
 
@@ -1043,12 +1052,23 @@ build flag per the "fail loudly" rule above. `NullEmbeddingProvider` (provider =
 
 ## Runtime config (`config.toml`)
 
+Cloud knobs (`api_base`, `model`, `dimensions`, `api_key_env`) are unpacked
+in **OpenAI-compatible cloud endpoints** right after this block.
+
 ```toml
 [embeddings]
 provider = "none"        # "none" | "local" | "cloud"
 # model_path = "..."     # local only — path to a GGUF model file
-# api_key_env = "..."    # cloud only — name of an env var holding the API key,
-                          # never the raw key itself (see config.example.toml)
+# api_key_env = "..."    # cloud only — NAME of an env var holding the API key,
+                          # never the raw key itself (see config.example.toml);
+                          # optional for a local server that doesn't authenticate
+# api_base = "..."       # cloud only — OpenAI-compatible root including /v1
+                          # (default https://api.openai.com/v1). POST {api_base}/embeddings
+# model = "..."          # cloud only — JSON "model" field (default
+                          # text-embedding-3-small)
+# dimensions = 1536      # cloud only — vector width; sqlite-vec needs this
+                          # before any HTTP call (default 1536). MUST match the
+                          # model; a mismatch fails embed() rather than truncating
 # query_prefix = "..."   # local only — prepended to search queries only, not
                           # documents (see "A real relevance bug" above)
 # max_distance = 0.5     # cosine-distance cutoff for a semantic match — default
@@ -1060,6 +1080,71 @@ provider = "none"        # "none" | "local" | "cloud"
                           # cause" above)
 ```
 
+### OpenAI-compatible cloud endpoints
+
+`provider = "cloud"` is not locked to OpenAI. `CloudEmbeddingProvider` POSTs
+`{"model": "...", "input": "..."}` to `{api_base}/embeddings`, optionally with
+`Authorization: Bearer`, and reads `data[0].embedding` as a float array — the
+OpenAI Embeddings API shape. Any server that speaks that JSON (Ollama's OpenAI
+compatibility layer, LM Studio, Together, Fireworks, vLLM, a local proxy) is a
+valid target. The binary still has to be built with
+`-DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON`; a `provider = "cloud"` on a binary that
+wasn't fails at startup, same fail-loudly rule as everything else here.
+
+**Defaults** (leave the knobs unset and you get OpenAI itself):
+
+| Knob | Default | Meaning |
+|---|---|---|
+| `api_base` | `https://api.openai.com/v1` | Absolute `http(s)` URL. Trailing slashes stripped. The request path is `{api_base}/embeddings`, so the `/v1` prefix belongs **in** `api_base` for any server that uses it. |
+| `model` | `text-embedding-3-small` | JSON `"model"` field, sent as-is. |
+| `dimensions` | `1536` | Vector width. sqlite-vec needs this at `CREATE` time, **before** any HTTP call, so it cannot be inferred from the first response. `0` in config means this default. A response whose length doesn't match fails `embed()` with a message to set `embeddings.dimensions` — it does not truncate. |
+| `api_key_env` | unset | The **name** of an environment variable holding the API key, never the key itself (`config.toml` is plain text). Unset = no `Authorization` header (local servers that don't authenticate). If a name **is** set, that variable must be present and non-empty at process start or construction throws. |
+
+`modelIdentifier()` is `cloud:{api_base}:{model}` (not just the model name).
+Switching endpoint or model drops and recreates `document_embeddings` even when
+the width stayed the same — two 768-dim models are not the same vector space.
+Same posture as "A model swap forces a full re-embed" above.
+
+**Not this API.** Azure OpenAI (deployment-shaped URLs plus `api-version=`),
+Gemini's native embeddings endpoint, Voyage, and anything that isn't
+`POST {api_base}/embeddings` with that JSON body. Pointing `api_base` at those
+will not work; don't try to paper over it with a different `model` string.
+
+**Where the key lives.** systemd's `EnvironmentFile=-/etc/opt/wiki/wiki.env` (see
+`systemd/wiki.env.example`) is the documented place for
+`WIKI_EMBEDDINGS_API_KEY=...` — or whatever name `api_key_env` points at.
+`CloudEmbeddingProvider` reads it via `getenv`, not via `AppConfig`. A
+`config.toml` that inlines the secret is a paste-into-an-issue waiting to
+happen.
+
+Examples:
+
+```toml
+# OpenAI (same as leaving api_base/model/dimensions commented out)
+[embeddings]
+provider = "cloud"
+api_key_env = "WIKI_EMBEDDINGS_API_KEY"
+
+# Ollama on the same machine (no key)
+[embeddings]
+provider = "cloud"
+api_base = "http://127.0.0.1:11434/v1"
+model = "nomic-embed-text"
+dimensions = 768
+
+# LM Studio
+[embeddings]
+provider = "cloud"
+api_base = "http://127.0.0.1:1234/v1"
+model = "text-embedding-nomic-embed-text-v1.5"
+dimensions = 768
+```
+
+Privacy is about **which host** `api_base` names, not the word `"cloud"` in
+config. Ollama on loopback never leaves the machine; `api.openai.com` sends
+every indexed document's title+body to a third party. That tradeoff is
+unchanged — explicit opt-in, not a silent default.
+
 ## Phased rollout
 
 1. **Skeleton (done)** — build-time options, `EmbeddingProvider` interface,
@@ -1067,15 +1152,18 @@ provider = "none"        # "none" | "local" | "cloud"
    parsing, tests.
 2. **Local provider (done)** — `LocalEmbeddingProvider` wired to `llama.cpp`'s embedding
    API, verified against a real `bge-small-en-v1.5` GGUF model with real
-   cosine-similarity numbers (see "Real-model verification" above) and cross-compiled
-   for the `cross/arm-musl` target (verified build only so far — not yet run on real
-   ARM hardware the way `wiki-server`/`wiki-mcp` themselves have been; that's still
-   open). Reordered ahead of the cloud provider from the original plan once the user
+   cosine-similarity numbers (see "Real-model verification" above) and later run
+   on real ARM hardware (step 6). Cross-compiled for the `cross/arm-musl`
+   target with the same toolchain as `wiki-server`/`wiki-mcp`. Reordered ahead
+   of the cloud provider from the original plan once the user
    picked local first specifically to get something real to verify offline, with no
    external API dependency.
-3. **Cloud provider (done)** — `CloudEmbeddingProvider` (OpenAI `text-embedding-3-small`,
-   1536-dim), verified against the real API (see "Real-API verification" above). No new
-   heavy dependency — reuses cpp-mcp's own vendored `httplib.h`.
+3. **Cloud provider (done)** — `CloudEmbeddingProvider` (any OpenAI-compatible
+   `POST {api_base}/embeddings`; defaults are OpenAI `text-embedding-3-small`,
+   1536-dim), verified against the real OpenAI API (see "Real-API verification"
+   above). `api_base`/`model`/`dimensions` in config.toml retarget it at Ollama,
+   LM Studio, Together, vLLM, etc. No new heavy dependency — reuses cpp-mcp's
+   own vendored `httplib.h`.
 4. **`sqlite-vec` storage (done)** — `EmbeddingIndexer` (`document_embeddings` via
    `vec0`), wired into `IndexUpdater`'s write path and `main.cpp`'s wiring (including
    `VaultWatcher`'s own `IndexUpdater`), live-verified end to end against a real

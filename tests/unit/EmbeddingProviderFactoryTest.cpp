@@ -78,12 +78,16 @@ TEST_CASE("EmbeddingProviderFactory: provider=cloud fails loudly — never "
   AppConfig cfg;
   cfg.embeddingsProvider = "cloud";
 #ifdef WIKI_ENABLE_CLOUD_EMBEDDINGS
-  // Compiled in and implemented — but AppConfig.embeddingsApiKeyEnv
-  // defaults to empty, and CloudEmbeddingProvider genuinely can't call an
-  // API with no key. A real successful call needs an actual API key set
-  // in the environment — that's a real-credentials integration test, kept
-  // separate and opt-in (see docs/embeddings.md), not this unit test.
-  requireThrowsContaining([&] { createEmbeddingProvider(cfg); }, "api_key_env");
+  // Compiled in — api_key_env is optional (local OpenAI-compatible
+  // servers often have no auth). Construction with no key and the
+  // OpenAI defaults must succeed; a real successful embed() still
+  // needs a key against api.openai.com (see CloudEmbeddingProviderTest).
+  auto provider = createEmbeddingProvider(cfg);
+  REQUIRE(provider != nullptr);
+  REQUIRE(provider->dimensions() == 1536);
+  REQUIRE(provider->modelIdentifier().find("text-embedding-3-small") !=
+          std::string::npos);
+  REQUIRE(provider->modelIdentifier().find("api.openai.com") != std::string::npos);
 #else
   requireThrowsContaining([&] { createEmbeddingProvider(cfg); },
                           "WIKI_ENABLE_CLOUD_EMBEDDINGS");

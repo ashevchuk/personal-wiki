@@ -253,9 +253,11 @@ to a relative `./uploads` path that Drogon resolved against its document root
 `Error 30 creating path ...: Read-only file system` at startup. It's fixed in the code
 now; nothing to configure manually for this.
 
-`EnvironmentFile=-/etc/wiki/wiki.env` is optional (note the leading `-`) — nothing
-currently reads any environment variable (admin credentials live in SQLite, sessions
-are unsigned random tokens), so the file is allowed to simply not exist.
+`EnvironmentFile=-/etc/opt/wiki/wiki.env` is optional (note the leading `-`) —
+the file is allowed to simply not exist. The one current reader is
+`CloudEmbeddingProvider` (`getenv` of whatever `[embeddings].api_key_env`
+names; see `systemd/wiki.env.example`). Admin credentials still live in
+SQLite; sessions are unsigned random tokens.
 
 ## Reverse proxy
 

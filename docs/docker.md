@@ -3,10 +3,12 @@
 **Not the recommended path for a weak/old ARM SBC.** Docker itself needs a reasonably
 modern kernel/glibc — the actual verified-on-real-hardware target this project targets
 (Debian 9 stretch, armv7, glibc 2.24, EOL) is too old to run a modern Docker Engine at
-all. For that class of device, use native build or the zig cross-compile path instead
-— see `docs/deployment.md` and `docs/sbc-deployment.md`. This Dockerfile is for the
-"I want to try this right now" path: a desktop, a NAS, a cloud VM, or a Pi 4/5 on a
-64-bit OS new enough to run Docker properly.
+all. For that class of device, use the zig cross-compile path instead —
+see `docs/deployment.md` and `docs/sbc-deployment.md`. Native on-device
+compilation needs a C++20 toolchain the old distro does not have. This
+Dockerfile is for the "I want to try this right now" path: a desktop, a
+NAS, a cloud VM, or a Pi 4/5 on a 64-bit OS new enough to run Docker
+properly.
 
 ## Quick start
 
@@ -61,10 +63,15 @@ The image ships its own `docker/config.docker.toml` (baked in as `/opt/wiki/conf
 at build time) — the one thing that has to differ from `config.example.toml` is
 `[vault].path`/`[index].db_path`, pointed at `/data/vault` (the volume) instead of the
 relative `./vault_data` every other deployment path uses. Everything else matches the
-example defaults. To change a setting (log level, MCP scope, etc.), edit
-`docker/config.docker.toml` and rebuild the image — there's no environment-variable
-override (`wiki-server` doesn't read any env var at all, see `config.example.toml`'s
-own header comment).
+example defaults. To change a setting (log level, MCP scope, embeddings provider, etc.),
+edit `docker/config.docker.toml` and rebuild the image — `AppConfig` does
+not map config keys from the environment. The one runtime secret is the
+embeddings API key: `CloudEmbeddingProvider` `getenv()`s whatever
+`[embeddings].api_key_env` names. Pass it when starting the container
+(`docker run -e WIKI_EMBEDDINGS_API_KEY=...`, or compose `environment:`),
+never bake it into the image. Leave it unset for `provider = "none"` /
+`"local"`, or for a loopback OpenAI-compatible server that doesn't
+authenticate. See `docs/embeddings.md`.
 
 ## `wiki-mcp` from a container
 

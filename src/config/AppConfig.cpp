@@ -79,6 +79,19 @@ AppConfig AppConfig::load(const std::string& path) {
         (*embeddings)["model_path"].value_or(cfg.embeddingsModelPath);
     cfg.embeddingsApiKeyEnv =
         (*embeddings)["api_key_env"].value_or(cfg.embeddingsApiKeyEnv);
+    cfg.embeddingsApiBase =
+        (*embeddings)["api_base"].value_or(cfg.embeddingsApiBase);
+    cfg.embeddingsCloudModel =
+        (*embeddings)["model"].value_or(cfg.embeddingsCloudModel);
+    {
+      const auto dims = (*embeddings)["dimensions"].value_or(
+          static_cast<int64_t>(cfg.embeddingsCloudDimensions));
+      if (dims < 0) {
+        throw std::runtime_error(
+            "embeddings.dimensions must be >= 0 (0 means the OpenAI default of 1536)");
+      }
+      cfg.embeddingsCloudDimensions = static_cast<std::size_t>(dims);
+    }
     cfg.embeddingsQueryPrefix =
         (*embeddings)["query_prefix"].value_or(cfg.embeddingsQueryPrefix);
     cfg.embeddingsMaxDistance =

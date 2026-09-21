@@ -48,7 +48,8 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   (Reciprocal Rank Fusion) — `sqlite-vec` storage, off by default
   (`[embeddings].provider = "none"`), switchable at runtime to either a local
   in-process model (`llama.cpp`, no document ever leaves the machine) or a cloud API
-  (OpenAI `text-embedding-3-small`), both build-time-optional so an SBC build stays
+  (any OpenAI-compatible `POST {api_base}/embeddings`; defaults are OpenAI
+  `text-embedding-3-small`), both build-time-optional so an SBC build stays
   light unless you opt in. Admin panel exposes re-embed/re-embed-all with the same
   audit trail as everything else. See [`docs/embeddings.md`](docs/embeddings.md) for
   the full design, the real bugs found building it, and production numbers.
@@ -85,10 +86,12 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   `#zoom=<slug>` link lands already focused. Client-side only, no true block-level
   reference model behind it (this app's content is plain markdown files, not
   individually addressable blocks).
-- **Graph view** — every document as a node, every `[[wiki-link]]` as an edge, a real
-  force-directed layout (written from scratch, no vendored physics library). A full
-  `/graph` page for the whole vault, plus a "Local graph" widget on each document
-  (itself + its immediate neighbors) right after the backlinks list.
+- **Graph view** — every document as a node, every `[[wiki-link]]` as an edge.
+  Layout is a from-scratch Barnes-Hut simulation in a Worker (O(n log n);
+  a window resize scales cached coordinates instead of simulating again).
+  Paint falls through WebGL → canvas → SVG. Click-drag pans, wheel zooms.
+  A full `/graph` page for the whole vault, plus a "Local graph" widget on
+  each document (itself + its 1-hop neighbors) in a right rail.
 - **Document history.** Every edit is snapshotted; diff any two versions, restore any
   of them (which itself snapshots first — restoring is undoable too).
 - **Fail-safe-private visibility.** Missing or malformed front-matter defaults to
