@@ -498,9 +498,9 @@ swappable, independent stylesheets, picked from a small icon in the sidebar.
   actually renders as; three complete files mean a fourth theme later is
   "write one new file," never "figure out which of several files a rule
   lives in." The genuinely theme-SPECIFIC pieces (green's Orbitron import,
-  neon glow via `text-shadow`, shouting-caps buttons; the `#matrix-bg`
-  digital-rain canvas) simply don't exist in `dark.css`/`classic.css` at all,
-  rather than being toggled off by a variable.
+  neon glow via `text-shadow`, shouting-caps buttons) simply don't exist
+  in `dark.css`/`classic.css` at all, rather than being toggled off by a
+  variable.
 - **Applied via a synchronously-injected `<link>`, not a static one with a
   later `href` swap.** `shell.html`'s bootstrap script (the very first thing
   in `<head>`, run before the base_path-inference script even finishes)
@@ -512,19 +512,11 @@ swappable, independent stylesheets, picked from a small icon in the sidebar.
   full page reload on every single navigation (see `router.js`'s own
   no-History-API rationale), so that flash would happen on EVERY page view,
   not just first load.
-- **`matrix.js` reacts to computed visibility, not a theme name.** Rather
-  than teaching the canvas script about three theme names (two of which
-  don't want it at all), `dark.css`/`classic.css` each just set
-  `#matrix-bg { display: none; }`, and `matrix.js` bails out via
-  `getComputedStyle(canvas).display === "none"` — the exact same guard shape
-  it already used for `prefers-reduced-motion`. No JS-side coordination
-  between the theme files and the canvas script is needed at all.
 - **Theme changes reload the page rather than live-swapping anything.**
   `theme.js` writes the choice to `localStorage` and calls `location.reload()`
   — consistent with this app's existing full-reload-per-navigation
-  architecture, and it sidesteps having to tear down/reinit `matrix.js`'s
-  running `setInterval` or reconcile any other page state that assumed one
-  theme was active.
+  architecture, and it sidesteps having to reconcile any page state that
+  assumed one theme was active.
 - **Toast UI Editor's own dark-mode CSS gap-fix moved to `edit.css`, out of
   the theme files entirely.** At the time this fix was written, `pages/
   edit.js` hardcoded the editor's own `theme: "dark"` regardless of which

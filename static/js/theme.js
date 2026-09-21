@@ -4,11 +4,10 @@
 // flash of the wrong theme); this file only has to handle picking a NEW
 // one and remembering it for next time.
 //
-// Full page reload on change rather than live-swapping the stylesheet or
-// trying to reconcile matrix.js's already-running canvas — this app
-// already reloads on every navigation (see router.js's own comment on
-// why: no History API, deliberately), so a theme change doing the same
-// is consistent with that, not a new pattern.
+// Full page reload on change rather than live-swapping the stylesheet —
+// this app already reloads on every navigation (see router.js's own
+// comment on why: no History API, deliberately), so a theme change
+// doing the same is consistent with that, not a new pattern.
 (function () {
   "use strict";
 

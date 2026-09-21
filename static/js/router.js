@@ -7,8 +7,8 @@
 // window.location.href assignment), the server always returns the exact
 // same shell.html for any of the routes below (see PageRoutes.cpp), and
 // this file just re-runs from scratch on each load, the same way
-// nav.js/matrix.js already did before this rewrite. No client-side
-// router library, no route table beyond the plain if/else below.
+// nav.js already did before this rewrite. No client-side router
+// library, no route table beyond the plain if/else below.
 (function () {
   "use strict";
 

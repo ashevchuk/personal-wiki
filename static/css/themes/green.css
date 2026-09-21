@@ -23,13 +23,13 @@
   --fg: #00ff00;
   --fg-dim: #009900;
   --fg-bright: #ccffcc;
-  /* Neutral black, not green-tinted — the sidebar sits over the
-     matrix-rain canvas (z-index: -1, see #matrix-bg below), and a green
-     rgba() tint here stacked visibly on top of that animation, reading
-     as a persistent greenish wash rather than the intended "glass panel
-     over black" look. --panel-bg-2 (buttons/inputs/dropdowns) is
-     DELIBERATELY left green-tinted — this is a scoped fix for the
-     sidebar's own surface only, not a "de-green everything" pass. */
+  /* Neutral black, not green-tinted — the sidebar is a translucent
+     overlay on --bg, and a green rgba() tint here stacked visibly on
+     that black, reading as a persistent greenish wash rather than the
+     intended "glass panel over black" look. --panel-bg-2 (buttons/
+     inputs/dropdowns) is DELIBERATELY left green-tinted — this is a
+     scoped fix for the sidebar's own surface only, not a "de-green
+     everything" pass. */
   --panel-bg: rgba(0, 0, 0, 0.55);
   /* Secondary surface (inputs, dropdown menus, diff blocks) — one shade
      off --bg, distinct from --panel-bg (the translucent sidebar) so both
@@ -129,13 +129,6 @@ body {
   color: var(--fg);
   font-family: 'Orbitron', 'Courier New', monospace;
   text-shadow: var(--glow);
-}
-
-#matrix-bg {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  display: block;
 }
 
 a {
@@ -1014,12 +1007,6 @@ a.btn:focus {
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  #matrix-bg {
-    display: none;
-  }
-}
-
 /* Cmd/Ctrl+K quick-open (quick-open.js). Overlay is toggled via the
    `hidden` DOM property — [hidden] gets an explicit override below for
    the exact same reason .ms-menu[hidden] and the print stylesheet's
@@ -1410,7 +1397,6 @@ h6:hover > .zoom-btn {
 }
 
 @media print {
-  #matrix-bg,
   .sidebar,
   .sidebar-resizer,
   .quick-open-overlay,

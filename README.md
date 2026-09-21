@@ -31,7 +31,7 @@ underneath, so a fourth theme later is just a new file, not a refactor.
 | Green (default) | Dark | Classic |
 |---|---|---|
 | ![Green theme](docs/screenshots/theme-green.png) | ![Dark theme](docs/screenshots/theme-dark.png) | ![Classic theme](docs/screenshots/theme-classic.png) |
-| glowing terminal look, digital-rain canvas background | plain neutral dark UI, no glow, no caps | white background, MediaWiki-style blue links, serif headings |
+| glowing terminal look | plain neutral dark UI, no glow, no caps | white background, MediaWiki-style blue links, serif headings |
 
 ## Features
 

@@ -5,7 +5,7 @@
    owns its own complete set of colors/layout/typography rules end to end
    — see themes/green.css's own header comment for why. Unlike green.css,
    this is a plain modern dark UI: no neon glow, no shouting-caps buttons,
-   no digital-rain canvas, ordinary system font. Layered UNDER
+   ordinary system font. Layered UNDER
    page-specific stylesheets (edit.css) — this owns colors/layout/
    typography, the page-specific sheets only own their own form/widget
    details. Toast UI Editor's own dark-mode gaps are fixed in edit.css,
@@ -116,15 +116,6 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-}
-
-/* No digital-rain canvas in this theme — matrix.js still runs (it's
-   loaded unconditionally by shell.html for every theme) but bails out on
-   its own once it sees the canvas computes to display:none, same as its
-   existing prefers-reduced-motion check; no JS-side theme-awareness
-   needed for this. */
-#matrix-bg {
-  display: none;
 }
 
 a {
@@ -1206,7 +1197,6 @@ h6:hover > .zoom-btn {
 }
 
 @media print {
-  #matrix-bg,
   .sidebar,
   .sidebar-resizer,
   .quick-open-overlay,
