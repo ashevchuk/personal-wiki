@@ -227,8 +227,16 @@
 <nav class="sidebar">
   <a class="sidebar-brand" data-href="/" href="#">wiki</a>
   <div class="sidebar-links">
-    <a data-href="/search" href="#">Search</a>
-    <a data-href="/folder" href="#">Browse</a>
+    <!-- Search is the brand link above (data-href="/") — "/" and
+         /search are the same renderer (router.js). A second Search
+         control here was a duplicate after that change. -->
+    <!-- Icon-only like Graph below — was a plain text "Browse" link.
+         Folder outline: a small literal of the tree this page is. -->
+    <a data-href="/folder" href="#" aria-label="Browse" title="Browse">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h10a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+      </svg>
+    </a>
     <!-- Icon-only, same currentColor-SVG treatment as Admin/Log out/the
          theme picker below -- was a plain text "Graph" link, inconsistent
          with the icon-only siblings already in this row. Three nodes in
@@ -291,7 +299,7 @@
          INSIDE .sidebar-links, not in its own row — a dedicated row
          (even styled to look invisible at rest) still READS as a
          distinct control claiming its own space; folded in among
-         Search/Browse/Log out it's just one more small icon in the
+         Browse/Log out it's just one more small icon in the
          existing row, nothing declaring "I am a button" about it. -->
     <span class="theme-picker">
       <!-- Inline SVG, not the 🎨 emoji this used to be — an emoji glyph
@@ -323,7 +331,7 @@
   <span class="quick-open-hint">Ctrl+K to jump to a document</span>
   <!-- Everything that can genuinely grow past one screen (a vault with
        hundreds of documents/tags) lives in its OWN scrolling box,
-       separate from the row above (brand, Search/Browse/icons, the
+       separate from the row above (brand, icon row, the
        theme dropdown). Real bug this fixes: `.sidebar` itself needs
        `overflow-y: auto` for its sticky/height:100vh behavior (see that
        rule's own comment) — but CSS quietly computes `overflow-x` to
