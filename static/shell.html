@@ -168,6 +168,20 @@
   link.href = "css/themes/" + theme + ".css";
   document.head.appendChild(link);
 
+  // Full-page reload on every navigation (router.js) plus a JS-injected
+  // stylesheet: the body paints before css/themes/*.css arrives. Found
+  // live as a viewport-filling Graph SVG (no width/height of its own)
+  // on a white unstyled page for a few milliseconds. html.is-ready
+  // unhides .layout once the theme sheet is in (or after a timeout so a
+  // failed fetch cannot leave a blank tab).
+  function markReady() {
+    document.documentElement.classList.add("is-ready");
+  }
+  link.addEventListener("load", markReady);
+  link.addEventListener("error", markReady);
+  if (link.sheet) markReady();
+  setTimeout(markReady, 2500);
+
   // Edit/editor CSS MUST be injected here, after <base> exists — not as
   // static <link href="css/..."> in the markup. The HTML preload scanner
   // fetches stylesheets in parallel with the previous script, resolving
@@ -190,6 +204,22 @@
   }
 })();
 </script>
+<!-- Inline on purpose: a <link> here would race <base> the same way
+     edit.css used to. Caps nav SVGs and hides .layout until the theme
+     sheet's load handler (above) sets html.is-ready — see that
+     comment. Backgrounds match each theme's --bg so the wait is a
+     solid color, not a white flash. -->
+<style>
+  html:not(.is-ready) body { margin: 0; }
+  html:not(.is-ready) .layout { visibility: hidden; }
+  html[data-theme="green"]:not(.is-ready),
+  html[data-theme="green"]:not(.is-ready) body { background: #000; color: #00ff00; }
+  html[data-theme="dark"]:not(.is-ready),
+  html[data-theme="dark"]:not(.is-ready) body { background: #14161a; color: #e6e6e6; }
+  html[data-theme="classic"]:not(.is-ready),
+  html[data-theme="classic"]:not(.is-ready) body { background: #fff; color: #202122; }
+  .nav-icon { width: 0.95em; height: 0.95em; vertical-align: -0.15em; }
+</style>
 <title id="page-title">wiki</title>
 </head>
 <body>
@@ -205,7 +235,7 @@
          a triangle, joined by edges: a small, literal echo of what the
          page itself renders, not an abstract stand-in. -->
     <a data-href="/graph" href="#" aria-label="Graph" title="Graph">
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="6" cy="6" r="2.2"/>
         <circle cx="18" cy="6" r="2.2"/>
         <circle cx="12" cy="18" r="2.2"/>
@@ -215,7 +245,7 @@
     <!-- Same icon-only treatment -- was "+ New" as literal text, the one
          remaining non-icon control in this row. -->
     <button type="button" id="sidebar-new-doc" hidden aria-label="New document" title="New document">
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M12 5v14M5 12h14"/>
       </svg>
     </button>
@@ -227,13 +257,13 @@
          in this file: no color of its own, inherits whatever the row's
          link/button color already resolves to per theme. -->
     <a id="sidebar-account" data-href="/account" href="#" hidden aria-label="Admin" title="Admin">
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <circle cx="12" cy="12" r="3.2"/>
         <path d="M12 2v3M12 19v3M22 12h-3M5 12H2M19.07 4.93l-2.12 2.12M7.05 16.95l-2.12 2.12M19.07 19.07l-2.12-2.12M7.05 7.05 4.93 4.93"/>
       </svg>
     </a>
     <button type="button" id="sidebar-logout" hidden aria-label="Log out" title="Log out">
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
         <path d="M16 17l5-5-5-5"/>
         <path d="M21 12H9"/>
@@ -248,7 +278,7 @@
          hidden-by-default convention as its siblings, just inverted:
          router.js reveals THIS one when session.authenticated is false. -->
     <a id="sidebar-login" data-href="/login" href="#" hidden aria-label="Log in" title="Log in">
-      <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/>
         <path d="M10 17l5-5-5-5"/>
         <path d="M15 12H3"/>
@@ -276,7 +306,7 @@
            fade (rest/hover) still applies to it exactly as it did to the
            emoji. -->
       <button type="button" id="theme-toggle-btn" class="theme-toggle-btn" aria-haspopup="true" aria-expanded="false" aria-label="Theme" title="Theme">
-        <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 2a10 10 0 1 0 0 20c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.4-.3-.4-.5-.8-.5-1.3 0-1 .8-1.8 1.8-1.8H17a3 3 0 0 0 3-3c0-5.5-3.6-10-8-10Z"/>
           <circle cx="7.5" cy="10.5" r="1.2" fill="currentColor" stroke="none"/>
           <circle cx="10.5" cy="7" r="1.2" fill="currentColor" stroke="none"/>

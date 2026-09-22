@@ -28,7 +28,7 @@ window.WikiPages = window.WikiPages || {};
   // worse than no graph.
   var LOCAL_GRAPH_OPEN_KEY = "wiki.localGraphOpen";
   var GRAPH_ICON =
-    '<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '<circle cx="6" cy="6" r="2.2"/>' +
     '<circle cx="18" cy="6" r="2.2"/>' +
     '<circle cx="12" cy="18" r="2.2"/>' +
