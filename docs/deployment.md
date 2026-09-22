@@ -182,12 +182,13 @@ a hardening regression here fails at RUNTIME (a specific route breaks), not at
 `daemon-reload` time. `EnvironmentFile=-/etc/opt/wiki/wiki.env` is optional —
 the leading `-` means systemd will still start the unit if the file is
 missing. Admin credentials live in SQLite and sessions are random tokens
-with no secret-based signature. The one current reader is
-`CloudEmbeddingProvider`: it `getenv()`s the variable named by
-`[embeddings].api_key_env` in `config.toml` (see
-`systemd/wiki.env.example`). For `provider = "none"` / `"local"`, or a
-loopback OpenAI-compatible server that doesn't authenticate, the file can
-stay absent.
+with no secret-based signature. The runtime secret readers are
+`CloudEmbeddingProvider` and `CloudChatClient`: each `getenv()`s the
+variable named by `[embeddings].api_key_env` / `[llm].api_key_env` in
+`config.toml` (see `systemd/wiki.env.example`, `docs/embeddings.md`,
+`docs/llm.md`). For embeddings `provider = "none"` / `"local"` and llm
+`provider = "none"`, or a loopback OpenAI-compatible server that doesn't
+authenticate, the file can stay absent.
 
 ## TLS / public internet access
 

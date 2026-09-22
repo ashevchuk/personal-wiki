@@ -49,13 +49,18 @@ Cookie makeCsrfCookie(const std::string& csrfToken, bool secure, int maxAgeSecon
 
 }  // namespace
 
-void registerAuthRoutes(HttpAppFramework& app) {
+void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
   app.registerHandler(
       "/api/session",
-      [](const HttpRequestPtr& req,
+      [agentEnabled](const HttpRequestPtr& req,
          std::function<void(const HttpResponsePtr&)>&& callback) {
         Json::Value body;
         body["authenticated"] = isAuthenticated(req);
+        // Draft button in the editor: hidden unless this process actually
+        // constructed a ChatClient (llm.provider=cloud and the named env
+        // key is present). Always present in the JSON so the client does
+        // not have to guess; false is the fail-safe default.
+        body["agentEnabled"] = agentEnabled && isAuthenticated(req);
         callback(HttpResponse::newHttpJsonResponse(body));
       },
       // isAuthenticated() reads req->attributes() — AuthFilter is what

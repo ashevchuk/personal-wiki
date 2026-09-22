@@ -94,7 +94,7 @@ window.WikiPages = window.WikiPages || {};
     // trailing-slash or empty path, which was never a case worth
     // exercising over the network just to throw the answer away.
     if (!docPath || docPath.endsWith("/")) {
-      buildForm(container, docPath, { isNew: true });
+      buildForm(container, docPath, { isNew: true }, session);
       return;
     }
 
@@ -110,7 +110,7 @@ window.WikiPages = window.WikiPages || {};
         });
       })
       .then(function (data) {
-        buildForm(container, docPath, data);
+        buildForm(container, docPath, data, session);
       })
       .catch(function () {
         container.textContent = "Failed to load document.";
@@ -453,7 +453,7 @@ window.WikiPages = window.WikiPages || {};
     obs.observe(editorRoot, { childList: true, subtree: true });
   }
 
-  function buildForm(container, docPath, data) {
+  function buildForm(container, docPath, data, session) {
     var isNew = data.isNew;
     document.getElementById("page-title").textContent =
       (isNew ? "New document" : "Edit — " + (data.title || docPath)) + " — wiki";
@@ -480,6 +480,9 @@ window.WikiPages = window.WikiPages || {};
       '<div id="editor"></div>' +
       '<div class="field-row" id="edit-actions-row">' +
       '<button type="submit" id="f-save">Save</button>' +
+      (session && session.agentEnabled
+        ? '<button type="button" id="f-draft-btn">Draft</button>'
+        : "") +
       '<button type="button" id="f-attach-btn">Attach file</button>' +
       '<input type="file" id="f-attach" hidden>' +
       '<button type="button" id="f-upload-btn">Upload</button>' +
@@ -747,7 +750,7 @@ window.WikiPages = window.WikiPages || {};
       initialEditType: "wysiwyg",
       previewStyle: "tab",
       theme: editorTheme,
-      initialValue: data.body || "",
+      initialValue: window.WikiCommon.wikiBodyToEditor(data.body || ""),
       // Fires on paste/drag-drop of an image straight into the editor.
       // Toast UI's default with no hook is to inline the image as a
       // base64 data URI in the markdown — bad for a wiki (bloats the
@@ -833,6 +836,44 @@ window.WikiPages = window.WikiPages || {};
 
     loadAttachments();
 
+    var draftBtn = document.getElementById("f-draft-btn");
+    if (draftBtn && window.WikiAgent) {
+      draftBtn.addEventListener("click", function () {
+        window.WikiAgent.open({
+          snapshot: function () {
+            return {
+              path: pathInput.value.trim(),
+              title: titleInput.value.trim(),
+              type: typeInput.value.trim(),
+              tags: tagsInput.value
+                .split(",")
+                .map(function (t) {
+                  return t.trim();
+                })
+                .filter(function (t) {
+                  return t.length > 0;
+                }),
+              body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
+              isNew: isNew,
+            };
+          },
+          applyDraft: function (draft) {
+            if (draft.path && isNew && !pathInput.readOnly) {
+              pathInput.value = draft.path;
+            }
+            if (draft.title) titleInput.value = draft.title;
+            if (draft.type) typeInput.value = draft.type;
+            if (draft.tags && draft.tags.length) {
+              tagsInput.value = draft.tags.join(", ");
+            }
+            if (typeof draft.body === "string") {
+              editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(draft.body));
+            }
+          },
+        });
+      });
+    }
+
     document.getElementById("doc-form").addEventListener("submit", function (evt) {
       evt.preventDefault();
       setStatus("Saving...", "");
@@ -865,7 +906,7 @@ window.WikiPages = window.WikiPages || {};
           }),
         type: typeInput.value.trim(),
         visibility: visibilityInput.checked ? "public" : "private",
-        body: editor.getMarkdown(),
+        body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
       };
 
       var url = isNew
@@ -887,6 +928,9 @@ window.WikiPages = window.WikiPages || {};
           return resp.json().then(function (data) {
             var savedPath = (data && data.path) || path;
             setStatus("Saved.", "ok");
+            if (window.WikiAgent && window.WikiAgent.endSession) {
+              window.WikiAgent.endSession();
+            }
             window.location.href = basePath() + "/d/" + encodeVaultPath(savedPath);
           });
         })

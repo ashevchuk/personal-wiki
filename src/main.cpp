@@ -15,6 +15,7 @@
 #include "auth/SessionStore.h"
 #include "config/AppConfig.h"
 #include "controllers/AdminRoutes.h"
+#include "controllers/AgentRoutes.h"
 #include "controllers/AuthRoutes.h"
 #include "controllers/DocumentRoutes.h"
 #include "controllers/FolderRoutes.h"
@@ -37,6 +38,8 @@
 #include "index/McpAuditLog.h"
 #include "index/SnapshotStore.h"
 #include "index/VaultWatcher.h"
+#include "llm/AgentRuntime.h"
+#include "llm/CloudChatClient.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
@@ -50,6 +53,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -252,6 +256,32 @@ int main(int argc, char** argv) {
   // same db file (WAL mode, same coordination VaultWatcher's own
   // separate connection already relies on).
   wikicore::index::McpAuditLog mcpAuditLog(db);
+
+  // Draft agent: wiki-server is the OpenAI-compatible HTTP *client*.
+  // Claude/OpenAI never speak MCP — tools in the chat request are
+  // executed here against FtsSearch/DocumentService. provider="none"
+  // (default) skips construction; a misconfigured "cloud" fails startup
+  // the same way embeddings.provider does, rather than serving a Draft
+  // button that 500s on first use.
+  std::unique_ptr<wikicore::llm::CloudChatClient> chatClient;
+  if (cfg.llmProvider.empty() || cfg.llmProvider == "none") {
+    // leave chatClient null — AgentRuntime::enabled() is false
+  } else if (cfg.llmProvider == "cloud") {
+    try {
+      chatClient = std::make_unique<wikicore::llm::CloudChatClient>(
+          cfg.llmApiKeyEnv, cfg.llmApiBase, cfg.llmModel);
+    } catch (const std::exception& e) {
+      LOG_ERROR << "failed to initialize llm.provider = \"cloud\": " << e.what();
+      return 1;
+    }
+  } else {
+    LOG_ERROR << "unknown llm.provider value: \"" << cfg.llmProvider
+              << "\" (expected \"none\" or \"cloud\")";
+    return 1;
+  }
+  wikicore::llm::AgentRuntime agentRuntime(ftsSearch, documentService, navQueries,
+                                            indexUpdater, &mcpAuditLog, chatClient.get(),
+                                            cfg.llmSystemPrompt);
 
   // The db is a disposable cache, never assumed correct on faith — rescan
   // unconditionally at every startup so the index reflects whatever's
@@ -506,7 +536,7 @@ int main(int argc, char** argv) {
       },
       {drogon::Get});
 
-  wikicore::controllers::registerAuthRoutes(drogon::app());
+  wikicore::controllers::registerAuthRoutes(drogon::app(), agentRuntime.enabled());
   wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
                                                  attachmentService, navQueries);
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
@@ -524,6 +554,7 @@ int main(int argc, char** argv) {
                                                   remoteMcpRateLimiter, ftsSearch, navQueries,
                                                   indexUpdater, documentService, attachmentService,
                                                   mcpUploadStaging, mcpAuditLog);
+  wikicore::controllers::registerAgentRoutes(drogon::app(), agentRuntime);
 
   drogon::app()
       .addListener(cfg.listenAddr, cfg.port)

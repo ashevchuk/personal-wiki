@@ -62,7 +62,10 @@ underneath, so a fourth theme later is just a new file, not a refactor.
 - **A real editor, not a textarea.** Toast UI Editor (WYSIWYG + raw markdown), undo/
   redo, drag-and-drop image upload routed through the same attachment pipeline as
   everything else, and a list of the document's existing files (double-click a
-  name to insert a link).
+  name to insert a link). Optional **Draft** button (off until `[llm]` is
+  configured) fills the editor from an OpenAI-compatible chat API — wiki-server
+  is the client, tools run against the vault locally, the model never sees MCP,
+  and nothing is written until you hit Save. See [`docs/llm.md`](docs/llm.md).
 - **`![youtube](url)` embeds** that render as a real `<iframe>` — `youtu.be`,
   `/watch?v=`, and `/shorts/` links all recognized, with a thumbnail preview right in
   the editor.
@@ -276,7 +279,9 @@ Deployed and verified running on real ARM hardware via cross-compilation; see
 [`docs/deployment.md`](docs/deployment.md) for the exact, current verification status.
 Semantic search (`sqlite-vec` + embeddings, hybrid FTS5/cosine ranking) — originally
 the one deliberately-deferred item — is done and live on the real production
-instance; see [`docs/embeddings.md`](docs/embeddings.md).
+instance; see [`docs/embeddings.md`](docs/embeddings.md). The edit-page Draft
+agent (cloud chat as HTTP client, tools in-process, MCP unchanged) is
+documented in [`docs/llm.md`](docs/llm.md).
 
 ## License
 

@@ -171,6 +171,21 @@ struct AppConfig {
   // — see docs/embeddings.md.
   int embeddingsSemanticTopK = 5;
 
+  // [llm] — outbound chat for the editor's Draft panel. "none" (default)
+  // means the Draft button is not shown and /api/agent/* 404s. "cloud" is
+  // an OpenAI-compatible POST {api_base}/chat/completions (OpenAI itself,
+  // Anthropic's compatibility layer at api.anthropic.com/v1, a local
+  // proxy). The wiki is the HTTP client; the model is never given MCP.
+  // Key is the NAME of an env var, same discipline as embeddings.api_key_env.
+  std::string llmProvider = "none";
+  std::string llmApiKeyEnv;
+  std::string llmApiBase;
+  std::string llmModel;
+  // Optional override of the compiled Draft agent system prompt. Empty
+  // (unset, commented out, or whitespace-only) keeps the hardcoded
+  // default in AgentRuntime.
+  std::string llmSystemPrompt;
+
   // [log]
   std::string logLevel = "info";
 

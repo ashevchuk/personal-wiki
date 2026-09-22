@@ -192,6 +192,80 @@ window.WikiCommon = (function () {
     });
   }
 
+  // Models (and Toast UI's markdown serializer on a WYSIWYG round-trip)
+  // over-escape wiki-link punctuation: \[\[path\|Label\]\] instead of
+  // [[path|Label]]. WikiLinks only matches a literal "[[". Repeat until
+  // stable — a single pass leaves a doubled JSON escape still broken.
+  function unescapeWikiMarkdown(text) {
+    if (!text) return text;
+    var special = "[]|-.()`";
+    var out = String(text);
+    for (var pass = 0; pass < 8; pass++) {
+      var next = "";
+      for (var i = 0; i < out.length; i++) {
+        if (out.charAt(i) === "\\" && i + 1 < out.length &&
+            special.indexOf(out.charAt(i + 1)) !== -1) {
+          next += out.charAt(i + 1);
+          i++;
+        } else {
+          next += out.charAt(i);
+        }
+      }
+      if (next === out) return next;
+      out = next;
+    }
+    return out;
+  }
+
+  // Run `fn` on markdown outside fenced code blocks so ```mermaid / ```
+  // samples that mention [[wiki-links]] are left alone.
+  function mapProse(text, fn) {
+    var re = /```[\s\S]*?```/g;
+    var out = "";
+    var last = 0;
+    var m;
+    while ((m = re.exec(text))) {
+      out += fn(text.slice(last, m.index));
+      out += m[0];
+      last = m.index + m[0].length;
+    }
+    out += fn(text.slice(last));
+    return out;
+  }
+
+  // Toast UI WYSIWYG is CommonMark: [[path|label]] is not a link, so the
+  // writer re-escapes it to \[\[path\|label\]\] (and the canvas smashes
+  // path+label together). A real markdown link survives the round-trip.
+  // wiki: is an editor-only scheme — rewritten back to [[ ]] before Save.
+  function wikiBodyToEditor(text) {
+    return mapProse(unescapeWikiMarkdown(text || ""), function (chunk) {
+      return chunk.replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, function (_, target, label) {
+        var path = target.trim();
+        var text = (label || target).trim();
+        return "[" + text + "](wiki:" + path + ")";
+      });
+    });
+  }
+
+  function wikiBodyFromEditor(text) {
+    return mapProse(unescapeWikiMarkdown(text || ""), function (chunk) {
+      return chunk.replace(
+        /\[([^\]]+)\]\(\s*<?wiki:(?:\/\/)?([^)\s>]+)>?\s*\)/g,
+        function (_, label, href) {
+          var path = href;
+          try {
+            path = decodeURIComponent(href);
+          } catch (e) {
+            path = href;
+          }
+          path = path.replace(/^\/*/, "");
+          if (label === path) return "[[" + path + "]]";
+          return "[[" + path + "|" + label + "]]";
+        }
+      );
+    });
+  }
+
   return {
     basePath: basePath,
     getCookie: getCookie,
@@ -202,5 +276,8 @@ window.WikiCommon = (function () {
     renderBreadcrumbs: renderBreadcrumbs,
     errorFromResponse: errorFromResponse,
     fetchSession: fetchSession,
+    unescapeWikiMarkdown: unescapeWikiMarkdown,
+    wikiBodyToEditor: wikiBodyToEditor,
+    wikiBodyFromEditor: wikiBodyFromEditor,
   };
 })();

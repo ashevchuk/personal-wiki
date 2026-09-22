@@ -254,10 +254,11 @@ to a relative `./uploads` path that Drogon resolved against its document root
 now; nothing to configure manually for this.
 
 `EnvironmentFile=-/etc/opt/wiki/wiki.env` is optional (note the leading `-`) —
-the file is allowed to simply not exist. The one current reader is
-`CloudEmbeddingProvider` (`getenv` of whatever `[embeddings].api_key_env`
-names; see `systemd/wiki.env.example`). Admin credentials still live in
-SQLite; sessions are unsigned random tokens.
+the file is allowed to simply not exist. The runtime secret readers are
+`CloudEmbeddingProvider` and `CloudChatClient` (`getenv` of whatever
+`[embeddings].api_key_env` / `[llm].api_key_env` name; see
+`systemd/wiki.env.example`, `docs/embeddings.md`, `docs/llm.md`). Admin
+credentials still live in SQLite; sessions are unsigned random tokens.
 
 ## Reverse proxy
 

@@ -79,6 +79,7 @@ add_library(wikicore STATIC
   src/embeddings/NullEmbeddingProvider.cpp
   src/embeddings/EmbeddingProviderFactory.cpp
   src/embeddings/EmbeddingChunks.cpp
+  src/llm/AgentRuntime.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC
@@ -133,8 +134,10 @@ add_executable(wiki-server
   src/controllers/VersionRoutes.cpp
   src/controllers/QueryRoutes.cpp
   src/controllers/GraphRoutes.cpp
+  src/controllers/AgentRoutes.cpp
+  src/llm/CloudChatClient.cpp
 )
-target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2)
+target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARGON2 OpenSSL::SSL OpenSSL::Crypto)
 
 # No CSP views (views/*.csp) anymore — the backend is a JSON API only now;
 # static/shell.html + client-side JS own all rendering (see
@@ -164,6 +167,12 @@ FetchContent_Declare(
   GIT_TAG 13a8bef5f1885b10b8d6038c4b319b7024744fa5
 )
 FetchContent_MakeAvailable(cpp_mcp)
+
+# CloudChatClient.cpp (wiki-server) includes the same vendored httplib.h
+# cpp-mcp already fetched — same pattern CloudEmbeddingProvider uses,
+# just always-on because the Draft agent is part of the HTTP binary, not
+# behind WIKI_ENABLE_CLOUD_EMBEDDINGS.
+target_include_directories(wiki-server PRIVATE ${cpp_mcp_SOURCE_DIR}/common)
 
 add_executable(wiki-mcp
   src/mcp_main.cpp

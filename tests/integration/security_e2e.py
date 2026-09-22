@@ -232,6 +232,15 @@ def run_checks(sandbox, vault):
         check(f"shell route {shell_path} -> 200", status == 200, f"got {status}")
 
     # --- 1. Unauthenticated writes must ALL be rejected ---------------
+    status, _, _ = anon.post_json("/api/agent/sessions", {"instruction": "x"})
+    check("anon agent start -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.get("/api/agent/sessions/not-a-real-id")
+    check("anon agent poll -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/agent/sessions/not-a-real-id/messages",
+                                  {"instruction": "x"})
+    check("anon agent follow-up -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.delete("/api/agent/sessions/not-a-real-id")
+    check("anon agent drop -> 401", status == 401, f"got {status}")
     status, _, _ = anon.post_json("/api/documents", {"path": "x.md", "title": "x", "body": "y"})
     check("anon create -> 401", status == 401, f"got {status}")
     status, _, _ = anon.put_json("/api/documents/x.md", {"title": "x", "body": "y"})
@@ -313,19 +322,29 @@ def run_checks(sandbox, vault):
     # --- 3. Real admin session for the rest of the checks ---------------
     admin = Client(HOST, PORT)
     status, _, body = admin.get_json("/api/session")
-    check("anon session check -> authenticated:false", body == {"authenticated": False}, f"got {body}")
+    check("anon session check -> authenticated:false",
+          body == {"authenticated": False, "agentEnabled": False}, f"got {body}")
     status, _, _ = admin.post_json("/api/login", {"username": "admin", "password": "SuperSecret123"})
     check("admin login -> 200", status == 200, f"got {status}")
     csrf = admin.cookies.get("wiki_csrf_token")
     check("csrf cookie set on login", csrf is not None)
     status, _, body = admin.get_json("/api/session")
-    check("admin session check -> authenticated:true", body == {"authenticated": True}, f"got {body}")
+    check("admin session check -> authenticated:true",
+          body == {"authenticated": True, "agentEnabled": False}, f"got {body}")
 
     # --- 4. CSRF enforcement ---------------------------------------------
     status, _, _ = admin.put_json("/api/documents/nope.md", {"title": "x", "body": "y"})
     check("mutating request without csrf header -> 403", status == 403, f"got {status}")
     status, _, _ = admin.post_json("/api/documents/move", {"oldPath": "x.md", "newPath": "y.md"})
     check("document move without csrf header -> 403", status == 403, f"got {status}")
+    status, _, _ = admin.post_json("/api/agent/sessions", {"instruction": "x"})
+    check("agent start without csrf header -> 403", status == 403, f"got {status}")
+    status, _, raw = admin.post_json("/api/agent/sessions", {"instruction": "x"},
+                                      headers={"X-CSRF-Token": csrf})
+    body = json.loads(raw) if raw else None
+    check("agent start while unconfigured -> 404",
+          status == 404 and body and body.get("error") == "agent not configured",
+          f"got {status} {body}")
 
     # --- 5. Path traversal ------------------------------------------------
     # The shell route itself touches no filesystem (see check 0) — the
@@ -874,11 +893,11 @@ def run_checks(sandbox, vault):
 
     status, _, body = admin.get_json("/api/session")
     check("caller's OWN session survives its own password change",
-          body == {"authenticated": True}, f"got {body}")
+          body == {"authenticated": True, "agentEnabled": False}, f"got {body}")
 
     status, _, body = other.get_json("/api/session")
     check("every OTHER session was invalidated by the password change",
-          body == {"authenticated": False}, f"got {body}")
+          body == {"authenticated": False, "agentEnabled": False}, f"got {body}")
 
     # Success before failure, deliberately: a failed /api/login attempt
     # trips RateLimiter.recordFailure() (1s+ backoff on this IP, see

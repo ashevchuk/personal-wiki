@@ -101,6 +101,13 @@ AppConfig AppConfig::load(const std::string& path) {
     cfg.embeddingsSemanticTopK =
         (*embeddings)["semantic_top_k"].value_or(cfg.embeddingsSemanticTopK);
   }
+  if (auto* llm = root["llm"].as_table()) {
+    cfg.llmProvider = (*llm)["provider"].value_or(cfg.llmProvider);
+    cfg.llmApiKeyEnv = (*llm)["api_key_env"].value_or(cfg.llmApiKeyEnv);
+    cfg.llmApiBase = (*llm)["api_base"].value_or(cfg.llmApiBase);
+    cfg.llmModel = (*llm)["model"].value_or(cfg.llmModel);
+    cfg.llmSystemPrompt = (*llm)["system_prompt"].value_or(cfg.llmSystemPrompt);
+  }
   if (auto* log = root["log"].as_table()) {
     cfg.logLevel = (*log)["level"].value_or(cfg.logLevel);
   }

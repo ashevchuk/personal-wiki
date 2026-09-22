@@ -299,3 +299,127 @@
   border-radius: 4px;
   object-fit: cover;
 }
+
+/* Draft agent panel — edit-page only, so it lives here rather than in
+   every theme file. Colors come from the active theme's CSS variables.
+   position:fixed (same reason as quick-open): the sidebar's own overflow
+   would clip an absolutely-positioned descendant. z-index above Toast UI
+   popups (40) so the panel stays usable while the editor is focused.
+   Drag the header / resize the corner — size is inline after the first
+   move, so width/height here are only the initial landing size. */
+.agent-panel {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  width: min(28rem, calc(100vw - 2.5rem));
+  height: min(70vh, 36rem);
+  min-width: 17.5rem;
+  min-height: 14rem;
+  display: flex;
+  flex-direction: column;
+  z-index: 50;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: var(--glow);
+  padding: 0.85rem 0.9rem 1.1rem;
+  overflow: hidden;
+}
+.agent-panel[hidden] {
+  display: none;
+}
+.agent-panel-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin: 0 0 0.6rem;
+  cursor: grab;
+  flex-shrink: 0;
+  user-select: none;
+}
+.agent-panel-header:active {
+  cursor: grabbing;
+}
+.agent-panel-header strong {
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.agent-panel-close {
+  background: none;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font: inherit;
+  text-transform: none;
+  letter-spacing: normal;
+}
+button.agent-panel-close:hover,
+button.agent-panel-close:focus {
+  background: none;
+  border: none;
+  box-shadow: none;
+  color: var(--fg);
+}
+.agent-panel-log {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 4rem;
+  font-size: 0.85rem;
+  margin: 0 0 0.6rem;
+  color: var(--fg-dim);
+}
+.agent-panel-log p {
+  margin: 0 0 0.4rem;
+  white-space: pre-wrap;
+}
+.agent-panel-log .agent-user {
+  color: var(--fg);
+}
+.agent-panel-log .agent-error {
+  color: var(--fg-bright);
+}
+.agent-panel textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 4.5rem;
+  resize: vertical;
+  margin: 0 0 0.6rem;
+  flex-shrink: 0;
+  /* Page canvas, not --panel-bg-2: that secondary surface is green-
+     tinted on the terminal theme (see themes/green.css) and made the
+     prompt field read as a washed-out green box. */
+  background: var(--bg);
+  color: var(--fg);
+}
+.agent-panel textarea:focus {
+  background: var(--bg);
+}
+.agent-panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  flex-shrink: 0;
+}
+.agent-panel-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 1.1rem;
+  height: 1.1rem;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 0 55%, var(--border) 55% 62%,
+      transparent 62% 72%, var(--border) 72% 79%, transparent 79%);
+}
+body.agent-panel-dragging,
+body.agent-panel-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}

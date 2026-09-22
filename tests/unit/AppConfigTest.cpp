@@ -180,3 +180,47 @@ TEST_CASE("AppConfig::load: embeddings.query_prefix/max_distance/"
   REQUIRE(cfg.embeddingsMinContentWords == 10);
   REQUIRE(cfg.embeddingsSemanticTopK == 3);
 }
+
+TEST_CASE("AppConfig::load: llm.provider defaults to none when unset",
+          "[AppConfig]") {
+  TempConfigFile file("[vault]\npath = \"./vault_data\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.llmProvider == "none");
+  REQUIRE(cfg.llmApiKeyEnv.empty());
+  REQUIRE(cfg.llmApiBase.empty());
+  REQUIRE(cfg.llmModel.empty());
+  REQUIRE(cfg.llmSystemPrompt.empty());
+}
+
+TEST_CASE("AppConfig::load: llm cloud knobs are read as names, not env values",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[llm]\nprovider = \"cloud\"\n"
+      "api_key_env = \"ANTHROPIC_API_KEY\"\n"
+      "api_base = \"https://api.anthropic.com/v1\"\n"
+      "model = \"claude-sonnet-4-6\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.llmProvider == "cloud");
+  REQUIRE(cfg.llmApiKeyEnv == "ANTHROPIC_API_KEY");
+  REQUIRE(cfg.llmApiBase == "https://api.anthropic.com/v1");
+  REQUIRE(cfg.llmModel == "claude-sonnet-4-6");
+  REQUIRE(cfg.llmSystemPrompt.empty());
+}
+
+TEST_CASE("AppConfig::load: llm.system_prompt is optional and read verbatim",
+          "[AppConfig]") {
+  TempConfigFile missing("[llm]\nprovider = \"cloud\"\n");
+  REQUIRE(AppConfig::load(missing.path().string()).llmSystemPrompt.empty());
+
+  TempConfigFile empty("[llm]\nsystem_prompt = \"\"\n");
+  REQUIRE(AppConfig::load(empty.path().string()).llmSystemPrompt.empty());
+
+  TempConfigFile set("[llm]\nsystem_prompt = \"Be terse.\\nKeep wiki-links.\"\n");
+  REQUIRE(AppConfig::load(set.path().string()).llmSystemPrompt ==
+          "Be terse.\nKeep wiki-links.");
+
+  TempConfigFile multiline(
+      "[llm]\nsystem_prompt = \"\"\"\nLine one\nLine two\n\"\"\"\n");
+  REQUIRE(AppConfig::load(multiline.path().string()).llmSystemPrompt ==
+          "Line one\nLine two\n");
+}

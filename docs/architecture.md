@@ -265,10 +265,10 @@ handler, don't rely on "the filter's already attached".
   `/etc/opt/wiki/` (not `/etc/sysconfig`, not `/etc/default`). The
   leading `-` keeps the unit startable when the file is absent.
   `AppConfig` still does not map config keys from the environment; the
-  one runtime secret consumer is `CloudEmbeddingProvider`, which
-  `getenv()`s whatever `[embeddings].api_key_env` names (see
-  `docs/embeddings.md`'s "OpenAI-compatible cloud endpoints" and
-  `systemd/wiki.env.example`).
+  runtime secret consumers are `CloudEmbeddingProvider` and
+  `CloudChatClient`, which `getenv()` whatever
+  `[embeddings].api_key_env` / `[llm].api_key_env` name (see
+  `docs/embeddings.md`, `docs/llm.md`, and `systemd/wiki.env.example`).
   Admin credentials live in SQLite; sessions and remote-MCP tokens are
   random opaque values, not signed from this file. Most deployments
   (`provider = "none"` / `"local"`, or a loopback OpenAI-compatible server
@@ -1735,6 +1735,25 @@ stylesheet tags back in `shell.html`'s markup re-breaks this.
 An unrelated `share-modal.js` `Cannot read properties of null
 (reading 'addEventListener')` in the same console is a browser
 extension, not this repo.
+
+## Editor Draft agent
+
+Optional cloud drafting on the edit page (`docs/llm.md`). wiki-server is
+an OpenAI-compatible chat *client*; tools run locally; `propose_draft`
+fills the editor; Save is the only disk write. MCP is not in this path.
+
+`[llm].provider = "none"` (default) hides the button. `system_prompt` in
+config.toml replaces the compiled prompt when non-empty.
+
+**Toast UI WYSIWYG cannot round-trip `[[wiki-link]]` as source.** The
+markdown writer treats those brackets as punctuation and emits
+`\[\[path\|label\]\]`; a `widgetRules` attempt to keep them as widgets
+overlapped real documents and leaked `$$widgetN$$` markers (caught live
+on `demo/wiki-links-example`). The editor therefore maps
+`[[path|label]]` ↔ `[label](wiki:path)` around `setMarkdown` /
+`getMarkdown` (`static/js/common.js`), and `propose_draft` also
+unescapes model-over-escaped punctuation. The `wiki:` URL never hits
+disk.
 
 ## Two-binary layout
 

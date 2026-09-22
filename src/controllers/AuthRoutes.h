@@ -11,7 +11,7 @@ namespace wikicore::controllers {
 //   POST /api/login    {username, password} -> {ok:true} + session/csrf
 //                       cookies, or {ok:false, error} with 401/429
 //   POST /api/logout    -> {ok:true}, clears cookies (CSRF-protected)
-//   GET  /api/session   -> {authenticated: bool}
+//   GET  /api/session   -> {authenticated: bool, agentEnabled: bool}
 //   POST /api/account/password  {currentPassword, newPassword} -> {ok:true}
 //                       (admin+CSRF protected). Verifies currentPassword
 //                       via PasswordHasher before overwriting the stored
@@ -26,6 +26,6 @@ namespace wikicore::controllers {
 // unlike the old HTML-returning version, nothing here builds a URL/link
 // that would need it (the client already knows its own base path, see
 // common.js's basePath()).
-void registerAuthRoutes(drogon::HttpAppFramework& app);
+void registerAuthRoutes(drogon::HttpAppFramework& app, bool agentEnabled);
 
 }  // namespace wikicore::controllers

@@ -176,5 +176,32 @@ write_access = false
 # same real bge-small-en-v1.5 measurements — see docs/embeddings.md.
 # semantic_top_k = 5
 
+[llm]
+# Editor Draft panel — wiki-server calls an OpenAI-compatible
+# POST {api_base}/chat/completions as an HTTP *client*. The model never
+# sees MCP (stdio wiki-mcp or POST /mcp); tools in that request are
+# executed here against the vault, and propose_draft only fills the
+# editor. Leave this section out, or provider = "none", for no button.
+#
+# provider = "none"   # "none" | "cloud"
+#
+# Cloud — OpenAI-compatible chat. Defaults (when these stay commented)
+# match OpenAI itself. Point api_base at Anthropic's compatibility layer
+# (https://api.anthropic.com/v1) and set model to a Claude name to use
+# Claude with the same client. api_key_env is the NAME of an environment
+# variable, never the key (same discipline as embeddings.api_key_env).
+# api_key_env = "ANTHROPIC_API_KEY"
+# api_base = "https://api.anthropic.com/v1"
+# model = "claude-sonnet-4-6"
+#
+# Optional. Replaces the compiled Draft agent system prompt when set to
+# a non-empty string. Omit the key, comment it out, or leave it empty
+# to keep the built-in default (wiki-links, mermaid fences, blockquotes,
+# propose_draft fills the editor — see AgentRuntime.cpp). TOML
+# multiline is the usual shape for a long prompt:
+# system_prompt = """
+# You draft markdown for a personal wiki.
+# """
+
 [log]
 level = "info"   # trace | debug | info | warn | error

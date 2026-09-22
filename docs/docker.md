@@ -63,15 +63,17 @@ The image ships its own `docker/config.docker.toml` (baked in as `/opt/wiki/conf
 at build time) — the one thing that has to differ from `config.example.toml` is
 `[vault].path`/`[index].db_path`, pointed at `/data/vault` (the volume) instead of the
 relative `./vault_data` every other deployment path uses. Everything else matches the
-example defaults. To change a setting (log level, MCP scope, embeddings provider, etc.),
-edit `docker/config.docker.toml` and rebuild the image — `AppConfig` does
-not map config keys from the environment. The one runtime secret is the
-embeddings API key: `CloudEmbeddingProvider` `getenv()`s whatever
-`[embeddings].api_key_env` names. Pass it when starting the container
-(`docker run -e WIKI_EMBEDDINGS_API_KEY=...`, or compose `environment:`),
-never bake it into the image. Leave it unset for `provider = "none"` /
-`"local"`, or for a loopback OpenAI-compatible server that doesn't
-authenticate. See `docs/embeddings.md`.
+example defaults. To change a setting (log level, MCP scope, embeddings provider,
+Draft agent, etc.), edit `docker/config.docker.toml` and rebuild the image —
+`AppConfig` does not map config keys from the environment. Runtime secrets are
+the embeddings and llm API keys: `CloudEmbeddingProvider` /
+`CloudChatClient` `getenv()`s whatever `[embeddings].api_key_env` /
+`[llm].api_key_env` name. Pass them when starting the container
+(`docker run -e WIKI_EMBEDDINGS_API_KEY=... -e ANTHROPIC_API_KEY=...`, or
+compose `environment:`), never bake keys into the image. Leave them unset
+for `provider = "none"` / embeddings `"local"`, or for a loopback
+OpenAI-compatible server that doesn't authenticate. See
+`docs/embeddings.md` and `docs/llm.md`.
 
 ## `wiki-mcp` from a container
 
