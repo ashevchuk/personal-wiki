@@ -17,6 +17,7 @@ add_executable(unit_tests
   unit/GraphQueriesTest.cpp
   unit/QueryBlocksTest.cpp
   unit/IndexBuilderTest.cpp
+  unit/DatabaseRecoverTest.cpp
   unit/VaultWatcherTest.cpp
   unit/WikiLinksTest.cpp
   unit/YouTubeEmbedTest.cpp

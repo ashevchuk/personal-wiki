@@ -137,7 +137,24 @@ int main(int argc, char** argv) {
   const wikicore::config::AppConfig cfg = wikicore::config::AppConfig::load(configPath);
 
   wikicore::index::Database db(cfg.dbPath);
-  db.migrate();
+  // migrate + integrity_check; a torn file from an SBC power-loss is
+  // quarantined and rebuilt, copying the admin account / remote-MCP
+  // token across when those pages are still readable so nobody has to
+  // run --create-admin just because the index cache was damaged.
+  const wikicore::index::RecoverResult recovered = db.ensureUsable();
+  if (recovered.rebuilt) {
+    LOG_WARN << "index db was corrupt (" << (recovered.notes.empty() ? "unknown" : recovered.notes.front())
+             << "); quarantined to " << recovered.quarantined.string()
+             << "; admin restored=" << (recovered.adminRestored ? "yes" : "no")
+             << " mcp restored=" << (recovered.mcpRestored ? "yes" : "no");
+    for (std::size_t i = 1; i < recovered.notes.size(); ++i) {
+      LOG_WARN << recovered.notes[i];
+    }
+    if (!recovered.adminRestored) {
+      LOG_WARN << "admin account could not be recovered from the damaged db; "
+                  "run wiki-server --create-admin";
+    }
+  }
 
   if (argc > 1 && std::string(argv[1]) == "--create-admin") {
     return runCreateAdmin(db);
