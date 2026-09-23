@@ -808,6 +808,49 @@ window.WikiPages = window.WikiPages || {};
     editor.on("change", scheduleMermaidPreviewRefresh);
     editor.on("changeMode", scheduleMermaidPreviewRefresh);
 
+    function currentSaveFingerprint() {
+      return JSON.stringify({
+        path: pathInput.value.trim(),
+        title: titleInput.value.trim(),
+        type: typeInput.value.trim(),
+        tags: tagsInput.value
+          .split(",")
+          .map(function (t) {
+            return t.trim();
+          })
+          .filter(function (t) {
+            return t.length > 0;
+          }),
+        visibility: visibilityInput.checked ? "public" : "private",
+        body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
+      });
+    }
+    var savedFingerprint = currentSaveFingerprint();
+    function isDirty() {
+      return currentSaveFingerprint() !== savedFingerprint;
+    }
+    function markSaved() {
+      savedFingerprint = currentSaveFingerprint();
+    }
+    function wireViewLink(el) {
+      if (!el || el.getAttribute("data-dirty-warn")) return;
+      el.setAttribute("data-dirty-warn", "1");
+      el.addEventListener("click", function (ev) {
+        if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey || ev.button !== 0) {
+          return;
+        }
+        if (!isDirty()) return;
+        ev.preventDefault();
+        var href = el.getAttribute("href");
+        WikiDialog.confirm("Leave without saving? Unsaved edits will be lost.", {
+          okLabel: "Leave",
+        }).then(function (ok) {
+          if (ok) window.location.href = href;
+        });
+      });
+    }
+    wireViewLink(document.getElementById("f-view"));
+
     // Toast UI drops the visible caret/selection when the Draft panel
     // takes focus. Remember a non-empty span *before* that blur (mouseup
     // in the editor, plus pointerdown on Draft/the panel) so Send still
@@ -1408,6 +1451,7 @@ window.WikiPages = window.WikiPages || {};
                 view.textContent = "View";
                 var saveBtn = document.getElementById("f-save");
                 saveBtn.parentNode.insertBefore(view, saveBtn.nextSibling);
+                wireViewLink(view);
               } else {
                 document.getElementById("f-view").href =
                   basePath() + "/d/" + encodeVaultPath(savedPath);
@@ -1432,6 +1476,7 @@ window.WikiPages = window.WikiPages || {};
               loadAttachments();
             }
             setStatus("Saved.", "ok");
+            markSaved();
           });
         })
         .catch(function (err) {

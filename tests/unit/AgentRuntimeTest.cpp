@@ -45,12 +45,14 @@ class ScriptedChatClient : public llm::ChatClient {
   std::size_t index = 0;
   std::string lastSystem;
   std::string lastUser;
+  std::string lastTool;
 
   llm::ChatCompletion complete(const std::vector<llm::ChatMessage>& messages,
                                const nlohmann::json&) override {
     for (const auto& msg : messages) {
       if (msg.role == "system") lastSystem = msg.content;
       if (msg.role == "user") lastUser = msg.content;
+      if (msg.role == "tool") lastTool = msg.content;
     }
     if (index >= replies.size()) {
       llm::ChatCompletion done;
@@ -496,4 +498,47 @@ TEST_CASE("AgentRuntime: a selection sends an excerpt, not the whole body",
   REQUIRE(chat.lastUser.find("[...]") != std::string::npos);
   REQUIRE(chat.lastUser.find(std::string(2000, 'a')) == std::string::npos);
   REQUIRE(chat.lastUser.find(std::string(2000, 'b')) == std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: list_types returns types in use with counts", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput note;
+  note.title = "A";
+  note.visibility = "private";
+  note.type = "note";
+  note.body = "one\n";
+  documents.create("notes/a.md", note);
+  vault::DocumentInput howto;
+  howto.title = "B";
+  howto.visibility = "private";
+  howto.type = "howto";
+  howto.body = "two\n";
+  documents.create("notes/b.md", howto);
+  vault::DocumentInput note2;
+  note2.title = "C";
+  note2.visibility = "private";
+  note2.type = "note";
+  note2.body = "three\n";
+  documents.create("notes/c.md", note2);
+
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("list_types", "{}"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  const std::string id = agent.start("what types exist", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(chat.lastTool.find("\"type\": \"note\"") != std::string::npos);
+  REQUIRE(chat.lastTool.find("\"count\": 2") != std::string::npos);
+  REQUIRE(chat.lastTool.find("\"type\": \"howto\"") != std::string::npos);
 }

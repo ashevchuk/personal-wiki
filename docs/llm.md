@@ -49,7 +49,7 @@ Read-only vault tools, then one write-shaped tool that does not write:
 |---|---|
 | `search_documents` | Same search as `/api/search`: FTS5, plus semantic ranking when embeddings are enabled (admin scope: public + private) |
 | `get_document` | One document body, capped per turn |
-| `list_tags` / `list_documents` | Browse |
+| `list_tags` / `list_types` / `list_documents` | Browse |
 | `propose_draft` | Replaces the whole editor (new notes / full rewrites) |
 | `append_to_draft` | Appends markdown at the end of the current body |
 | `insert_in_draft` | Inserts markdown at the editor caret (no selection) |

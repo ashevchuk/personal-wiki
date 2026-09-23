@@ -332,6 +332,13 @@ nlohmann::json AgentRuntime::toolSchemas() {
   tools.push_back({
       {"type", "function"},
       {"function",
+       {{"name", "list_types"},
+        {"description", "Every document type in use, with document counts."},
+        {"parameters", {{"type", "object"}, {"properties", nlohmann::json::object()}}}}},
+  });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
        {{"name", "list_documents"},
         {"description", "Browse documents without a search query."},
         {"parameters",
@@ -714,6 +721,21 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
       std::lock_guard<std::mutex> lock(mu_);
       session.events.push_back(AgentEvent{
           "tool", nlohmann::json{{"name", name}, {"count", static_cast<int>(tags.size())}}});
+    }
+    audit(name, "", true, "");
+    return arr.dump(2);
+  }
+
+  if (name == "list_types") {
+    const auto types = nav_.typeCounts(true);
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& t : types) {
+      arr.push_back(nlohmann::json{{"type", t.tag}, {"count", t.count}});
+    }
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      session.events.push_back(AgentEvent{
+          "tool", nlohmann::json{{"name", name}, {"count", static_cast<int>(types.size())}}});
     }
     audit(name, "", true, "");
     return arr.dump(2);
