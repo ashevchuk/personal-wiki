@@ -10,13 +10,13 @@ namespace wikicore::controllers {
 // as a plain chat-completions client (tools in the JSON body). MCP is
 // not involved — Claude/OpenAI never see stdio wiki-mcp or POST /mcp.
 //
-//   POST   /api/agent/sessions              {instruction, path, title,
-//                                           tags, type, body, selection,
-//                                           caretBefore, isNew}
+//   GET    /api/agent/sessions              {sessions:[{id,title,createdAt,updatedAt}]}
+//   POST   /api/agent/sessions              {instruction, kind, view?, ...}
 //   GET    /api/agent/sessions/{id}
 //   GET    /api/agent/sessions/{id}/stream  text/event-stream (admin, no CSRF)
-//   POST   /api/agent/sessions/{id}/messages  same snapshot + instruction
+//   POST   /api/agent/sessions/{id}/messages
 //   POST   /api/agent/sessions/{id}/cancel
+//   POST   /api/agent/sessions/{id}/title   {title}
 //   DELETE /api/agent/sessions/{id}
 //
 // Mutating routes require admin+CSRF; GETs are admin-only, no CSRF. Hidden

@@ -36,9 +36,9 @@ const char* kSessionPragmas[] = {
 
 // Ordered list of migrations; index 0 is schema_version 1, etc. Add new
 // entries at the end only — never edit or reorder an already-shipped one.
-constexpr std::array<const char*, 5> kMigrations = {schema::kMigration1, schema::kMigration2,
+constexpr std::array<const char*, 6> kMigrations = {schema::kMigration1, schema::kMigration2,
                                                       schema::kMigration3, schema::kMigration4,
-                                                      schema::kMigration5};
+                                                      schema::kMigration5, schema::kMigration6};
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
 // Deliberately NOT `#include <sqlite-vec.h>` here — that header pulls in
@@ -129,6 +129,15 @@ struct SalvagedAudit {
   std::optional<std::string> detail;
 };
 
+struct SalvagedChat {
+  std::string id;
+  std::string title;
+  std::string createdAt;
+  std::string updatedAt;
+  std::string eventsJson;
+  std::string messagesJson;
+};
+
 struct Salvage {
   std::optional<SalvagedUser> user;
   std::vector<SalvagedSession> sessions;
@@ -136,6 +145,7 @@ struct Salvage {
   std::vector<std::string> cidrs;
   std::optional<int> vectorSearchEnabled;
   std::vector<SalvagedAudit> audits;
+  std::vector<SalvagedChat> chats;
 };
 
 // Every SELECT here is best-effort: a torn FTS/vec0 page must not prevent
@@ -215,6 +225,25 @@ Salvage salvageAuth(sqlite3* db) {
         a.success = sqlite3_column_int(stmt, 3);
         a.detail = textCol(stmt, 4);
         out.audits.push_back(std::move(a));
+      });
+
+  run("SELECT id, title, created_at, updated_at, events_json, messages_json FROM agent_chats",
+      [&](sqlite3_stmt* stmt) {
+        const auto id = textCol(stmt, 0);
+        const auto title = textCol(stmt, 1);
+        const auto created = textCol(stmt, 2);
+        const auto updated = textCol(stmt, 3);
+        const auto events = textCol(stmt, 4);
+        const auto messages = textCol(stmt, 5);
+        if (!id || !title || !created || !updated || !events || !messages) return;
+        SalvagedChat c;
+        c.id = *id;
+        c.title = *title;
+        c.createdAt = *created;
+        c.updatedAt = *updated;
+        c.eventsJson = *events;
+        c.messagesJson = *messages;
+        out.chats.push_back(std::move(c));
       });
 
   return out;
@@ -306,6 +335,19 @@ void restoreAuth(sqlite3* db, const Salvage& s) {
       sqlite3_bind_int(stmt, 4, a.success);
       bindTextOpt(stmt, 5, a.detail);
       if (!stepDone(stmt)) throw std::runtime_error("restore mcp_audit_log failed");
+    }
+    for (const auto& c : s.chats) {
+      sqlite3_stmt* stmt = mustPrepare(
+          db,
+          "INSERT INTO agent_chats(id, title, created_at, updated_at, events_json, messages_json) "
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6);");
+      bindText(stmt, 1, c.id);
+      bindText(stmt, 2, c.title);
+      bindText(stmt, 3, c.createdAt);
+      bindText(stmt, 4, c.updatedAt);
+      bindText(stmt, 5, c.eventsJson);
+      bindText(stmt, 6, c.messagesJson);
+      if (!stepDone(stmt)) throw std::runtime_error("restore agent_chats failed");
     }
     execOrThrow(db, "COMMIT;");
   } catch (...) {

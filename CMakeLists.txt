@@ -63,6 +63,7 @@ add_library(wikicore STATIC
   src/index/IndexBuilder.cpp
   src/index/FtsSearch.cpp
   src/index/McpAuditLog.cpp
+  src/index/AgentChatStore.cpp
   src/index/GraphQueries.cpp
   src/index/NavQueries.cpp
   src/index/QueryBlocks.cpp

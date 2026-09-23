@@ -5,6 +5,7 @@ add_executable(unit_tests
   unit/FrontMatterTest.cpp
   unit/AppConfigTest.cpp
   unit/AgentRuntimeTest.cpp
+  unit/AgentChatStoreTest.cpp
   unit/ChatStreamParserTest.cpp
   unit/PasswordHasherTest.cpp
   unit/RateLimiterTest.cpp

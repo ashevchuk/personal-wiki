@@ -147,3 +147,10 @@ order: asc
   not something query blocks are structurally incapable of; the same
   customHTMLRenderer + fetch approach mermaid preview uses would work here
   too, it just hasn't been built yet.
+
+## Draft / Chat
+
+The same DSL runs in-process from the Draft and Chat agents
+(`run_query_block` → `QueryBlocks::parseAndRun`, admin, public+private —
+the agent is never anonymous). `get_document` still returns the fence
+source, not the table. See `docs/llm.md`.

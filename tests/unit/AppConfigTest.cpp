@@ -190,6 +190,7 @@ TEST_CASE("AppConfig::load: llm.provider defaults to none when unset",
   REQUIRE(cfg.llmApiBase.empty());
   REQUIRE(cfg.llmModel.empty());
   REQUIRE(cfg.llmSystemPrompt.empty());
+  REQUIRE(cfg.llmChatSystemPrompt.empty());
 }
 
 TEST_CASE("AppConfig::load: llm cloud knobs are read as names, not env values",
@@ -205,6 +206,7 @@ TEST_CASE("AppConfig::load: llm cloud knobs are read as names, not env values",
   REQUIRE(cfg.llmApiBase == "https://api.anthropic.com/v1");
   REQUIRE(cfg.llmModel == "claude-sonnet-4-6");
   REQUIRE(cfg.llmSystemPrompt.empty());
+  REQUIRE(cfg.llmChatSystemPrompt.empty());
 }
 
 TEST_CASE("AppConfig::load: llm.system_prompt is optional and read verbatim",
@@ -223,4 +225,22 @@ TEST_CASE("AppConfig::load: llm.system_prompt is optional and read verbatim",
       "[llm]\nsystem_prompt = \"\"\"\nLine one\nLine two\n\"\"\"\n");
   REQUIRE(AppConfig::load(multiline.path().string()).llmSystemPrompt ==
           "Line one\nLine two\n");
+}
+
+TEST_CASE("AppConfig::load: llm.chat_system_prompt is optional and read verbatim",
+          "[AppConfig]") {
+  TempConfigFile missing("[llm]\nprovider = \"cloud\"\n");
+  REQUIRE(AppConfig::load(missing.path().string()).llmChatSystemPrompt.empty());
+
+  TempConfigFile empty("[llm]\nchat_system_prompt = \"\"\n");
+  REQUIRE(AppConfig::load(empty.path().string()).llmChatSystemPrompt.empty());
+
+  TempConfigFile set("[llm]\nchat_system_prompt = \"Answer from the vault.\"\n");
+  REQUIRE(AppConfig::load(set.path().string()).llmChatSystemPrompt ==
+          "Answer from the vault.");
+
+  TempConfigFile multiline(
+      "[llm]\nchat_system_prompt = \"\"\"\nChat one\nChat two\n\"\"\"\n");
+  REQUIRE(AppConfig::load(multiline.path().string()).llmChatSystemPrompt ==
+          "Chat one\nChat two\n");
 }

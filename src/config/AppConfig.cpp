@@ -107,6 +107,8 @@ AppConfig AppConfig::load(const std::string& path) {
     cfg.llmApiBase = (*llm)["api_base"].value_or(cfg.llmApiBase);
     cfg.llmModel = (*llm)["model"].value_or(cfg.llmModel);
     cfg.llmSystemPrompt = (*llm)["system_prompt"].value_or(cfg.llmSystemPrompt);
+    cfg.llmChatSystemPrompt =
+        (*llm)["chat_system_prompt"].value_or(cfg.llmChatSystemPrompt);
   }
   if (auto* log = root["log"].as_table()) {
     cfg.logLevel = (*log)["level"].value_or(cfg.logLevel);

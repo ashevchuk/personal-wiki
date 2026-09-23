@@ -205,4 +205,20 @@ CREATE TABLE embeddings_runtime_config (
 );
 )sql";
 
+// Migration 6: persisted Chat panel history (not Draft). Survives
+// wiki-server restarts the same way mcp_audit_log does — the in-RAM
+// AgentRuntime map is only the live/streaming copy. Salvaged across
+// ensureUsable() rebuilds; not vault source-of-truth, not FTS-indexed.
+inline constexpr const char* kMigration6 = R"sql(
+CREATE TABLE agent_chats (
+  id            TEXT PRIMARY KEY,
+  title         TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  events_json   TEXT NOT NULL,
+  messages_json TEXT NOT NULL
+);
+CREATE INDEX idx_agent_chats_updated ON agent_chats(updated_at DESC);
+)sql";
+
 }  // namespace wikicore::index::schema

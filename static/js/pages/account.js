@@ -82,6 +82,15 @@ window.WikiPages = window.WikiPages || {};
     );
   }
 
+  function renderChatAuditSection() {
+    return (
+      "<h2>Chat</h2>" +
+      "<p>Tool calls from the sidebar Chat panel.</p>" +
+      "<h3>Recent activity</h3>" +
+      auditListMarkup("chat-audit-list", "chat-audit-pager")
+    );
+  }
+
   var AUDIT_PAGE_SIZE = 8;
 
   function auditListMarkup(listId, pagerId) {
@@ -169,9 +178,12 @@ window.WikiPages = window.WikiPages || {};
       .then(function (data) {
         var entries = data.entries || [];
         var compose = [];
+        var chat = [];
         var mcp = [];
         entries.forEach(function (e) {
-          if ((e.toolName || "").indexOf("compose:") === 0) compose.push(e);
+          var name = e.toolName || "";
+          if (name.indexOf("compose:") === 0) compose.push(e);
+          else if (name.indexOf("chat:") === 0) chat.push(e);
           else mcp.push(e);
         });
         bindAuditLog(
@@ -186,6 +198,12 @@ window.WikiPages = window.WikiPages || {};
           compose,
           "Nothing recorded yet."
         );
+        bindAuditLog(
+          "chat-audit-list",
+          "chat-audit-pager",
+          chat,
+          "Nothing recorded yet."
+        );
       })
       .catch(function () {
         bindAuditLog(
@@ -197,6 +215,12 @@ window.WikiPages = window.WikiPages || {};
         bindAuditLog(
           "compose-audit-list",
           "compose-audit-pager",
+          [],
+          "Failed to load."
+        );
+        bindAuditLog(
+          "chat-audit-list",
+          "chat-audit-pager",
           [],
           "Failed to load."
         );
@@ -615,7 +639,8 @@ window.WikiPages = window.WikiPages || {};
       "</form>" +
       renderBackupSection() +
       renderRemoteMcpSection() +
-      renderDraftAuditSection();
+      renderDraftAuditSection() +
+      renderChatAuditSection();
 
     wireBackupSection();
     wireRemoteMcpSection();

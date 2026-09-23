@@ -51,8 +51,8 @@ class Database {
   // wiki-server startup: migrate, PRAGMA integrity_check, and if the
   // file is damaged (typical: SD card yanked mid-write) quarantine it
   // and open a fresh schema, restoring users / sessions / remote-MCP /
-  // embeddings_runtime_config / mcp_audit_log when those SELECTs still
-  // work. Documents/FTS/embeddings are rebuilt from the vault by the
+  // embeddings_runtime_config / mcp_audit_log / agent_chats when those
+  // SELECTs still work. Documents/FTS/embeddings are rebuilt from the vault by the
   // existing startup rescan. No-op on a healthy file. wiki-mcp does
   // NOT call this — clients spawn it often; the always-on wiki-server
   // is the process that actually survives a dirty shutdown.

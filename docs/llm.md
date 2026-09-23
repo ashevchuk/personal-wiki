@@ -1,4 +1,4 @@
-# Editor Draft agent
+# Draft and Chat agents
 
 The edit page can show a **Draft** button that talks to an OpenAI-compatible
 chat API. wiki-server is the HTTP *client*; the model never sees MCP (stdio
@@ -6,7 +6,8 @@ chat API. wiki-server is the HTTP *client*; the model never sees MCP (stdio
 the vault, and `propose_draft` only fills the editor. **Save** is still the
 only write to disk.
 
-Leave `[llm]` out, or `provider = "none"`, and the button is hidden.
+Leave `[llm]` out, or `provider = "none"`, and the Draft button and
+sidebar Chat icon are hidden.
 `/api/agent/*` 404s in that case — a guessed URL is not a working back door.
 
 ## Config
@@ -23,6 +24,7 @@ api_key_env = "ANTHROPIC_API_KEY"           # NAME of an env var, not the key
 api_base = "https://api.anthropic.com/v1"   # OpenAI itself: https://api.openai.com/v1
 model = "claude-sonnet-4-6"
 # system_prompt = """ ... """               # optional full replacement
+# chat_system_prompt = """ ... """          # optional; Chat panel only
 ```
 
 - `api_base` is an absolute `http(s)` URL. The client POSTs
@@ -32,9 +34,14 @@ model = "claude-sonnet-4-6"
   If a name *is* set, that variable must be present at startup or
   `wiki-server` refuses to start — same fail-loudly rule as
   `CloudEmbeddingProvider`.
-- `system_prompt` replaces the compiled default when it is a non-empty
-  string. Omit it, comment it out, or leave it blank to keep the built-in
-  prompt (`src/llm/AgentRuntime.cpp`). Restart after changing any of this.
+- `system_prompt` replaces the compiled Draft default when it is a
+  non-empty string. Omit it, comment it out, or leave it blank to keep
+  the built-in prompt (`src/llm/AgentRuntime.cpp`).
+- `chat_system_prompt` is the same shape for the sidebar Chat panel
+  (vault Q&A, no editor writes). Distinct from `system_prompt` — Draft
+  and Chat are different jobs. Empty keeps the compiled Chat default.
+
+Restart after changing any of this.
 
 `CloudChatClient` lives in `wiki-server` only (httplib + OpenSSL, same
 vendored header `CloudEmbeddingProvider` already uses). `AgentRuntime` is
@@ -43,17 +50,22 @@ client and no HTTP.
 
 ## What the model can do
 
-Read-only vault tools, then one write-shaped tool that does not write:
+Read-only vault tools (Draft and Chat), then Draft-only write-shaped tools
+that still do not write to disk:
 
-| Tool | Effect |
-|---|---|
-| `search_documents` | Same search as `/api/search`: FTS5, plus semantic ranking when embeddings are enabled (admin scope: public + private) |
-| `get_document` | One document body, capped per turn |
-| `list_tags` / `list_types` / `list_documents` | Browse |
-| `propose_draft` | Replaces the whole editor (new notes / full rewrites) |
-| `append_to_draft` | Appends markdown at the end of the current body |
-| `insert_in_draft` | Inserts markdown at the editor caret (no selection) |
-| `replace_in_draft` | Replaces one unique span (or the current editor selection) |
+| Tool | Where | Effect |
+|---|---|---|
+| `search_documents` | both | Same search as `/api/search`: FTS5, plus semantic ranking when embeddings are enabled (admin scope: public + private) |
+| `get_document` | both | One document's **source** markdown (front matter stripped). A query fence is DSL text, not the live table — use `run_query_block` for that |
+| `list_tags` / `list_types` / `list_documents` | both | Browse |
+| `run_query_block` | both | Execute a query-block body (`key: value` lines). Same `QueryBlocks::parseAndRun` as `GET /api/query` (admin, public+private). Typos are errors, not an empty list |
+| `list_document_history` | both | Past snapshots of one path, newest first (`document_snapshots`). The live file is not in the list |
+| `diff_document_history` | both | Line diff of one snapshot's body versus current (same as the History page). `snapshot_id` optional — defaults to the newest. Does not restore |
+| `get_current_view` | Chat | The wiki page open behind the panel (`page` / `path` / `title`). The server cannot see the browser URL; the client sends `view` on every Chat send |
+| `propose_draft` | Draft | Replaces the whole editor (new notes / full rewrites) |
+| `append_to_draft` | Draft | Appends markdown at the end of the current body |
+| `insert_in_draft` | Draft | Inserts markdown at the editor caret (no selection) |
+| `replace_in_draft` | Draft | Replaces one unique span (or the current editor selection) |
 
 `propose_draft` is the full-document tool. Follow-ups like "add a paragraph"
 or "fix the examples" should use `append_to_draft` / `insert_in_draft` /
@@ -120,14 +132,65 @@ separately from Remote MCP activity.
 Routes (admin + CSRF on mutating ones; 401/404 as appropriate):
 
 - `POST /api/agent/sessions`
+- `GET  /api/agent/sessions` (Chat history: `{sessions:[{id,title,createdAt,updatedAt}]}`)
 - `GET /api/agent/sessions/{id}`
 - `GET /api/agent/sessions/{id}/stream` (SSE; `?after=` skips already-seen events)
 - `POST /api/agent/sessions/{id}/messages`
 - `POST /api/agent/sessions/{id}/cancel`
+- `POST /api/agent/sessions/{id}/title` `{title}` (Chat only)
 - `DELETE /api/agent/sessions/{id}`
 
 `GET /api/session` includes `agentEnabled` (true only when the agent is
-configured *and* the caller is authenticated).
+configured *and* the caller is authenticated). That flag also reveals
+the sidebar Chat icon.
+
+## Sidebar Chat
+
+A floating panel on every shell page, opened from a sidebar icon that
+is shown only when `agentEnabled` is true (admin + `[llm]` configured).
+Same `CloudChatClient`, SSE, and Stop as Draft. Read-only vault tools
+only (`search_documents` / `get_document` / `get_current_view` /
+`list_tags` / `list_types` / `list_documents` / `run_query_block` /
+`list_document_history` / `diff_document_history`); `propose_draft` and the
+surgical edit tools are not offered, and `executeTool` rejects them if
+the model tries anyway.
+
+Each chat turn includes the wiki page currently open in the browser
+(`view: {page, path, title}` — document, folder, search, graph, editor,
+…). The compiled prompt tells the model that "this document" / "this
+folder" means that view: `get_current_view` repeats it, then
+`get_document` or `list_documents` with `folder`. The server cannot see
+the URL; the client sends `view` on every send. The log still shows only
+the human's question, not the view JSON.
+
+`POST /api/agent/sessions` with `{kind:"chat", instruction}` starts a
+chat session (`startChat`). Follow-ups go to the same
+`.../messages` route; the server picks `sendChat` from the session's
+kind. Audit rows use a `chat:` prefix (Account lists them separately
+from `compose:` and Remote MCP).
+
+This app full-page-reloads on every navigation, so the panel cannot
+keep a JS object alive. Chat history is SQLite `agent_chats` (not the
+vault, not FTS) — the same salvage path as `mcp_audit_log`, so an
+index rebuild does not wipe threads. The in-RAM map is only the
+live/streaming copy; GET hydrates a persisted chat on demand. The
+panel's left sidebar lists threads (New chat, rename, delete). New
+chat clears the local session id without DELETE; delete is explicit
+and runs `DELETE /api/agent/sessions/{id}`. `sessionStorage` keeps
+the current session id plus open/geometry, and the next page
+GET-restores the log and reconnects SSE with `?after=`. The list column
+is resizable; that width lives in `localStorage` (`wiki.chat.sidebarWidth`),
+same convenience as the site sidebar, so a hidden-panel restore cannot
+clamp it to the minimum. `pagehide`
+does **not** DELETE a chat session (Draft still does — it is tied to
+one edit page). Title defaults to the first instruction, truncated.
+
+Only one session may be `running` at a time (shared `ChatClient`).
+Draft and Chat sessions can both exist in RAM; sending while the other
+is working returns 409.
+
+Wiki-links in answers are rendered as clickable `[[path]]` anchors in
+the panel (text nodes + `<a>`, never raw innerHTML of the model text).
 
 ## Wiki-links in the editor
 

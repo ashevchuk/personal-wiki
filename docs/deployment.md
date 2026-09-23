@@ -541,7 +541,7 @@ location /wiki/ {
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
-    # Draft agent SSE (`GET /api/agent/sessions/{id}/stream`) sets
+    # Draft / Chat agent SSE (`GET /api/agent/sessions/{id}/stream`) sets
     # X-Accel-Buffering: no so this location does not have to turn
     # proxy_buffering off for every other response.
 }

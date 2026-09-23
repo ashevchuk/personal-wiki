@@ -1,6 +1,7 @@
 #include "llm/AgentRuntime.h"
 
 #include "index/FtsSearch.h"
+#include "util/Time.h"
 #include "util/Uuid.h"
 #include "vault/PathGuard.h"
 
@@ -8,9 +9,11 @@
 #include <atomic>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
+#include <vector>
 
 namespace wikicore::llm {
 
@@ -20,6 +23,10 @@ constexpr int kMaxSteps = 8;
 constexpr int kSearchLimit = 12;
 constexpr int kListLimit = 30;
 constexpr int kMaxGetDocument = 6;
+constexpr int kMaxQueryBlocks = 4;
+constexpr int kMaxHistoryDiffs = 4;
+constexpr std::size_t kMaxDiffChars = 20000;
+constexpr std::size_t kMaxDiffCells = 800000;
 
 const char* kSystemPrompt =
     "You draft markdown for a personal wiki. Existing notes in the vault "
@@ -48,11 +55,42 @@ const char* kSystemPrompt =
     "— ask one to three short questions in the user's language and stop. "
     "Do not call propose_draft, append_to_draft, insert_in_draft, or "
     "replace_in_draft until the human answers in this panel. Search and "
-    "get_document are fine first, so the questions can be specific. Do "
+    "get_document are fine first, so the questions can be specific. A "
+    "```query block on a page is a live table: run_query_block with its "
+    "body, not get_document alone. list_document_history and "
+    "diff_document_history show past versions of one note. Do "
     "not stall on a clear request: a non-empty selection plus \"fix "
     "this\", \"add a paragraph at the end\", \"insert a paragraph here\" "
     "with a known caret, or an explicit full rewrite is enough to act. "
     "Do not claim you saved anything.";
+
+const char* kChatSystemPrompt =
+    "You answer questions about a personal wiki. Existing notes are the "
+    "source of truth — search them before answering.\n"
+    "You cannot create, edit, or save files. If the human wants a new "
+    "note or a change, tell them to open the editor; do not claim you "
+    "wrote anything.\n"
+    "Each user turn includes a Currently open block for the wiki page "
+    "behind this chat panel. get_current_view returns the same facts. "
+    "If they say this document, this page, this folder, here, or the "
+    "current note, that IS the open view — call get_document on a "
+    "document/edit/history path, or list_documents with folder on a "
+    "folder path. Do not ask which document or folder when a path is "
+    "already available.\n"
+    "A ```query fenced block is a live table, not the answer. "
+    "get_document only shows the key: value DSL. Call run_query_block "
+    "with that block's body to get the matching documents. "
+    "list_document_history lists past snapshots; diff_document_history "
+    "shows a snapshot versus the current body. Do not restore or edit "
+    "from this panel.\n"
+    "Cite notes as literal wiki-links: [[vault/relative/path.md]] or "
+    "[[path.md|Label]]. Never backslash-escape [, ], |, -, or . inside "
+    "them — write [[notes/foo.md|Foo]], not \\[\\[notes/foo.md\\|Foo\\]\\].\n"
+    "If the question is still ambiguous after that view (two readings, "
+    "missing facts not on the open page), ask one to three short "
+    "questions in the user's language. Write in the same language as "
+    "the question. Do not invent documents, paths, or facts that are "
+    "not in tool results.";
 
 // Models often over-escape markdown punctuation in JSON tool arguments
 // (live: \[\[notes/foo.md\|Foo\]\] instead of [[notes/foo.md|Foo]]).
@@ -242,16 +280,262 @@ std::string resolveSystemPrompt(std::string prompt) {
   return prompt;
 }
 
+std::string resolveChatSystemPrompt(std::string prompt) {
+  prompt = trimCopy(std::move(prompt));
+  if (prompt.empty()) return kChatSystemPrompt;
+  return prompt;
+}
+
+nlohmann::json uiContextJson(const AgentUiContext& ui) {
+  nlohmann::json meta;
+  meta["page"] = ui.page.empty() ? "other" : ui.page;
+  if (!ui.path.empty()) meta["path"] = ui.path;
+  if (!ui.title.empty()) meta["title"] = ui.title;
+  return meta;
+}
+
+std::string chatUserText(const AgentUiContext& ui, const std::string& instruction) {
+  std::string out =
+      "Currently open in the wiki UI (not the chat panel):\n";
+  out += uiContextJson(ui).dump(2);
+  out += "\n\nQuestion:\n";
+  out += instruction;
+  return out;
+}
+
+std::string titleFromInstruction(std::string s) {
+  s = trimCopy(std::move(s));
+  std::string flat;
+  bool space = false;
+  for (unsigned char c : s) {
+    if (std::isspace(c)) {
+      if (!flat.empty()) space = true;
+      continue;
+    }
+    if (space) {
+      flat.push_back(' ');
+      space = false;
+    }
+    flat.push_back(static_cast<char>(c));
+  }
+  constexpr std::size_t kMax = 72;
+  if (flat.size() <= kMax) return flat;
+  while (flat.size() > kMax - 1 &&
+         (static_cast<unsigned char>(flat.back()) & 0xC0) == 0x80) {
+    flat.pop_back();
+  }
+  if (flat.size() > kMax - 1) flat.resize(kMax - 1);
+  while (!flat.empty() && (static_cast<unsigned char>(flat.back()) & 0xC0) == 0x80) {
+    flat.pop_back();
+  }
+  flat += "…";
+  return flat;
+}
+
+std::string stripQueryFence(std::string s) {
+  s = trimCopy(std::move(s));
+  if (s.size() >= 3 && s.compare(0, 3, "```") == 0) {
+    const auto nl = s.find('\n');
+    if (nl == std::string::npos) return {};
+    s = s.substr(nl + 1);
+    s = trimCopy(std::move(s));
+    if (s.size() >= 3 && s.compare(s.size() - 3, 3, "```") == 0) {
+      s.resize(s.size() - 3);
+      s = trimCopy(std::move(s));
+    }
+  }
+  return s;
+}
+
+std::vector<std::string> splitLines(const std::string& s) {
+  std::vector<std::string> lines;
+  std::string cur;
+  for (char c : s) {
+    if (c == '\n') {
+      lines.push_back(cur);
+      cur.clear();
+    } else if (c != '\r') {
+      cur.push_back(c);
+    }
+  }
+  lines.push_back(std::move(cur));
+  return lines;
+}
+
+std::string lineDiff(const std::string& oldText, const std::string& newText) {
+  const auto a = splitLines(oldText);
+  const auto b = splitLines(newText);
+  const std::size_t n = a.size();
+  const std::size_t m = b.size();
+  if (n > 0 && m > 0 && n > kMaxDiffCells / m) {
+    return "error: documents too large to diff here";
+  }
+  std::vector<std::vector<int>> dp(n + 1, std::vector<int>(m + 1, 0));
+  for (std::size_t i = n; i-- > 0;) {
+    for (std::size_t j = m; j-- > 0;) {
+      dp[i][j] = a[i] == b[j] ? dp[i + 1][j + 1] + 1 : std::max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  std::string out;
+  int changes = 0;
+  std::size_t i = 0;
+  std::size_t j = 0;
+  while (i < n && j < m) {
+    if (a[i] == b[j]) {
+      out += "  ";
+      out += a[i];
+      out += '\n';
+      ++i;
+      ++j;
+    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
+      out += "- ";
+      out += a[i];
+      out += '\n';
+      ++i;
+      ++changes;
+    } else {
+      out += "+ ";
+      out += b[j];
+      out += '\n';
+      ++j;
+      ++changes;
+    }
+    if (out.size() > kMaxDiffChars) {
+      out += "... (diff truncated)\n";
+      return out;
+    }
+  }
+  while (i < n) {
+    out += "- ";
+    out += a[i];
+    out += '\n';
+    ++i;
+    ++changes;
+    if (out.size() > kMaxDiffChars) {
+      out += "... (diff truncated)\n";
+      return out;
+    }
+  }
+  while (j < m) {
+    out += "+ ";
+    out += b[j];
+    out += '\n';
+    ++j;
+    ++changes;
+    if (out.size() > kMaxDiffChars) {
+      out += "... (diff truncated)\n";
+      return out;
+    }
+  }
+  if (changes == 0) return "(no differences)\n";
+  return out;
+}
+
+int64_t snapshotIdArg(const nlohmann::json& args) {
+  if (!args.contains("snapshot_id")) return 0;
+  const auto& v = args["snapshot_id"];
+  if (v.is_number_integer()) {
+    const auto n = v.get<int64_t>();
+    return n > 0 ? n : 0;
+  }
+  if (v.is_string()) {
+    const std::string raw = v.get<std::string>();
+    if (raw.empty()) return 0;
+    try {
+      std::size_t consumed = 0;
+      const long long n = std::stoll(raw, &consumed);
+      if (consumed != raw.size() || n <= 0) return 0;
+      return static_cast<int64_t>(n);
+    } catch (const std::exception&) {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+nlohmann::json eventsToJson(const std::vector<AgentEvent>& events) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto& ev : events) {
+    nlohmann::json data = ev.data;
+    data.erase("streaming");
+    arr.push_back(nlohmann::json{{"type", ev.type}, {"data", std::move(data)}});
+  }
+  return arr;
+}
+
+nlohmann::json messagesToJson(const std::vector<ChatMessage>& messages) {
+  nlohmann::json arr = nlohmann::json::array();
+  for (const auto& msg : messages) {
+    nlohmann::json row{{"role", msg.role}, {"content", msg.content}};
+    if (!msg.toolCallId.empty()) row["toolCallId"] = msg.toolCallId;
+    if (!msg.toolCalls.empty()) {
+      nlohmann::json calls = nlohmann::json::array();
+      for (const auto& c : msg.toolCalls) {
+        calls.push_back(
+            nlohmann::json{{"id", c.id}, {"name", c.name}, {"arguments", c.arguments}});
+      }
+      row["toolCalls"] = std::move(calls);
+    }
+    arr.push_back(std::move(row));
+  }
+  return arr;
+}
+
+std::vector<AgentEvent> eventsFromJson(const std::string& dumped) {
+  std::vector<AgentEvent> out;
+  if (dumped.empty()) return out;
+  nlohmann::json arr = nlohmann::json::parse(dumped);
+  if (!arr.is_array()) return out;
+  for (const auto& row : arr) {
+    AgentEvent ev;
+    ev.type = row.value("type", std::string());
+    if (row.contains("data") && row["data"].is_object()) ev.data = row["data"];
+    else ev.data = nlohmann::json::object();
+    out.push_back(std::move(ev));
+  }
+  return out;
+}
+
+std::vector<ChatMessage> messagesFromJson(const std::string& dumped) {
+  std::vector<ChatMessage> out;
+  if (dumped.empty()) return out;
+  nlohmann::json arr = nlohmann::json::parse(dumped);
+  if (!arr.is_array()) return out;
+  for (const auto& row : arr) {
+    ChatMessage msg;
+    msg.role = row.value("role", std::string());
+    msg.content = row.value("content", std::string());
+    msg.toolCallId = row.value("toolCallId", std::string());
+    if (row.contains("toolCalls") && row["toolCalls"].is_array()) {
+      for (const auto& c : row["toolCalls"]) {
+        ToolCall call;
+        call.id = c.value("id", std::string());
+        call.name = c.value("name", std::string());
+        call.arguments = c.value("arguments", std::string());
+        msg.toolCalls.push_back(std::move(call));
+      }
+    }
+    out.push_back(std::move(msg));
+  }
+  return out;
+}
+
 }  // namespace
 
 struct AgentRuntime::Session {
   std::string id;
+  std::string kind = "draft";
   std::string status = "running";
   std::vector<AgentEvent> events;
   std::optional<AgentDraft> draft;
   std::vector<ChatMessage> messages;
   AgentDocumentSnapshot snapshot;
+  AgentUiContext uiContext;
+  std::string title;
+  std::string createdAt;
   int getDocumentCount = 0;
+  int queryBlockCount = 0;
+  int historyDiffCount = 0;
   std::uint64_t gen = 0;
   std::atomic<bool> cancelled{false};
   std::thread worker;
@@ -260,14 +544,20 @@ struct AgentRuntime::Session {
 AgentRuntime::AgentRuntime(index::FtsSearch& search, vault::DocumentService& documents,
                            index::NavQueries& nav, index::IndexUpdater& indexUpdater,
                            index::McpAuditLog* auditLog, ChatClient* chat,
-                           std::string systemPrompt)
+                           std::string systemPrompt, std::string chatSystemPrompt,
+                           index::AgentChatStore* chats, index::QueryBlocks* queryBlocks,
+                           index::SnapshotStore* snapshots)
     : search_(search),
       documents_(documents),
       nav_(nav),
       indexUpdater_(indexUpdater),
       auditLog_(auditLog),
       chat_(chat),
-      systemPrompt_(resolveSystemPrompt(std::move(systemPrompt))) {}
+      chatStore_(chats),
+      queryBlocks_(queryBlocks),
+      snapshots_(snapshots),
+      systemPrompt_(resolveSystemPrompt(std::move(systemPrompt))),
+      chatSystemPrompt_(resolveChatSystemPrompt(std::move(chatSystemPrompt))) {}
 
 AgentRuntime::~AgentRuntime() {
   std::vector<std::shared_ptr<Session>> toJoin;
@@ -286,7 +576,7 @@ AgentRuntime::~AgentRuntime() {
   }
 }
 
-nlohmann::json AgentRuntime::toolSchemas() {
+nlohmann::json AgentRuntime::toolSchemas(const std::string& kind) {
   auto strProp = [](const std::string& desc) {
     return nlohmann::json{{"type", "string"}, {"description", desc}};
   };
@@ -304,7 +594,7 @@ nlohmann::json AgentRuntime::toolSchemas() {
          "Search the wiki (FTS5 plus semantic ranking when embeddings "
          "are enabled — the same engine as the site search). Returns "
          "matching paths, titles, tags, and a short snippet. Call this "
-         "before writing."},
+         "before answering or writing."},
         {"parameters",
          {{"type", "object"},
           {"properties",
@@ -351,6 +641,74 @@ nlohmann::json AgentRuntime::toolSchemas() {
             {"type", strProp("Filter by document type")},
             {"folder", strProp("Path prefix, e.g. notes/")}}}}}}},
   });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
+       {{"name", "run_query_block"},
+        {"description",
+         "Execute a wiki ```query fenced block (the live table the "
+         "human sees on a page). Pass the block BODY only — the "
+         "key: value lines (type, tag, folder, search, sort, order, "
+         "limit, orphans), not the surrounding ``` fences. Same "
+         "whitelisted DSL as GET /api/query; never raw SQL. Use this "
+         "when get_document shows a query block and you need the "
+         "matching documents, not the DSL itself."},
+        {"parameters",
+         {{"type", "object"},
+          {"properties",
+           {{"query", strProp("Query-block body, one key: value per line")}}},
+          {"required", nlohmann::json::array({"query"})}}}}},
+  });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
+       {{"name", "list_document_history"},
+        {"description",
+         "Past snapshots of one document, newest first. Each row is "
+         "id + snapshotAt. The live file is not in this list. Then "
+         "diff_document_history with a snapshot id to see what "
+         "changed versus current."},
+        {"parameters",
+         {{"type", "object"},
+          {"properties", {{"path", strProp("Vault-relative document path")}}},
+          {"required", nlohmann::json::array({"path"})}}}}},
+  });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
+       {{"name", "diff_document_history"},
+        {"description",
+         "Line diff of a past snapshot's body versus the current "
+         "document (same as the History page). snapshot_id from "
+         "list_document_history; omit it to diff the newest snapshot. "
+         "Does not restore or write."},
+        {"parameters",
+         {{"type", "object"},
+          {"properties",
+           {{"path", strProp("Vault-relative document path")},
+            {"snapshot_id",
+             {{"type", "integer"},
+              {"description",
+               "Snapshot id from list_document_history; omit for the newest"}}}}},
+          {"required", nlohmann::json::array({"path"})}}}}},
+  });
+  if (kind == "chat") {
+    tools.push_back({
+        {"type", "function"},
+        {"function",
+         {{"name", "get_current_view"},
+          {"description",
+           "The wiki page the human is looking at right now (document, "
+           "folder, search, graph, editor, …), with vault path when there "
+           "is one. Call this when they say 'this document', 'this "
+           "folder', 'here', or 'the current page', then get_document or "
+           "list_documents with that path. Do not ask which page if this "
+           "returns a path."},
+          {"parameters",
+           {{"type", "object"}, {"properties", nlohmann::json::object()}}}}},
+    });
+    return tools;
+  }
   tools.push_back({
       {"type", "function"},
       {"function",
@@ -425,6 +783,7 @@ std::string AgentRuntime::start(const std::string& instruction,
 
   auto session = std::make_shared<Session>();
   session->id = util::newUuidV4();
+  session->kind = "draft";
   session->snapshot = std::move(snapshot);
   session->messages.push_back(ChatMessage{"system", systemPrompt_, "", {}});
   const std::string userText = snapshotUserPrefix(session->snapshot) + "\n\nInstruction:\n" +
@@ -461,6 +820,15 @@ void AgentRuntime::send(const std::string& sessionId, const std::string& instruc
     if (session->status == "running") {
       throw std::runtime_error("session is still running");
     }
+    if (session->kind != "draft") {
+      throw std::runtime_error("not a draft session");
+    }
+    for (const auto& [id, existing] : sessions_) {
+      (void)id;
+      if (existing.get() != session.get() && existing->status == "running") {
+        throw std::runtime_error("an agent session is already running");
+      }
+    }
   }
 
   if (session->worker.joinable()) session->worker.join();
@@ -469,9 +837,85 @@ void AgentRuntime::send(const std::string& sessionId, const std::string& instruc
   session->status = "running";
   session->cancelled.store(false);
   session->getDocumentCount = 0;
+  session->queryBlockCount = 0;
+  session->historyDiffCount = 0;
   const std::string userText = snapshotUserPrefix(session->snapshot) + "\n\nInstruction:\n" +
                                instruction;
   session->messages.push_back(ChatMessage{"user", userText, "", {}});
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    appendEventLocked(*session, AgentEvent{"user", nlohmann::json{{"text", instruction}}});
+  }
+  session->worker = std::thread([this, id = session->id]() { runLoop(id); });
+}
+
+std::string AgentRuntime::startChat(const std::string& instruction, AgentUiContext ui) {
+  if (!chat_) throw std::runtime_error("agent not configured");
+  if (instruction.empty()) throw std::runtime_error("instruction is required");
+
+  auto session = std::make_shared<Session>();
+  session->id = util::newUuidV4();
+  session->kind = "chat";
+  session->title = titleFromInstruction(instruction);
+  session->createdAt = util::nowIso8601();
+  session->uiContext = std::move(ui);
+  session->messages.push_back(ChatMessage{"system", chatSystemPrompt_, "", {}});
+  session->messages.push_back(
+      ChatMessage{"user", chatUserText(session->uiContext, instruction), "", {}});
+  session->events.push_back(AgentEvent{"user", nlohmann::json{{"text", instruction}}});
+
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    for (const auto& [id, existing] : sessions_) {
+      (void)id;
+      if (existing->status == "running") {
+        throw std::runtime_error("an agent session is already running");
+      }
+    }
+    sessions_[session->id] = session;
+  }
+
+  persistChat(*session);
+  session->worker = std::thread([this, id = session->id]() { runLoop(id); });
+  return session->id;
+}
+
+void AgentRuntime::sendChat(const std::string& sessionId, const std::string& instruction,
+                            AgentUiContext ui) {
+  if (!chat_) throw std::runtime_error("agent not configured");
+  if (instruction.empty()) throw std::runtime_error("instruction is required");
+  loadChat(sessionId);
+
+  std::shared_ptr<Session> session;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto it = sessions_.find(sessionId);
+    if (it == sessions_.end()) throw std::runtime_error("session not found");
+    session = it->second;
+    if (session->status == "running") {
+      throw std::runtime_error("session is still running");
+    }
+    if (session->kind != "chat") {
+      throw std::runtime_error("not a chat session");
+    }
+    for (const auto& [id, existing] : sessions_) {
+      (void)id;
+      if (existing.get() != session.get() && existing->status == "running") {
+        throw std::runtime_error("an agent session is already running");
+      }
+    }
+  }
+
+  if (session->worker.joinable()) session->worker.join();
+
+  session->status = "running";
+  session->cancelled.store(false);
+  session->getDocumentCount = 0;
+  session->queryBlockCount = 0;
+  session->historyDiffCount = 0;
+  session->uiContext = std::move(ui);
+  session->messages.push_back(
+      ChatMessage{"user", chatUserText(session->uiContext, instruction), "", {}});
   {
     std::lock_guard<std::mutex> lock(mu_);
     appendEventLocked(*session, AgentEvent{"user", nlohmann::json{{"text", instruction}}});
@@ -485,6 +929,8 @@ std::optional<AgentSessionView> AgentRuntime::view(const std::string& sessionId)
   if (it == sessions_.end()) return std::nullopt;
   AgentSessionView out;
   out.id = it->second->id;
+  out.kind = it->second->kind;
+  out.title = it->second->title;
   out.status = it->second->status;
   out.events = it->second->events;
   out.draft = it->second->draft;
@@ -559,15 +1005,80 @@ void AgentRuntime::drop(const std::string& sessionId) {
   {
     std::lock_guard<std::mutex> lock(mu_);
     auto it = sessions_.find(sessionId);
-    if (it == sessions_.end()) return;
-    session = it->second;
-    session->cancelled.store(true);
-    session->gen++;
-    cv_.notify_all();
-    sessions_.erase(it);
+    if (it != sessions_.end()) {
+      session = it->second;
+      session->cancelled.store(true);
+      session->gen++;
+      cv_.notify_all();
+      sessions_.erase(it);
+    }
   }
-  if (chat_) chat_->cancel();
-  if (session && session->worker.joinable()) session->worker.join();
+  if (session) {
+    if (chat_) chat_->cancel();
+    if (session->worker.joinable()) session->worker.join();
+  }
+  if (chatStore_) chatStore_->remove(sessionId);
+}
+
+void AgentRuntime::persistChat(const Session& session) {
+  if (!chatStore_ || session.kind != "chat") return;
+  index::AgentChatRecord row;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    row.id = session.id;
+    row.title = session.title.empty() ? "Chat" : session.title;
+    row.createdAt = session.createdAt.empty() ? util::nowIso8601() : session.createdAt;
+    row.updatedAt = util::nowIso8601();
+    row.eventsJson = eventsToJson(session.events).dump();
+    row.messagesJson = messagesToJson(session.messages).dump();
+  }
+  chatStore_->upsert(row);
+}
+
+std::shared_ptr<AgentRuntime::Session> AgentRuntime::sessionFromRecord(
+    const index::AgentChatRecord& row) const {
+  auto session = std::make_shared<Session>();
+  session->id = row.id;
+  session->kind = "chat";
+  session->title = row.title;
+  session->createdAt = row.createdAt;
+  session->status = "done";
+  session->events = eventsFromJson(row.eventsJson);
+  session->messages = messagesFromJson(row.messagesJson);
+  if (!session->messages.empty() && session->messages.front().role == "system") {
+    session->messages.front().content = chatSystemPrompt_;
+  }
+  return session;
+}
+
+bool AgentRuntime::loadChat(const std::string& sessionId) {
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (sessions_.count(sessionId)) return true;
+  }
+  if (!chatStore_) return false;
+  auto rec = chatStore_->get(sessionId);
+  if (!rec) return false;
+  auto session = sessionFromRecord(*rec);
+  std::lock_guard<std::mutex> lock(mu_);
+  if (sessions_.count(sessionId)) return true;
+  sessions_[sessionId] = std::move(session);
+  return true;
+}
+
+std::vector<index::AgentChatSummary> AgentRuntime::listChats() const {
+  if (!chatStore_) return {};
+  return chatStore_->list();
+}
+
+void AgentRuntime::renameChat(const std::string& sessionId, const std::string& title) {
+  const std::string trimmed = trimCopy(title);
+  if (trimmed.empty()) throw std::runtime_error("title is required");
+  if (chatStore_) chatStore_->rename(sessionId, trimmed);
+  std::lock_guard<std::mutex> lock(mu_);
+  auto it = sessions_.find(sessionId);
+  if (it != sessions_.end()) it->second->title = trimmed;
+  else if (!chatStore_) throw std::runtime_error("session not found");
 }
 
 void AgentRuntime::runLoop(const std::string& sessionId) {
@@ -578,6 +1089,18 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
     if (it == sessions_.end()) return;
     session = it->second;
   }
+
+  struct PersistOnExit {
+    AgentRuntime* runtime;
+    Session* session;
+    ~PersistOnExit() {
+      try {
+        runtime->persistChat(*session);
+      } catch (...) {
+      }
+    }
+  };
+  PersistOnExit persistGuard{this, session.get()};
 
   auto fail = [&](const std::string& message) {
     std::lock_guard<std::mutex> lock(mu_);
@@ -594,7 +1117,7 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
   };
 
   try {
-    const nlohmann::json tools = toolSchemas();
+    const nlohmann::json tools = toolSchemas(session->kind);
     bool finished = false;
     for (int step = 0; step < kMaxSteps && !finished; ++step) {
       if (session->cancelled.load()) {
@@ -702,8 +1225,31 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
                                       const nlohmann::json& args) {
   auto audit = [&](const std::string& tool, const std::string& path, bool ok,
                    const std::string& detail) {
-    if (auditLog_) auditLog_->record("compose:" + tool, path, ok, detail);
+    if (!auditLog_) return;
+    const char* prefix = session.kind == "chat" ? "chat:" : "compose:";
+    auditLog_->record(std::string(prefix) + tool, path, ok, detail);
   };
+
+  if (session.kind == "chat" &&
+      (name == "propose_draft" || name == "append_to_draft" ||
+       name == "insert_in_draft" || name == "replace_in_draft")) {
+    throw std::runtime_error("write tools are not available in chat");
+  }
+
+  if (name == "get_current_view") {
+    if (session.kind != "chat") {
+      throw std::runtime_error("get_current_view is only available in chat");
+    }
+    const nlohmann::json out = uiContextJson(session.uiContext);
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      appendEventLocked(session, AgentEvent{
+          "tool", nlohmann::json{{"name", name},
+                                 {"detail", session.uiContext.path}}});
+    }
+    audit(name, session.uiContext.path, true, session.uiContext.page);
+    return out.dump(2);
+  }
 
   if (name == "search_documents") {
     if (!args.contains("query") || !args["query"].is_string() ||
@@ -838,6 +1384,145 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     }
     audit(name, q.folderPrefix.value_or(""), true, "");
     return arr.dump(2);
+  }
+
+  if (name == "run_query_block") {
+    if (!queryBlocks_) throw std::runtime_error("query blocks not available");
+    if (session.queryBlockCount >= kMaxQueryBlocks) {
+      throw std::runtime_error("run_query_block limit reached for this turn");
+    }
+    if (!args.contains("query") || !args["query"].is_string()) {
+      throw std::runtime_error("run_query_block requires query");
+    }
+    const std::string raw = stripQueryFence(args["query"].get<std::string>());
+    const auto result = queryBlocks_->parseAndRun(raw, true);
+    session.queryBlockCount++;
+    if (!result.ok) {
+      audit(name, "", false, result.error);
+      throw std::runtime_error(result.error);
+    }
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& row : result.rows) {
+      arr.push_back(nlohmann::json{{"path", row.path},
+                                   {"title", row.title},
+                                   {"visibility", row.visibility},
+                                   {"updatedAt", row.updatedAt},
+                                   {"tags", row.tagsFlat}});
+    }
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      appendEventLocked(session, AgentEvent{
+          "tool", nlohmann::json{{"name", name},
+                                 {"count", static_cast<int>(result.rows.size())}}});
+    }
+    audit(name, "", true, raw.substr(0, 80));
+    return arr.dump(2);
+  }
+
+  if (name == "list_document_history") {
+    if (!snapshots_) throw std::runtime_error("document history not available");
+    if (!args.contains("path") || !args["path"].is_string() ||
+        args["path"].get<std::string>().empty()) {
+      throw std::runtime_error("list_document_history requires path");
+    }
+    const std::string path = unescapeModelMarkdown(args["path"].get<std::string>());
+    try {
+      (void)documents_.get(path);
+    } catch (const vault::DocumentNotFoundError&) {
+      audit(name, path, false, "not found");
+      throw std::runtime_error("document not found: " + path);
+    } catch (const vault::PathTraversalError&) {
+      audit(name, path, false, "invalid path");
+      throw std::runtime_error("invalid path");
+    }
+    const auto rowId = indexUpdater_.rowIdForPath(path);
+    if (!rowId) {
+      audit(name, path, false, "not indexed");
+      throw std::runtime_error("document not indexed");
+    }
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& s : snapshots_->list(*rowId)) {
+      arr.push_back(nlohmann::json{{"id", s.id}, {"snapshotAt", s.snapshotAt}});
+    }
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      appendEventLocked(session, AgentEvent{
+          "tool", nlohmann::json{{"name", name},
+                                 {"detail", path},
+                                 {"count", static_cast<int>(arr.size())}}});
+    }
+    audit(name, path, true, "");
+    nlohmann::json out;
+    out["path"] = path;
+    out["snapshots"] = std::move(arr);
+    out["note"] = "Live content is not listed. Diff a snapshot id against current "
+                  "with diff_document_history.";
+    return out.dump(2);
+  }
+
+  if (name == "diff_document_history") {
+    if (!snapshots_) throw std::runtime_error("document history not available");
+    if (session.historyDiffCount >= kMaxHistoryDiffs) {
+      throw std::runtime_error("diff_document_history limit reached for this turn");
+    }
+    if (!args.contains("path") || !args["path"].is_string() ||
+        args["path"].get<std::string>().empty()) {
+      throw std::runtime_error("diff_document_history requires path");
+    }
+    const std::string path = unescapeModelMarkdown(args["path"].get<std::string>());
+    vault::DocumentRecord live;
+    try {
+      live = documents_.get(path);
+    } catch (const vault::DocumentNotFoundError&) {
+      audit(name, path, false, "not found");
+      throw std::runtime_error("document not found: " + path);
+    } catch (const vault::PathTraversalError&) {
+      audit(name, path, false, "invalid path");
+      throw std::runtime_error("invalid path");
+    }
+    const auto rowId = indexUpdater_.rowIdForPath(path);
+    if (!rowId) {
+      audit(name, path, false, "not indexed");
+      throw std::runtime_error("document not indexed");
+    }
+    const auto listed = snapshots_->list(*rowId);
+    if (listed.empty()) {
+      audit(name, path, true, "no snapshots");
+      return "No past versions yet — history starts recording from the next edit.";
+    }
+    int64_t snapId = snapshotIdArg(args);
+    if (snapId == 0) snapId = listed.front().id;
+    const auto content = snapshots_->getContent(*rowId, snapId);
+    if (!content) {
+      audit(name, path, false, "no such snapshot");
+      throw std::runtime_error("no such snapshot for this document");
+    }
+    const auto parsed = vault::parseFrontMatter(*content);
+    session.historyDiffCount++;
+    std::string at;
+    for (const auto& s : listed) {
+      if (s.id == snapId) {
+        at = s.snapshotAt;
+        break;
+      }
+    }
+    std::string out = "--- snapshot " + std::to_string(snapId);
+    if (!at.empty()) {
+      out += " (";
+      out += at;
+      out += ")";
+    }
+    out += "\n+++ current\n";
+    out += lineDiff(parsed.body, live.body);
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      appendEventLocked(session, AgentEvent{
+          "tool", nlohmann::json{{"name", name},
+                                 {"detail", path},
+                                 {"snapshotId", snapId}}});
+    }
+    audit(name, path, true, std::to_string(snapId));
+    return out;
   }
 
   if (name == "propose_draft") {

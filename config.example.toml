@@ -177,11 +177,12 @@ write_access = false
 # semantic_top_k = 5
 
 [llm]
-# Editor Draft panel — wiki-server calls an OpenAI-compatible
+# Editor Draft panel and sidebar Chat — wiki-server calls an OpenAI-compatible
 # POST {api_base}/chat/completions as an HTTP *client*. The model never
 # sees MCP (stdio wiki-mcp or POST /mcp); tools in that request are
 # executed here against the vault, and propose_draft only fills the
-# editor. Leave this section out, or provider = "none", for no button.
+# editor. Leave this section out, or provider = "none", for no Draft
+# button and no sidebar Chat icon.
 #
 # provider = "none"   # "none" | "cloud"
 #
@@ -201,6 +202,12 @@ write_access = false
 # multiline is the usual shape for a long prompt:
 # system_prompt = """
 # You draft markdown for a personal wiki.
+# """
+#
+# Same shape for the sidebar Chat panel (vault Q&A, no editor writes).
+# Distinct from system_prompt — Draft and Chat are different jobs.
+# chat_system_prompt = """
+# You answer questions about a personal wiki.
 # """
 
 [log]

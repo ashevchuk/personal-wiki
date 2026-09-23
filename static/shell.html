@@ -250,6 +250,15 @@
         <path d="M7.8 7.3 10.6 16M16.2 7.3 13.4 16M8.2 6h7.6"/>
       </svg>
     </a>
+    <!-- Vault Chat: hidden until GET /api/session says agentEnabled
+         (llm configured AND this caller is the admin). Opens a floating
+         panel that survives wiki navigation via sessionStorage + the
+         in-RAM agent session; not a separate /chat page. -->
+    <button type="button" id="sidebar-chat-btn" hidden aria-label="Chat" title="Chat">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M21 15a2 2 0 0 1-2 2H8l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/>
+      </svg>
+    </button>
     <!-- Same icon-only treatment -- was "+ New" as literal text, the one
          remaining non-icon control in this row. -->
     <button type="button" id="sidebar-new-doc" hidden aria-label="New document" title="New document">
@@ -383,6 +392,7 @@
 <script src="js/youtube-embed-preview.js"></script>
 <script src="js/mermaid-editor-preview.js"></script>
 <script src="js/agent.js"></script>
+<script src="js/chat.js"></script>
 <script src="js/pages/login.js"></script>
 <script src="js/pages/search.js"></script>
 <script src="js/pages/view.js"></script>

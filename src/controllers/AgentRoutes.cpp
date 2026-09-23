@@ -44,6 +44,24 @@ Json::Value nlohmannToJsonCpp(const nlohmann::json& j) {
   return v;
 }
 
+AgentUiContext uiContextFromJson(const Json::Value& json) {
+  AgentUiContext ctx;
+  const Json::Value* view = &json;
+  if (json.isMember("view") && json["view"].isObject()) {
+    view = &json["view"];
+  }
+  if (view->isMember("page") && (*view)["page"].isString()) {
+    ctx.page = (*view)["page"].asString();
+  }
+  if (view->isMember("path") && (*view)["path"].isString()) {
+    ctx.path = (*view)["path"].asString();
+  }
+  if (view->isMember("title") && (*view)["title"].isString()) {
+    ctx.title = (*view)["title"].asString();
+  }
+  return ctx;
+}
+
 AgentDocumentSnapshot snapshotFromJson(const Json::Value& json) {
   AgentDocumentSnapshot snap;
   if (json.isMember("path") && json["path"].isString()) snap.path = json["path"].asString();
@@ -68,6 +86,8 @@ AgentDocumentSnapshot snapshotFromJson(const Json::Value& json) {
 Json::Value sessionToJson(const AgentSessionView& view) {
   Json::Value body;
   body["id"] = view.id;
+  body["kind"] = view.kind.empty() ? "draft" : view.kind;
+  body["title"] = view.title;
   body["status"] = view.status;
   Json::Value events(Json::arrayValue);
   for (const auto& ev : view.events) {
@@ -157,8 +177,20 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
           return;
         }
         const std::string instruction = (*json)["instruction"].asString();
+        std::string kind = "draft";
+        if (json->isMember("kind") && (*json)["kind"].isString()) {
+          kind = (*json)["kind"].asString();
+        }
         try {
-          const std::string id = agent.start(instruction, snapshotFromJson(*json));
+          std::string id;
+          if (kind == "chat") {
+            id = agent.startChat(instruction, uiContextFromJson(*json));
+          } else if (kind == "draft") {
+            id = agent.start(instruction, snapshotFromJson(*json));
+          } else {
+            callback(jsonError(k400BadRequest, "kind must be draft or chat"));
+            return;
+          }
           const auto view = agent.view(id);
           callback(HttpResponse::newHttpJsonResponse(sessionToJson(*view)));
         } catch (const std::exception& e) {
@@ -171,6 +203,33 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
         }
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/agent/sessions",
+      [&agent](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        if (!agent.enabled()) {
+          callback(jsonError(k404NotFound, "agent not configured"));
+          return;
+        }
+        Json::Value body;
+        Json::Value sessions(Json::arrayValue);
+        for (const auto& row : agent.listChats()) {
+          Json::Value item;
+          item["id"] = row.id;
+          item["title"] = row.title;
+          item["createdAt"] = row.createdAt;
+          item["updatedAt"] = row.updatedAt;
+          sessions.append(item);
+        }
+        body["sessions"] = sessions;
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
 
   app.registerHandlerViaRegex(
       "^/api/agent/sessions/([^/]+)/messages$",
@@ -191,7 +250,19 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
           return;
         }
         try {
-          agent.send(sessionId, (*json)["instruction"].asString(), snapshotFromJson(*json));
+          agent.loadChat(sessionId);
+          const auto existing = agent.view(sessionId);
+          if (!existing) {
+            callback(jsonError(k404NotFound, "session not found"));
+            return;
+          }
+          if (existing->kind == "chat") {
+            agent.sendChat(sessionId, (*json)["instruction"].asString(),
+                           uiContextFromJson(*json));
+          } else {
+            agent.send(sessionId, (*json)["instruction"].asString(),
+                       snapshotFromJson(*json));
+          }
           const auto view = agent.view(sessionId);
           if (!view) {
             callback(jsonError(k404NotFound, "session not found"));
@@ -258,7 +329,7 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
           callback(jsonError(k404NotFound, "agent not configured"));
           return;
         }
-        if (!agent.view(sessionId)) {
+        if (!agent.loadChat(sessionId) && !agent.view(sessionId)) {
           callback(jsonError(k404NotFound, "session not found"));
           return;
         }
@@ -338,6 +409,7 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
           callback(jsonError(k404NotFound, "agent not configured"));
           return;
         }
+        agent.loadChat(sessionId);
         const auto view = agent.view(sessionId);
         if (!view) {
           callback(jsonError(k404NotFound, "session not found"));
@@ -346,6 +418,41 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
         callback(HttpResponse::newHttpJsonResponse(sessionToJson(*view)));
       },
       {Get, "wikicore::auth::AuthFilter"});
+
+  app.registerHandlerViaRegex(
+      "^/api/agent/sessions/([^/]+)/title$",
+      [&agent](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback,
+               const std::string& sessionId) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        if (!agent.enabled()) {
+          callback(jsonError(k404NotFound, "agent not configured"));
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("title") || !(*json)["title"].isString()) {
+          callback(jsonError(k400BadRequest, "expected {title: string}"));
+          return;
+        }
+        try {
+          agent.renameChat(sessionId, (*json)["title"].asString());
+          Json::Value body;
+          body["ok"] = true;
+          body["title"] = (*json)["title"].asString();
+          callback(HttpResponse::newHttpJsonResponse(body));
+        } catch (const std::exception& e) {
+          const std::string msg = e.what();
+          if (msg == "session not found") {
+            callback(jsonError(k404NotFound, msg));
+            return;
+          }
+          callback(jsonError(k400BadRequest, msg));
+        }
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 
   app.registerHandlerViaRegex(
       "^/api/agent/sessions/([^/]+)$",

@@ -35,6 +35,7 @@
 #include "index/NavQueries.h"
 #include "index/QueryBlocks.h"
 #include "index/GraphQueries.h"
+#include "index/AgentChatStore.h"
 #include "index/McpAuditLog.h"
 #include "index/SnapshotStore.h"
 #include "index/VaultWatcher.h"
@@ -256,6 +257,7 @@ int main(int argc, char** argv) {
   // same db file (WAL mode, same coordination VaultWatcher's own
   // separate connection already relies on).
   wikicore::index::McpAuditLog mcpAuditLog(db);
+  wikicore::index::AgentChatStore agentChatStore(db);
 
   // Draft agent: wiki-server is the OpenAI-compatible HTTP *client*.
   // Claude/OpenAI never speak MCP — tools in the chat request are
@@ -281,7 +283,8 @@ int main(int argc, char** argv) {
   }
   wikicore::llm::AgentRuntime agentRuntime(ftsSearch, documentService, navQueries,
                                             indexUpdater, &mcpAuditLog, chatClient.get(),
-                                            cfg.llmSystemPrompt);
+                                            cfg.llmSystemPrompt, cfg.llmChatSystemPrompt,
+                                            &agentChatStore, &queryBlocks, &snapshotStore);
 
   // The db is a disposable cache, never assumed correct on faith — rescan
   // unconditionally at every startup so the index reflects whatever's

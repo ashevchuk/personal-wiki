@@ -1251,6 +1251,8 @@ authoring time. `orphans: true` (documents with zero incoming
 check itself — a private document's own outgoing link never counts
 toward making a target look "not orphaned" for an anonymous caller,
 mirroring `NavQueries::backlinks`'s own documented behavior exactly.
+Draft/Chat `run_query_block` is the same `parseAndRun` with
+`includePrivate` true — the agent routes are admin-only, never anonymous.
 
 An unknown key, a duplicate key, or an out-of-range value (`limit: 0`,
 `sort: nonsense`) is a `400` parse error with a clear message, never a
@@ -1758,8 +1760,10 @@ Revert undoes the last applied draft because
 `setMarkdown` wipes Toast UI history. A selected follow-up sends the
 model an excerpt around that span, not the whole body.
 
-`[llm].provider = "none"` (default) hides the button. `system_prompt` in
-config.toml replaces the compiled prompt when non-empty.
+`[llm].provider = "none"` (default) hides the Draft button and the
+sidebar Chat icon. `system_prompt` in config.toml replaces the compiled
+Draft prompt when non-empty; `chat_system_prompt` does the same for
+Chat.
 
 **Toast UI WYSIWYG cannot round-trip `[[wiki-link]]` as source.** The
 markdown writer treats those brackets as punctuation and emits
@@ -1770,6 +1774,25 @@ on `demo/wiki-links-example`). The editor therefore maps
 `getMarkdown` (`static/js/common.js`), and `propose_draft` also
 unescapes model-over-escaped punctuation. The `wiki:` URL never hits
 disk.
+
+## Sidebar Chat
+
+Floating vault Q&A (`docs/llm.md`), opened from a sidebar icon shown
+only when `GET /api/session` has `agentEnabled` (llm configured and
+the caller is the admin). Same cloud client and SSE as Draft; read-only
+tools; audit prefix `chat:`. Each send includes the open wiki page
+(`view`) so "this document" / "this folder" can call `get_current_view`
+then `get_document` / `list_documents`. `run_query_block` executes a
+query-block fence's DSL (`QueryBlocks::parseAndRun`, same as
+`GET /api/query`). `list_document_history` / `diff_document_history`
+read `document_snapshots` (snapshot body vs current, same as the
+History page). Chat history is SQLite
+`agent_chats` (salvaged on index rebuild); the floating panel has a
+left sidebar for New / rename / delete (list width in `localStorage`).
+State of the *open* thread
+survives wiki navigation via the session id in `sessionStorage` (not
+DELETE on `pagehide`).
+`kind: "chat"` on `POST /api/agent/sessions`.
 
 ## Two-binary layout
 

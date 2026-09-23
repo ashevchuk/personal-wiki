@@ -87,6 +87,10 @@ void seedPreciousRows(Database& db) {
   exec(db.handle(), "INSERT INTO mcp_remote_allowed_cidrs(cidr) VALUES ('10.100.100.0/24');");
   exec(db.handle(),
        "INSERT INTO embeddings_runtime_config(id, vector_search_enabled) VALUES (1, 0);");
+  exec(db.handle(),
+       "INSERT INTO agent_chats(id, title, created_at, updated_at, events_json, messages_json) "
+       "VALUES ('chat-keep', 'Keep me', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', "
+       "'[]', '[]');");
   // Enough rows that the file has pages past the header, so overwriting
   // the tail corrupts data without destroying the users table.
   for (int i = 0; i < 200; ++i) {
@@ -155,6 +159,8 @@ TEST_CASE("ensureUsable rebuilds a torn db and restores admin + remote MCP",
   // Tail-page audit rows sitting in the overwritten 2 KiB are unreadable;
   // the rest (and every auth/MCP row, which live on earlier pages) survive.
   REQUIRE(countRows(db.handle(), "SELECT COUNT(*) FROM mcp_audit_log") > 0);
+  REQUIRE(scalar(db.handle(), "SELECT title FROM agent_chats WHERE id = 'chat-keep'") ==
+          "Keep me");
 }
 
 TEST_CASE("a file that is not SQLite at all is quarantined and replaced, "
@@ -168,6 +174,6 @@ TEST_CASE("a file that is not SQLite at all is quarantined and replaced, "
   const auto recovered = db.ensureUsable();
   REQUIRE(recovered.rebuilt);
   REQUIRE_FALSE(recovered.adminRestored);
-  REQUIRE(db.currentSchemaVersion() == 5);
+  REQUIRE(db.currentSchemaVersion() == 6);
   REQUIRE(countRows(db.handle(), "SELECT COUNT(*) FROM users") == 0);
 }

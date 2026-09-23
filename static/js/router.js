@@ -30,6 +30,7 @@
     var accountLink = document.getElementById("sidebar-account");
     var logoutBtn = document.getElementById("sidebar-logout");
     var loginLink = document.getElementById("sidebar-login");
+    var chatBtn = document.getElementById("sidebar-chat-btn");
 
     if (!session.authenticated) {
       // The inverse of every other branch below: this is the ONLY sidebar
@@ -41,6 +42,17 @@
     }
 
     if (accountLink) accountLink.hidden = false;
+
+    if (session.agentEnabled && chatBtn && window.WikiChat) {
+      chatBtn.hidden = false;
+      if (chatBtn.getAttribute("data-wired") !== "1") {
+        chatBtn.setAttribute("data-wired", "1");
+        chatBtn.addEventListener("click", function () {
+          window.WikiChat.toggle();
+        });
+      }
+      window.WikiChat.boot();
+    }
 
     if (newDocBtn) {
       newDocBtn.hidden = false;

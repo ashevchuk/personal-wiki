@@ -3,6 +3,9 @@
 #include "index/IndexUpdater.h"
 #include "index/NavQueries.h"
 #include "index/SnapshotStore.h"
+#include "index/AgentChatStore.h"
+#include "index/McpAuditLog.h"
+#include "index/QueryBlocks.h"
 #include "llm/AgentRuntime.h"
 #include "vault/DocumentService.h"
 
@@ -46,10 +49,12 @@ class ScriptedChatClient : public llm::ChatClient {
   std::string lastSystem;
   std::string lastUser;
   std::string lastTool;
+  nlohmann::json lastTools;
 
   llm::ChatCompletion complete(const std::vector<llm::ChatMessage>& messages,
-                               const nlohmann::json&,
+                               const nlohmann::json& tools,
                                const llm::ChatDeltaFn& onDelta) override {
+    lastTools = tools;
     for (const auto& msg : messages) {
       if (msg.role == "system") lastSystem = msg.content;
       if (msg.role == "user") lastUser = msg.content;
@@ -106,6 +111,7 @@ TEST_CASE("AgentRuntime: disabled start throws", "[AgentRuntime]") {
   REQUIRE_FALSE(agent.enabled());
   llm::AgentDocumentSnapshot snap;
   REQUIRE_THROWS_AS(agent.start("write a note", snap), std::runtime_error);
+  REQUIRE_THROWS_AS(agent.startChat("hello"), std::runtime_error);
 }
 
 TEST_CASE("AgentRuntime: search then propose_draft fills a draft without writing",
@@ -630,3 +636,470 @@ TEST_CASE("AgentRuntime: waitGeneration wakes when a delta arrives", "[AgentRunt
   const auto view = waitDone(agent, id);
   REQUIRE(view.status == "done");
 }
+
+TEST_CASE("AgentRuntime: startChat uses the chat system prompt and omits write tools",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::ChatCompletion reply;
+  reply.content = "See [[notes/a.md]].";
+  chat.replies.push_back(reply);
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "",
+                          "  \n");
+  const std::string id = agent.startChat("what is in the vault?");
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(view.kind == "chat");
+  REQUIRE_FALSE(view.draft);
+  REQUIRE(chat.lastSystem.find("You cannot create, edit, or save files") !=
+          std::string::npos);
+  REQUIRE(chat.lastSystem.find("get_current_view") != std::string::npos);
+  REQUIRE(chat.lastSystem.find("run_query_block") != std::string::npos);
+  REQUIRE(chat.lastSystem.find("diff_document_history") != std::string::npos);
+  REQUIRE(chat.lastSystem.find("propose_draft") == std::string::npos);
+  REQUIRE(chat.lastUser.find("what is in the vault?") != std::string::npos);
+  REQUIRE(chat.lastUser.find("Currently open") != std::string::npos);
+  const std::string dumped = chat.lastTools.dump();
+  REQUIRE(dumped.find("search_documents") != std::string::npos);
+  REQUIRE(dumped.find("get_document") != std::string::npos);
+  REQUIRE(dumped.find("run_query_block") != std::string::npos);
+  REQUIRE(dumped.find("list_document_history") != std::string::npos);
+  REQUIRE(dumped.find("diff_document_history") != std::string::npos);
+  REQUIRE(dumped.find("get_current_view") != std::string::npos);
+  REQUIRE(dumped.find("propose_draft") == std::string::npos);
+  REQUIRE(dumped.find("append_to_draft") == std::string::npos);
+  REQUIRE(dumped.find("insert_in_draft") == std::string::npos);
+  REQUIRE(dumped.find("replace_in_draft") == std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: non-empty chat_system_prompt replaces the compiled default",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat,
+                          "DRAFT ONLY", "CHAT ONLY");
+  const std::string id = agent.startChat("hello");
+  waitDone(agent, id);
+  REQUIRE(chat.lastSystem == "CHAT ONLY");
+}
+
+TEST_CASE("AgentRuntime: chat rejects write tools even if the model calls them",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall(
+      "propose_draft",
+      R"({"path":"notes/x.md","title":"X","body":"nope"})"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  const std::string id = agent.startChat("write a note");
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE_FALSE(view.draft);
+  REQUIRE(chat.lastTool.find("write tools are not available in chat") != std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: chat tool calls are audited with a chat: prefix",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::McpAuditLog audit(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("list_tags", "{}"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, &audit, &chat);
+  const std::string id = agent.startChat("list tags");
+  waitDone(agent, id);
+  const auto rows = audit.listRecent(10);
+  REQUIRE_FALSE(rows.empty());
+  REQUIRE(rows.front().toolName == "chat:list_tags");
+  REQUIRE(rows.front().success);
+}
+
+TEST_CASE("AgentRuntime: send on a chat session is rejected", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  const std::string id = agent.startChat("hello");
+  waitDone(agent, id);
+  llm::AgentDocumentSnapshot snap;
+  try {
+    agent.send(id, "follow up", snap);
+    FAIL("send on a chat session should throw");
+  } catch (const std::runtime_error& e) {
+    REQUIRE(std::string(e.what()) == "not a draft session");
+  }
+  try {
+    agent.sendChat("missing", "follow up");
+    FAIL("sendChat on a missing session should throw");
+  } catch (const std::runtime_error& e) {
+    REQUIRE(std::string(e.what()) == "session not found");
+  }
+}
+
+TEST_CASE("AgentRuntime: chat get_current_view returns the open wiki page",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("get_current_view", "{}"));
+
+  llm::AgentUiContext ui;
+  ui.page = "document";
+  ui.path = "demo/wiki-links-example/note-a.md";
+  ui.title = "Wiki Links Example - A";
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  const std::string id = agent.startChat("what is in this document?", ui);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(chat.lastUser.find("demo/wiki-links-example/note-a.md") != std::string::npos);
+  REQUIRE(chat.lastUser.find("what is in this document?") != std::string::npos);
+  REQUIRE(chat.lastTool.find("\"page\": \"document\"") != std::string::npos);
+  REQUIRE(chat.lastTool.find("note-a.md") != std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: sendChat refreshes the open wiki page", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentUiContext first;
+  first.page = "document";
+  first.path = "notes/a.md";
+  const std::string id = agent.startChat("hello", first);
+  waitDone(agent, id);
+
+  chat.replies.push_back(toolCall("get_current_view", "{}"));
+  llm::AgentUiContext second;
+  second.page = "folder";
+  second.path = "notes/";
+  agent.sendChat(id, "what is in this folder?", second);
+  waitDone(agent, id);
+  REQUIRE(chat.lastUser.find("\"page\": \"folder\"") != std::string::npos);
+  REQUIRE(chat.lastUser.find("notes/") != std::string::npos);
+  REQUIRE(chat.lastTool.find("\"page\": \"folder\"") != std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: draft tool list does not include get_current_view",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  const std::string id = agent.start("draft", snap);
+  waitDone(agent, id);
+  const std::string dumped = chat.lastTools.dump();
+  REQUIRE(dumped.find("propose_draft") != std::string::npos);
+  REQUIRE(dumped.find("run_query_block") != std::string::npos);
+  REQUIRE(dumped.find("diff_document_history") != std::string::npos);
+  REQUIRE(dumped.find("get_current_view") == std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: chat sessions persist, hydrate, rename, and drop",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::AgentChatStore store(db);
+
+  std::string firstId;
+  std::string secondId;
+  {
+    ScriptedChatClient chat;
+    llm::ChatCompletion reply;
+    reply.content = "first answer";
+    chat.replies.push_back(reply);
+    llm::ChatCompletion reply2;
+    reply2.content = "second answer";
+    chat.replies.push_back(reply2);
+    llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "", "",
+                            &store);
+    firstId = agent.startChat("what is in the vault?");
+    auto view = waitDone(agent, firstId);
+    REQUIRE(view.title == "what is in the vault?");
+    REQUIRE(view.kind == "chat");
+    secondId = agent.startChat("list tags please");
+    waitDone(agent, secondId);
+    const auto listed = agent.listChats();
+    REQUIRE(listed.size() == 2);
+    REQUIRE(listed[0].id == secondId);
+    REQUIRE(listed[1].id == firstId);
+  }
+
+  ScriptedChatClient chat;
+  llm::ChatCompletion follow;
+  follow.content = "hydrated";
+  chat.replies.push_back(follow);
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "",
+                          "hydrated-system-prompt", &store);
+  REQUIRE(agent.loadChat(firstId));
+  auto restored = agent.view(firstId);
+  REQUIRE(restored);
+  REQUIRE(restored->status == "done");
+  REQUIRE(restored->title == "what is in the vault?");
+  bool sawUser = false;
+  bool sawAssistant = false;
+  for (const auto& ev : restored->events) {
+    if (ev.type == "user") sawUser = true;
+    if (ev.type == "assistant" &&
+        ev.data.value("text", std::string()) == "first answer") {
+      sawAssistant = true;
+    }
+  }
+  REQUIRE(sawUser);
+  REQUIRE(sawAssistant);
+
+  agent.renameChat(firstId, "Vault overview");
+  REQUIRE(agent.listChats().size() == 2);
+  bool renamed = false;
+  for (const auto& row : agent.listChats()) {
+    if (row.id == firstId) {
+      REQUIRE(row.title == "Vault overview");
+      renamed = true;
+    }
+  }
+  REQUIRE(renamed);
+
+  agent.sendChat(firstId, "follow up");
+  waitDone(agent, firstId);
+  REQUIRE(chat.lastSystem == "hydrated-system-prompt");
+
+  agent.drop(firstId);
+  REQUIRE_FALSE(agent.loadChat(firstId));
+  REQUIRE_FALSE(agent.view(firstId));
+  const auto remaining = agent.listChats();
+  REQUIRE(remaining.size() == 1);
+  REQUIRE(remaining[0].id == secondId);
+}
+
+TEST_CASE("AgentRuntime: drop of a draft does not wipe persisted chats",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::AgentChatStore store(db);
+
+  ScriptedChatClient chat;
+  llm::ChatCompletion reply;
+  reply.content = "ok";
+  chat.replies.push_back(reply);
+  chat.replies.push_back(reply);
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "", "",
+                          &store);
+  const std::string chatId = agent.startChat("hello");
+  waitDone(agent, chatId);
+  llm::AgentDocumentSnapshot snap;
+  const std::string draftId = agent.start("draft this", snap);
+  waitDone(agent, draftId);
+  agent.drop(draftId);
+  REQUIRE(agent.loadChat(chatId));
+  REQUIRE(agent.listChats().size() == 1);
+}
+
+TEST_CASE("AgentRuntime: run_query_block executes the query DSL, not the fence",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput recipe;
+  recipe.title = "Borscht";
+  recipe.visibility = "private";
+  recipe.type = "recipe";
+  recipe.body = "Beets.\n";
+  documents.create("recipes/borscht.md", recipe);
+  vault::DocumentInput note;
+  note.title = "Other";
+  note.visibility = "private";
+  note.type = "note";
+  note.body = "Not a recipe.\n";
+  documents.create("notes/other.md", note);
+
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::QueryBlocks qb(db, search);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall(
+      "run_query_block", "{\"query\":\"```query\\ntype: recipe\\n```\"}"));
+  llm::ChatCompletion done;
+  done.content = "ok";
+  chat.replies.push_back(done);
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "", "",
+                          nullptr, &qb, &snapshots);
+  const std::string id = agent.startChat("what recipes exist?");
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(chat.lastTool.find("recipes/borscht.md") != std::string::npos);
+  REQUIRE(chat.lastTool.find("notes/other.md") == std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: run_query_block surfaces a DSL typo, not an empty list",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::QueryBlocks qb(db, search);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("run_query_block", R"({"query":"tags: cpp"})"));
+  llm::ChatCompletion done;
+  done.content = "ok";
+  chat.replies.push_back(done);
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "", "",
+                          nullptr, &qb, &snapshots);
+  const std::string id = agent.startChat("run this query");
+  waitDone(agent, id);
+  REQUIRE(chat.lastTool.find("error:") != std::string::npos);
+  REQUIRE(chat.lastTool.find("[]") == std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: list and diff document history against current",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput first;
+  first.title = "Note";
+  first.visibility = "private";
+  first.type = "note";
+  first.body = "alpha\nshared\n";
+  documents.create("notes/hist.md", first);
+  vault::DocumentInput second;
+  second.title = "Note";
+  second.visibility = "private";
+  second.type = "note";
+  second.body = "beta\nshared\n";
+  documents.update("notes/hist.md", second);
+
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::QueryBlocks qb(db, search);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(
+      toolCall("list_document_history", R"({"path":"notes/hist.md"})"));
+  llm::ChatCompletion listed;
+  listed.content = "listed";
+  chat.replies.push_back(listed);
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "", "",
+                          nullptr, &qb, &snapshots);
+  const std::string id = agent.startChat("history of this note");
+  auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(chat.lastTool.find("\"id\"") != std::string::npos);
+  REQUIRE(chat.lastTool.find("snapshotAt") != std::string::npos);
+
+  chat.replies.push_back(
+      toolCall("diff_document_history", R"({"path":"notes/hist.md"})"));
+  llm::ChatCompletion diffed;
+  diffed.content = "diffed";
+  chat.replies.push_back(diffed);
+  agent.sendChat(id, "show the diff");
+  view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(chat.lastTool.find("- alpha") != std::string::npos);
+  REQUIRE(chat.lastTool.find("+ beta") != std::string::npos);
+  REQUIRE(chat.lastTool.find("  shared") != std::string::npos);
+}
+
