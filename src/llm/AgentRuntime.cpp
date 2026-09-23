@@ -7,8 +7,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <chrono>
 #include <optional>
 #include <stdexcept>
+#include <string_view>
 
 namespace wikicore::llm {
 
@@ -250,6 +252,7 @@ struct AgentRuntime::Session {
   std::vector<ChatMessage> messages;
   AgentDocumentSnapshot snapshot;
   int getDocumentCount = 0;
+  std::uint64_t gen = 0;
   std::atomic<bool> cancelled{false};
   std::thread worker;
 };
@@ -469,7 +472,10 @@ void AgentRuntime::send(const std::string& sessionId, const std::string& instruc
   const std::string userText = snapshotUserPrefix(session->snapshot) + "\n\nInstruction:\n" +
                                instruction;
   session->messages.push_back(ChatMessage{"user", userText, "", {}});
-  session->events.push_back(AgentEvent{"user", nlohmann::json{{"text", instruction}}});
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    appendEventLocked(*session, AgentEvent{"user", nlohmann::json{{"text", instruction}}});
+  }
   session->worker = std::thread([this, id = session->id]() { runLoop(id); });
 }
 
@@ -485,6 +491,55 @@ std::optional<AgentSessionView> AgentRuntime::view(const std::string& sessionId)
   return out;
 }
 
+std::uint64_t AgentRuntime::generation(const std::string& sessionId) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  auto it = sessions_.find(sessionId);
+  if (it == sessions_.end()) return 0;
+  return it->second->gen;
+}
+
+bool AgentRuntime::waitGeneration(const std::string& sessionId, std::uint64_t seen,
+                                  std::chrono::milliseconds timeout) const {
+  std::unique_lock<std::mutex> lock(mu_);
+  return cv_.wait_for(lock, timeout, [&] {
+    auto it = sessions_.find(sessionId);
+    if (it == sessions_.end()) return true;
+    return it->second->gen != seen;
+  });
+}
+
+void AgentRuntime::appendEventLocked(Session& session, AgentEvent ev) {
+  session.events.push_back(std::move(ev));
+  session.gen++;
+  cv_.notify_all();
+}
+
+void AgentRuntime::appendDeltaLocked(Session& session, std::string_view chunk) {
+  if (chunk.empty()) return;
+  if (!session.events.empty() && session.events.back().type == "assistant" &&
+      session.events.back().data.value("streaming", false)) {
+    auto text = session.events.back().data.value("text", std::string());
+    text.append(chunk.data(), chunk.size());
+    session.events.back().data["text"] = std::move(text);
+    session.gen++;
+    cv_.notify_all();
+    return;
+  }
+  appendEventLocked(session, AgentEvent{
+      "assistant",
+      nlohmann::json{{"text", std::string(chunk)}, {"streaming", true}}});
+}
+
+void AgentRuntime::finishStreamingLocked(Session& session) {
+  if (session.events.empty()) return;
+  auto& last = session.events.back();
+  if (last.type != "assistant") return;
+  if (!last.data.value("streaming", false)) return;
+  last.data.erase("streaming");
+  session.gen++;
+  cv_.notify_all();
+}
+
 void AgentRuntime::cancel(const std::string& sessionId) {
   std::shared_ptr<Session> session;
   {
@@ -493,6 +548,8 @@ void AgentRuntime::cancel(const std::string& sessionId) {
     if (it == sessions_.end()) throw std::runtime_error("session not found");
     session = it->second;
     session->cancelled.store(true);
+    session->gen++;
+    cv_.notify_all();
   }
   if (chat_) chat_->cancel();
 }
@@ -505,6 +562,8 @@ void AgentRuntime::drop(const std::string& sessionId) {
     if (it == sessions_.end()) return;
     session = it->second;
     session->cancelled.store(true);
+    session->gen++;
+    cv_.notify_all();
     sessions_.erase(it);
   }
   if (chat_) chat_->cancel();
@@ -523,14 +582,14 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
   auto fail = [&](const std::string& message) {
     std::lock_guard<std::mutex> lock(mu_);
     session->status = "error";
-    session->events.push_back(AgentEvent{"error", nlohmann::json{{"text", message}}});
+    appendEventLocked(*session, AgentEvent{"error", nlohmann::json{{"text", message}}});
   };
 
   auto finishCancelled = [&]() {
     std::lock_guard<std::mutex> lock(mu_);
     if (session->status == "running") {
       session->status = "cancelled";
-      session->events.push_back(AgentEvent{"cancelled", nlohmann::json::object()});
+      appendEventLocked(*session, AgentEvent{"cancelled", nlohmann::json::object()});
     }
   };
 
@@ -547,7 +606,12 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
         std::lock_guard<std::mutex> lock(mu_);
         messages = session->messages;
       }
-      const ChatCompletion completion = chat_->complete(messages, tools);
+      const ChatCompletion completion = chat_->complete(
+          messages, tools, [&](std::string_view chunk) {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (session->cancelled.load()) return;
+            appendDeltaLocked(*session, chunk);
+          });
       if (session->cancelled.load()) {
         finishCancelled();
         return;
@@ -560,6 +624,7 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
         assistant.toolCalls = completion.toolCalls;
         {
           std::lock_guard<std::mutex> lock(mu_);
+          finishStreamingLocked(*session);
           session->messages.push_back(assistant);
         }
         for (const auto& call : completion.toolCalls) {
@@ -601,9 +666,15 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
         std::lock_guard<std::mutex> lock(mu_);
         session->messages.push_back(
             ChatMessage{"assistant", completion.content, "", {}});
-        if (!completion.content.empty()) {
-          session->events.push_back(
-              AgentEvent{"assistant", nlohmann::json{{"text", completion.content}}});
+        if (!session->events.empty() && session->events.back().type == "assistant" &&
+            session->events.back().data.value("streaming", false)) {
+          if (!completion.content.empty()) {
+            session->events.back().data["text"] = completion.content;
+          }
+          finishStreamingLocked(*session);
+        } else if (!completion.content.empty()) {
+          appendEventLocked(*session, AgentEvent{"assistant", nlohmann::json{
+                                                                  {"text", completion.content}}});
         }
       }
       finished = true;
@@ -616,7 +687,7 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
     std::lock_guard<std::mutex> lock(mu_);
     if (session->status == "running") {
       session->status = "done";
-      session->events.push_back(AgentEvent{"done", nlohmann::json::object()});
+      appendEventLocked(*session, AgentEvent{"done", nlohmann::json::object()});
     }
   } catch (const std::exception& e) {
     if (session->cancelled.load()) {
@@ -654,7 +725,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     for (const auto& item : results) arr.push_back(searchItemJson(item));
     {
       std::lock_guard<std::mutex> lock(mu_);
-      session.events.push_back(
+      appendEventLocked(session, 
           AgentEvent{"tool", nlohmann::json{{"name", name},
                                             {"detail", q.text},
                                             {"count", static_cast<int>(results.size())}}});
@@ -704,7 +775,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     out += record->body;
     {
       std::lock_guard<std::mutex> lock(mu_);
-      session.events.push_back(
+      appendEventLocked(session, 
           AgentEvent{"tool", nlohmann::json{{"name", name}, {"detail", record->path}}});
     }
     audit(name, record->path, true, "");
@@ -719,7 +790,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     }
     {
       std::lock_guard<std::mutex> lock(mu_);
-      session.events.push_back(AgentEvent{
+      appendEventLocked(session, AgentEvent{
           "tool", nlohmann::json{{"name", name}, {"count", static_cast<int>(tags.size())}}});
     }
     audit(name, "", true, "");
@@ -734,7 +805,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     }
     {
       std::lock_guard<std::mutex> lock(mu_);
-      session.events.push_back(AgentEvent{
+      appendEventLocked(session, AgentEvent{
           "tool", nlohmann::json{{"name", name}, {"count", static_cast<int>(types.size())}}});
     }
     audit(name, "", true, "");
@@ -762,7 +833,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     }
     {
       std::lock_guard<std::mutex> lock(mu_);
-      session.events.push_back(AgentEvent{
+      appendEventLocked(session, AgentEvent{
           "tool", nlohmann::json{{"name", name}, {"count", static_cast<int>(results.size())}}});
     }
     audit(name, q.folderPrefix.value_or(""), true, "");
@@ -786,7 +857,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     {
       std::lock_guard<std::mutex> lock(mu_);
       session.draft = draft;
-      session.events.push_back(AgentEvent{
+      appendEventLocked(session, AgentEvent{
           "draft", nlohmann::json{{"path", draft.path}, {"title", draft.title}}});
     }
     audit(name, draft.path, true, draft.title);
@@ -805,7 +876,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
       ensureDraftFromSnapshot(session.draft, session.snapshot);
       appendBlock(session.draft->body, extra);
       path = session.draft->path;
-      session.events.push_back(
+      appendEventLocked(session, 
           AgentEvent{"edit", nlohmann::json{{"op", "append"}, {"text", extra}}});
     }
     audit(name, path, true, extra.substr(0, 80));
@@ -832,7 +903,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
       const std::size_t pos = insertOffset(session.draft->body, after);
       session.draft->body.insert(pos, extra);
       path = session.draft->path;
-      session.events.push_back(AgentEvent{
+      appendEventLocked(session, AgentEvent{
           "edit", nlohmann::json{{"op", "insert"}, {"after", after}, {"text", extra}}});
     }
     audit(name, path, true, extra.substr(0, 80));
@@ -869,7 +940,7 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
       const auto pos = session.draft->body.find(find);
       session.draft->body.replace(pos, find.size(), replacement);
       path = session.draft->path;
-      session.events.push_back(AgentEvent{
+      appendEventLocked(session, AgentEvent{
           "edit",
           nlohmann::json{{"op", "replace"}, {"find", find}, {"replacement", replacement}}});
     }

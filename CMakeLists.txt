@@ -80,6 +80,7 @@ add_library(wikicore STATIC
   src/embeddings/EmbeddingProviderFactory.cpp
   src/embeddings/EmbeddingChunks.cpp
   src/llm/AgentRuntime.cpp
+  src/llm/ChatStreamParser.cpp
 )
 target_include_directories(wikicore PUBLIC src)
 target_link_libraries(wikicore PUBLIC

@@ -18,7 +18,8 @@ class CloudChatClient : public ChatClient {
                   std::string model);
 
   ChatCompletion complete(const std::vector<ChatMessage>& messages,
-                          const nlohmann::json& tools) override;
+                          const nlohmann::json& tools,
+                          const ChatDeltaFn& onDelta) override;
   void cancel() override;
 
  private:

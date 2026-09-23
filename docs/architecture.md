@@ -1746,7 +1746,9 @@ Follow-up edits use `append_to_draft` / `insert_in_draft` /
 `search_documents` is `FtsSearch::search` (hybrid when embeddings are on).
 Account lists `compose:` rows next to MCP audit.
 Ambiguous instructions are supposed to come back as questions in the Draft
-panel, not as a silent rewrite. The panel stashes the editor selection
+panel, not as a silent rewrite. Assistant text streams into the panel
+(`stream:true` to the chat API, SSE to the browser; poll is the fallback).
+The panel stashes the editor selection
 (and the caret, for insert) across that focus change from Toast UI's
 own markdown/WYSIWYG model, not `window.getSelection()` (that jumps to
 the start on blur); a chip in the panel

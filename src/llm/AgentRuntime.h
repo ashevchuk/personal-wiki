@@ -9,10 +9,14 @@
 
 #include <nlohmann/json.hpp>
 
+#include <chrono>
+#include <condition_variable>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -79,6 +83,11 @@ class AgentRuntime {
             AgentDocumentSnapshot snapshot);
 
   std::optional<AgentSessionView> view(const std::string& sessionId) const;
+  // Monotonic counter bumped on every event append/mutation. SSE waiters
+  // sleep on waitGeneration until this differs from `seen`.
+  std::uint64_t generation(const std::string& sessionId) const;
+  bool waitGeneration(const std::string& sessionId, std::uint64_t seen,
+                      std::chrono::milliseconds timeout) const;
   // Abort an in-flight cloud call. Keeps the session so the log stays
   // visible; a later send() starts a new turn. Throws if missing.
   void cancel(const std::string& sessionId);
@@ -90,6 +99,9 @@ class AgentRuntime {
   void runLoop(const std::string& sessionId);
   std::string executeTool(Session& session, const std::string& name,
                           const nlohmann::json& args);
+  void appendEventLocked(Session& session, AgentEvent ev);
+  void appendDeltaLocked(Session& session, std::string_view chunk);
+  void finishStreamingLocked(Session& session);
   static nlohmann::json toolSchemas();
 
   index::FtsSearch& search_;
@@ -101,6 +113,7 @@ class AgentRuntime {
   std::string systemPrompt_;
 
   mutable std::mutex mu_;
+  mutable std::condition_variable cv_;
   std::unordered_map<std::string, std::shared_ptr<Session>> sessions_;
 };
 

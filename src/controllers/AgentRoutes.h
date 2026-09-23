@@ -14,12 +14,13 @@ namespace wikicore::controllers {
 //                                           tags, type, body, selection,
 //                                           caretBefore, isNew}
 //   GET    /api/agent/sessions/{id}
+//   GET    /api/agent/sessions/{id}/stream  text/event-stream (admin, no CSRF)
 //   POST   /api/agent/sessions/{id}/messages  same snapshot + instruction
 //   POST   /api/agent/sessions/{id}/cancel
 //   DELETE /api/agent/sessions/{id}
 //
-// All five require admin+CSRF (GET is admin-only, no CSRF). Hidden from
-// the UI when AgentRuntime::enabled() is false; the handlers still 404
+// Mutating routes require admin+CSRF; GETs are admin-only, no CSRF. Hidden
+// from the UI when AgentRuntime::enabled() is false; the handlers still 404
 // in that case so a guessed URL is not a working back door.
 void registerAgentRoutes(drogon::HttpAppFramework& app, llm::AgentRuntime& agent);
 

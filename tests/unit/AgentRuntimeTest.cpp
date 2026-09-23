@@ -48,7 +48,8 @@ class ScriptedChatClient : public llm::ChatClient {
   std::string lastTool;
 
   llm::ChatCompletion complete(const std::vector<llm::ChatMessage>& messages,
-                               const nlohmann::json&) override {
+                               const nlohmann::json&,
+                               const llm::ChatDeltaFn& onDelta) override {
     for (const auto& msg : messages) {
       if (msg.role == "system") lastSystem = msg.content;
       if (msg.role == "user") lastUser = msg.content;
@@ -59,8 +60,13 @@ class ScriptedChatClient : public llm::ChatClient {
       done.content = "done";
       return done;
     }
-    return replies[index++];
+    auto reply = replies[index++];
+    if (onDelta && streamChunks && reply.toolCalls.empty() && !reply.content.empty()) {
+      for (char c : reply.content) onDelta(std::string_view(&c, 1));
+    }
+    return reply;
   }
+  bool streamChunks = false;
 };
 
 llm::ChatCompletion toolCall(const std::string& name, const std::string& args) {
@@ -381,7 +387,8 @@ TEST_CASE("AgentRuntime: cancel stops an in-flight complete", "[AgentRuntime]") 
     std::atomic<bool> cancelled{false};
 
     llm::ChatCompletion complete(const std::vector<llm::ChatMessage>&,
-                                 const nlohmann::json&) override {
+                                 const nlohmann::json&,
+                                 const llm::ChatDeltaFn&) override {
       std::unique_lock lock(m);
       cv.wait(lock, [&] { return cancelled.load(); });
       throw std::runtime_error("cancelled");
@@ -541,4 +548,85 @@ TEST_CASE("AgentRuntime: list_types returns types in use with counts", "[AgentRu
   REQUIRE(chat.lastTool.find("\"type\": \"note\"") != std::string::npos);
   REQUIRE(chat.lastTool.find("\"count\": 2") != std::string::npos);
   REQUIRE(chat.lastTool.find("\"type\": \"howto\"") != std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: content deltas coalesce into one assistant event",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::ChatCompletion reply;
+  reply.content = "Hello";
+  chat.replies.push_back(reply);
+  chat.streamChunks = true;
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  const std::string id = agent.start("say hello", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  int assistantCount = 0;
+  std::string lastText;
+  bool stillStreaming = false;
+  for (const auto& ev : view.events) {
+    if (ev.type != "assistant") continue;
+    assistantCount++;
+    lastText = ev.data.value("text", "");
+    stillStreaming = ev.data.value("streaming", false);
+  }
+  REQUIRE(assistantCount == 1);
+  REQUIRE(lastText == "Hello");
+  REQUIRE_FALSE(stillStreaming);
+}
+
+TEST_CASE("AgentRuntime: waitGeneration wakes when a delta arrives", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  class SlowStreamClient : public llm::ChatClient {
+   public:
+    llm::ChatCompletion complete(const std::vector<llm::ChatMessage>&,
+                                 const nlohmann::json&,
+                                 const llm::ChatDeltaFn& onDelta) override {
+      if (onDelta) onDelta("Hel");
+      std::this_thread::sleep_for(std::chrono::milliseconds(40));
+      if (onDelta) onDelta("lo");
+      llm::ChatCompletion out;
+      out.content = "Hello";
+      return out;
+    }
+  };
+
+  SlowStreamClient chat;
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  const std::string id = agent.start("say hello", snap);
+  const auto gen = agent.generation(id);
+  REQUIRE(agent.waitGeneration(id, gen, std::chrono::seconds(2)));
+  auto mid = agent.view(id);
+  REQUIRE(mid);
+  bool sawPartial = false;
+  for (const auto& ev : mid->events) {
+    if (ev.type == "assistant" && ev.data.value("text", std::string()).find("Hel") == 0) {
+      sawPartial = true;
+    }
+  }
+  REQUIRE(sawPartial);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
 }

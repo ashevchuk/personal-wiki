@@ -2,10 +2,13 @@
 #include <httplib.h>
 
 #include "llm/CloudChatClient.h"
+#include "llm/ChatStreamParser.h"
 
 #include <cstdlib>
+#include <exception>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace wikicore::llm {
 
@@ -112,86 +115,105 @@ void CloudChatClient::cancel() {
 }
 
 ChatCompletion CloudChatClient::complete(const std::vector<ChatMessage>& messages,
-                                         const nlohmann::json& tools) {
-  stopRequested_.store(false);
-  httplib::Client client(origin_);
-  if (!apiKey_.empty()) {
-    client.set_bearer_token_auth(apiKey_);
-  }
-  client.set_connection_timeout(15);
-  client.set_read_timeout(90);
-
-  nlohmann::json body;
-  body["model"] = model_;
-  body["max_tokens"] = 8192;
-  body["temperature"] = 0.3;
+                                         const nlohmann::json& tools,
+                                         const ChatDeltaFn& onDelta) {
   nlohmann::json msgs = nlohmann::json::array();
   for (const auto& msg : messages) msgs.push_back(messageToJson(msg));
-  body["messages"] = msgs;
-  if (!tools.is_null() && !tools.empty()) body["tools"] = tools;
 
-  {
-    std::lock_guard<std::mutex> lock(requestMu_);
-    if (stopRequested_.load()) {
+  auto run = [&](bool stream) -> ChatCompletion {
+    stopRequested_.store(false);
+    httplib::Client client(origin_);
+    if (!apiKey_.empty()) {
+      client.set_bearer_token_auth(apiKey_);
+    }
+    client.set_connection_timeout(15);
+    client.set_read_timeout(stream ? 120 : 90);
+
+    nlohmann::json body;
+    body["model"] = model_;
+    body["max_tokens"] = 8192;
+    body["temperature"] = 0.3;
+    body["messages"] = msgs;
+    if (!tools.is_null() && !tools.empty()) body["tools"] = tools;
+    if (stream) body["stream"] = true;
+
+    ChatStreamParser parser;
+    std::string errorBody;
+    int status = 0;
+    std::exception_ptr eptr;
+
+    httplib::Request req;
+    req.method = "POST";
+    req.path = chatPath_;
+    req.body = body.dump();
+    req.set_header("Content-Type", "application/json");
+    if (stream) req.set_header("Accept", "text/event-stream");
+    req.response_handler = [&](const httplib::Response& res) {
+      status = res.status;
+      return true;
+    };
+    req.content_receiver = [&](const char* data, size_t len, uint64_t, uint64_t) {
+      if (stopRequested_.load()) return false;
+      if (status != 0 && status != 200) {
+        errorBody.append(data, len);
+        return true;
+      }
+      try {
+        parser.feed(std::string_view(data, len), stream ? onDelta : ChatDeltaFn{});
+      } catch (...) {
+        eptr = std::current_exception();
+        return false;
+      }
+      return true;
+    };
+
+    {
+      std::lock_guard<std::mutex> lock(requestMu_);
+      if (stopRequested_.load()) {
+        throw std::runtime_error("cancelled");
+      }
+      activeClient_ = &client;
+    }
+    const auto res = client.send(req);
+    {
+      std::lock_guard<std::mutex> lock(requestMu_);
+      activeClient_ = nullptr;
+    }
+    if (eptr) std::rethrow_exception(eptr);
+    if (stopRequested_.load() || res.error() == httplib::Error::Canceled) {
       throw std::runtime_error("cancelled");
     }
-    activeClient_ = &client;
-  }
-  const auto res = client.Post(chatPath_, body.dump(), "application/json");
-  {
-    std::lock_guard<std::mutex> lock(requestMu_);
-    activeClient_ = nullptr;
-  }
-  if (stopRequested_.load() || (!res && res.error() == httplib::Error::Canceled)) {
-    throw std::runtime_error("cancelled");
-  }
-  if (!res) {
-    throw std::runtime_error("CloudChatClient: HTTP request failed (" +
-                              httplib::to_string(res.error()) + ")");
-  }
-  if (res->status != 200) {
-    throw std::runtime_error("CloudChatClient: chat API returned HTTP " +
-                              std::to_string(res->status) + ": " + res->body);
-  }
-
-  nlohmann::json parsed;
-  try {
-    parsed = nlohmann::json::parse(res->body);
-  } catch (const nlohmann::json::parse_error& e) {
-    throw std::runtime_error(std::string("CloudChatClient: failed to parse response: ") +
-                              e.what());
-  }
-  if (!parsed.contains("choices") || !parsed["choices"].is_array() ||
-      parsed["choices"].empty()) {
-    throw std::runtime_error("CloudChatClient: response has no choices");
-  }
-  const auto& message = parsed["choices"][0]["message"];
-  ChatCompletion out;
-  if (message.contains("content") && message["content"].is_string()) {
-    out.content = message["content"].get<std::string>();
-  }
-  if (parsed["choices"][0].contains("finish_reason") &&
-      parsed["choices"][0]["finish_reason"].is_string()) {
-    out.finishReason = parsed["choices"][0]["finish_reason"].get<std::string>();
-  }
-  if (message.contains("tool_calls") && message["tool_calls"].is_array()) {
-    for (const auto& call : message["tool_calls"]) {
-      ToolCall tc;
-      tc.id = call.value("id", "");
-      if (call.contains("function") && call["function"].is_object()) {
-        tc.name = call["function"].value("name", "");
-        if (call["function"].contains("arguments")) {
-          if (call["function"]["arguments"].is_string()) {
-            tc.arguments = call["function"]["arguments"].get<std::string>();
-          } else {
-            tc.arguments = call["function"]["arguments"].dump();
-          }
-        }
-      }
-      out.toolCalls.push_back(std::move(tc));
+    if (res.error() != httplib::Error::Success) {
+      throw std::runtime_error("CloudChatClient: HTTP request failed (" +
+                                httplib::to_string(res.error()) + ")");
     }
+    const int httpStatus = status != 0 ? status : (res ? res->status : 0);
+    if (httpStatus != 200) {
+      if (errorBody.empty() && res) errorBody = res->body;
+      throw std::runtime_error("CloudChatClient: chat API returned HTTP " +
+                                std::to_string(httpStatus) + ": " + errorBody);
+    }
+    ChatCompletion out;
+    try {
+      out = parser.finish(stream ? onDelta : ChatDeltaFn{});
+    } catch (const nlohmann::json::parse_error& e) {
+      throw std::runtime_error(std::string("CloudChatClient: failed to parse response: ") +
+                                e.what());
+    }
+    if (!stream && onDelta && !out.content.empty() && out.toolCalls.empty()) {
+      onDelta(out.content);
+    }
+    return out;
+  };
+
+  try {
+    return run(true);
+  } catch (const std::runtime_error& e) {
+    const std::string msg = e.what();
+    const bool http4xx = msg.find("chat API returned HTTP 4") != std::string::npos;
+    if (!http4xx) throw;
+    return run(false);
   }
-  return out;
 }
 
 }  // namespace wikicore::llm

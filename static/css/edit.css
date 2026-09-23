@@ -416,6 +416,15 @@ button.agent-panel-help-btn:focus {
 .agent-panel-log .agent-error {
   color: var(--fg-bright);
 }
+.agent-panel-log .agent-assistant.agent-streaming::after {
+  content: "▍";
+  margin-left: 0.05em;
+  color: var(--fg);
+  animation: agent-caret-blink 1s step-end infinite;
+}
+@keyframes agent-caret-blink {
+  50% { opacity: 0; }
+}
 .agent-panel textarea {
   display: block;
   width: 100%;

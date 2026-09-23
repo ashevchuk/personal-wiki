@@ -96,6 +96,18 @@ only hides the panel. Save stays on the edit page and keeps the in-memory
 session; **View** (next to Save) opens the saved document. Navigating away
 drops the session.
 
+The panel streams the model's reply: `CloudChatClient` POSTs
+`stream: true` and assembles tool-call deltas the same way a blocking
+response would. Incremental assistant text is one growing event in the
+session (`data.streaming` while tokens are still arriving). The browser
+opens `GET /api/agent/sessions/{id}/stream` (`text/event-stream`, cookie
+auth, no CSRF) and paints those events as they land; a 400ms poll remains
+the fallback if the stream cannot start. Tool JSON is not streamed into
+the editor — `propose_draft` / the surgical edits still apply only when
+the tool finishes. nginx in front of production should leave
+`X-Accel-Buffering: no` alone (the handler sets it) so the proxy does not
+buffer the stream.
+
 The panel keeps the same in-memory session across Close/Draft on this edit
 page, and across Save. Follow-ups send a fresh snapshot of whatever is
 currently in the editor, including the selection or caret. A question-mark
@@ -109,6 +121,7 @@ Routes (admin + CSRF on mutating ones; 401/404 as appropriate):
 
 - `POST /api/agent/sessions`
 - `GET /api/agent/sessions/{id}`
+- `GET /api/agent/sessions/{id}/stream` (SSE; `?after=` skips already-seen events)
 - `POST /api/agent/sessions/{id}/messages`
 - `POST /api/agent/sessions/{id}/cancel`
 - `DELETE /api/agent/sessions/{id}`

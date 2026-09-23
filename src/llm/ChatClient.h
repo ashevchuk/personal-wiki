@@ -2,7 +2,9 @@
 
 #include <nlohmann/json.hpp>
 
+#include <functional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace wikicore::llm {
@@ -26,6 +28,8 @@ struct ChatCompletion {
   std::string finishReason;
 };
 
+using ChatDeltaFn = std::function<void(std::string_view)>;
+
 // Outbound chat with tool-calling. Implemented by CloudChatClient
 // (OpenAI-compatible POST {api_base}/chat/completions). The wiki is the
 // HTTP *client* here — the cloud model never sees MCP, stdio or
@@ -35,7 +39,8 @@ class ChatClient {
  public:
   virtual ~ChatClient() = default;
   virtual ChatCompletion complete(const std::vector<ChatMessage>& messages,
-                                  const nlohmann::json& tools) = 0;
+                                  const nlohmann::json& tools,
+                                  const ChatDeltaFn& onDelta) = 0;
   // Abort an in-flight complete() from another thread. Default is a
   // no-op (scripted unit-test clients); CloudChatClient stops httplib.
   virtual void cancel() {}

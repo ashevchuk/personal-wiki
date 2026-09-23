@@ -29,6 +29,8 @@ window.WikiAgent = (function () {
   var pendingDraft = null;
   var undoState = null;
   var pollTimer = null;
+  var streamAbort = null;
+  var eventEls = [];
   var hooks = null;
   var seenEvents = 0;
 
@@ -124,7 +126,7 @@ window.WikiAgent = (function () {
       "<li>Change a fragment: select it in the editor first. This panel remembers the selection after the editor loses focus — a chip appears; Clear drops it and the highlight in the editor.</li>" +
       "<li>Follow-ups like \"add a paragraph\" or \"fix that span\" change only that part.</li>" +
       "<li>If the request is unclear, the agent asks here. Answer in this box; the editor will not change until you do.</li>" +
-      "<li>Stop cancels a run. Revert undoes the last applied draft in the editor (Toast UI cannot).</li>" +
+      "<li>Stop cancels a run. Replies stream into this log as they arrive. Revert undoes the last applied draft in the editor (Toast UI cannot).</li>" +
       "<li>Close hides the panel; Save keeps this session. View opens the saved document. Leaving the page drops the session.</li>" +
       "<li>If you typed while it was working, a full rewrite asks Apply anyway / Keep mine.</li>" +
       "</ul></div>" +
@@ -393,7 +395,7 @@ window.WikiAgent = (function () {
       p.className = "agent-user";
       p.textContent = "You: " + (data.text || "");
     } else if (type === "assistant") {
-      p.textContent = data.text || "";
+      fillAssistant(p, ev);
     } else if (type === "tool") {
       var extra = data.detail ? " " + data.detail : "";
       if (typeof data.count === "number") extra += " (" + data.count + ")";
@@ -411,12 +413,47 @@ window.WikiAgent = (function () {
     } else if (type === "cancelled") {
       p.textContent = "Stopped.";
     } else if (type === "done") {
-      return;
+      return null;
     } else {
       p.textContent = type;
     }
     logEl.appendChild(p);
     logEl.scrollTop = logEl.scrollHeight;
+    return p;
+  }
+
+  function fillAssistant(p, ev) {
+    var data = ev.data || {};
+    p.className = "agent-assistant" + (data.streaming ? " agent-streaming" : "");
+    p.textContent = data.text || "";
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function applyEvent(ev, index) {
+    if (!ev) return;
+    if (ev.type === "done") return;
+    if (typeof index === "number" && eventEls[index]) {
+      if (ev.type === "assistant") fillAssistant(eventEls[index], ev);
+      return;
+    }
+    if (ev.type === "draft") {
+      var draft = ev.data || {};
+      if (editorChangedSinceSend()) {
+        pendingDraft = draft;
+        showPending();
+        ev = {
+          type: "assistant",
+          data: { text: "Draft ready, but the editor changed after this turn was sent." },
+        };
+      } else {
+        applyFull(draft);
+        ev = { type: "draft", data: { title: draft.title, path: draft.path } };
+      }
+    } else if (ev.type === "edit") {
+      applyEdit(ev.data || {});
+    }
+    var p = appendEvent(ev);
+    if (p && typeof index === "number") eventEls[index] = p;
   }
 
   function setRunning(running) {
@@ -425,41 +462,138 @@ window.WikiAgent = (function () {
     stopBtn.disabled = !running;
     statusEl.hidden = !running;
     statusEl.textContent = running ? "Working…" : "";
-    if (running) startPoll();
-    else stopPoll();
+    if (running) startLive();
+    else stopLive();
   }
 
   function renderView(view) {
     if (!view) return;
     sessionId = view.id;
     var events = view.events || [];
-    for (var i = seenEvents; i < events.length; i++) {
+    var start = seenEvents;
+    if (start > 0 && events[start - 1] && events[start - 1].type === "assistant") {
+      applyEvent(events[start - 1], start - 1);
+    }
+    for (var i = start; i < events.length; i++) {
       var ev = events[i];
-      if (ev.type === "draft") {
-        if (editorChangedSinceSend()) {
-          pendingDraft = view.draft;
-          showPending();
-          appendEvent({
-            type: "assistant",
-            data: { text: "Draft ready, but the editor changed after this turn was sent." },
-          });
-        } else {
-          applyFull(view.draft);
-          appendEvent(ev);
-        }
-      } else if (ev.type === "edit") {
-        applyEdit(ev.data || {});
-        appendEvent(ev);
-      } else {
-        appendEvent(ev);
+      if (ev.type === "draft" && view.draft) {
+        ev = { type: "draft", data: view.draft };
       }
+      applyEvent(ev, i);
     }
     seenEvents = events.length;
     setRunning(view.status === "running");
   }
 
+  function startLive() {
+    if (!sessionId) return;
+    if (streamAbort || pollTimer) return;
+    startStream();
+  }
+
+  function startStream() {
+    if (!sessionId || streamAbort) return;
+    streamAbort = new AbortController();
+    var after = seenEvents;
+    fetch(basePath() + "/api/agent/sessions/" + encodeURIComponent(sessionId) +
+        "/stream?after=" + encodeURIComponent(String(after)), {
+      credentials: "same-origin",
+      headers: { Accept: "text/event-stream" },
+      signal: streamAbort.signal,
+    })
+      .then(function (r) {
+        if (!r.ok || !r.body || !r.body.getReader) throw new Error("no stream");
+        return readSse(r.body.getReader());
+      })
+      .then(function () {
+        if (!streamAbort || !sessionId) return;
+        streamAbort = null;
+        return fetch(basePath() + "/api/agent/sessions/" + encodeURIComponent(sessionId), {
+          credentials: "same-origin",
+        }).then(function (r) {
+          return r.json().then(function (body) {
+            if (r.ok) renderView(body);
+          });
+        });
+      })
+      .catch(function (err) {
+        if (!streamAbort) return;
+        if (err && err.name === "AbortError") return;
+        streamAbort = null;
+        startPoll();
+      });
+  }
+
+  function readSse(reader) {
+    var decoder = new TextDecoder();
+    var buf = "";
+    var eventType = "";
+    var dataLines = [];
+    var id = "";
+    function flush() {
+      if (!dataLines.length && !eventType) {
+        eventType = "";
+        id = "";
+        return;
+      }
+      var dataStr = dataLines.join("\n");
+      var data = {};
+      try {
+        data = JSON.parse(dataStr);
+      } catch (e) {
+        data = { text: dataStr };
+      }
+      var ev = { type: eventType || "message", data: data };
+      var index = id === "" ? undefined : parseInt(id, 10);
+      if (typeof index === "number" && !isNaN(index)) {
+        applyEvent(ev, index);
+        seenEvents = Math.max(seenEvents, index + 1);
+      } else {
+        applyEvent(ev);
+      }
+      if (ev.type === "done" || ev.type === "error" || ev.type === "cancelled") {
+        setRunning(false);
+      }
+      eventType = "";
+      dataLines = [];
+      id = "";
+    }
+    function consume(chunk) {
+      buf += chunk;
+      var idx;
+      while ((idx = buf.indexOf("\n")) >= 0) {
+        var line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        if (line.charAt(line.length - 1) === "\r") line = line.slice(0, -1);
+        if (line === "") {
+          flush();
+          continue;
+        }
+        if (line.charAt(0) === ":") continue;
+        var colon = line.indexOf(":");
+        var field = colon === -1 ? line : line.slice(0, colon);
+        var value = colon === -1 ? "" : line.slice(colon + 1);
+        if (value.charAt(0) === " ") value = value.slice(1);
+        if (field === "event") eventType = value;
+        else if (field === "data") dataLines.push(value);
+        else if (field === "id") id = value;
+      }
+    }
+    function pump() {
+      return reader.read().then(function (res) {
+        if (res.done) {
+          if (buf) consume("\n");
+          return;
+        }
+        consume(decoder.decode(res.value, { stream: true }));
+        return pump();
+      });
+    }
+    return pump();
+  }
+
   function startPoll() {
-    if (pollTimer) return;
+    if (pollTimer || streamAbort) return;
     pollTimer = setInterval(function () {
       if (!sessionId) return;
       fetch(basePath() + "/api/agent/sessions/" + encodeURIComponent(sessionId), {
@@ -482,6 +616,14 @@ window.WikiAgent = (function () {
       clearInterval(pollTimer);
       pollTimer = null;
     }
+  }
+
+  function stopLive() {
+    if (streamAbort) {
+      streamAbort.abort();
+      streamAbort = null;
+    }
+    stopPoll();
   }
 
   function snapshotPayload(instruction) {
@@ -575,7 +717,7 @@ window.WikiAgent = (function () {
   }
 
   function endSession() {
-    stopPoll();
+    stopLive();
     if (sessionId) {
       fetch(basePath() + "/api/agent/sessions/" + encodeURIComponent(sessionId), {
         method: "DELETE",
@@ -589,6 +731,7 @@ window.WikiAgent = (function () {
     pendingDraft = null;
     undoState = null;
     seenEvents = 0;
+    eventEls = [];
     if (logEl) logEl.innerHTML = "";
     hidePending();
     refreshRevert();

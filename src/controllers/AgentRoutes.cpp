@@ -2,9 +2,19 @@
 
 #include "auth/RequireAdmin.h"
 
+#include <drogon/HttpAppFramework.h>
 #include <drogon/HttpResponse.h>
+#include <drogon/HttpTypes.h>
 
+#include <nlohmann/json.hpp>
+
+#include <chrono>
+#include <future>
 #include <memory>
+#include <sstream>
+#include <stdexcept>
+#include <thread>
+#include <utility>
 
 using namespace drogon;
 using namespace wikicore::auth;
@@ -79,6 +89,51 @@ Json::Value sessionToJson(const AgentSessionView& view) {
     body["draft"] = draft;
   }
   return body;
+}
+
+std::string formatSse(const AgentEvent& ev, std::size_t index) {
+  nlohmann::json data = ev.data;
+  std::ostringstream os;
+  os << "id: " << index << "\n";
+  os << "event: " << ev.type << "\n";
+  os << "data: " << data.dump() << "\n\n";
+  return os.str();
+}
+
+std::string formatSse(const AgentSessionView& view, std::size_t index) {
+  AgentEvent ev = view.events[index];
+  if (ev.type == "draft" && view.draft) {
+    ev.data["path"] = view.draft->path;
+    ev.data["title"] = view.draft->title;
+    ev.data["type"] = view.draft->type;
+    ev.data["body"] = view.draft->body;
+    ev.data["tags"] = view.draft->tags;
+  }
+  return formatSse(ev, index);
+}
+
+bool sendOnLoop(const std::shared_ptr<ResponseStream>& stream, const std::string& payload) {
+  auto* loop = drogon::app().getLoop();
+  if (!loop) return stream->send(payload);
+  auto done = std::make_shared<std::promise<bool>>();
+  auto future = done->get_future();
+  loop->queueInLoop([stream, payload, done]() {
+    try {
+      done->set_value(stream->send(payload));
+    } catch (...) {
+      done->set_value(false);
+    }
+  });
+  return future.get();
+}
+
+void closeOnLoop(const std::shared_ptr<ResponseStream>& stream) {
+  auto* loop = drogon::app().getLoop();
+  if (!loop) {
+    stream->close();
+    return;
+  }
+  loop->queueInLoop([stream]() { stream->close(); });
 }
 
 }  // namespace
@@ -189,6 +244,86 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
         }
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandlerViaRegex(
+      "^/api/agent/sessions/([^/]+)/stream$",
+      [&agent](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback,
+               const std::string& sessionId) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        if (!agent.enabled()) {
+          callback(jsonError(k404NotFound, "agent not configured"));
+          return;
+        }
+        if (!agent.view(sessionId)) {
+          callback(jsonError(k404NotFound, "session not found"));
+          return;
+        }
+        std::size_t after = 0;
+        const std::string afterStr = req->getParameter("after");
+        if (!afterStr.empty()) {
+          try {
+            after = static_cast<std::size_t>(std::stoull(afterStr));
+          } catch (const std::exception&) {
+            after = 0;
+          }
+        }
+        auto resp = HttpResponse::newAsyncStreamResponse(
+            [&agent, sessionId, after](ResponseStreamPtr stream) {
+              auto shared = std::shared_ptr<ResponseStream>(std::move(stream));
+              std::thread([&agent, sessionId, after, shared]() {
+                std::size_t sent = after;
+                std::string lastAssistantKey;
+                auto assistantKey = [](const AgentEvent& ev) {
+                  return ev.data.value("text", std::string()) +
+                         (ev.data.value("streaming", false) ? "|s" : "");
+                };
+                try {
+                  while (true) {
+                    const auto view = agent.view(sessionId);
+                    if (!view) break;
+                    const auto& events = view->events;
+                    for (std::size_t i = sent; i < events.size(); ++i) {
+                      if (!sendOnLoop(shared, formatSse(*view, i))) goto closed;
+                      if (events[i].type == "assistant") {
+                        lastAssistantKey = assistantKey(events[i]);
+                      }
+                    }
+                    sent = events.size();
+                    if (sent > 0 && events[sent - 1].type == "assistant") {
+                      const auto key = assistantKey(events[sent - 1]);
+                      if (key != lastAssistantKey) {
+                        if (!sendOnLoop(shared, formatSse(*view, sent - 1))) {
+                          goto closed;
+                        }
+                        lastAssistantKey = key;
+                      }
+                    }
+                    if (view->status != "running") break;
+                    const auto gen = agent.generation(sessionId);
+                    if (!agent.waitGeneration(sessionId, gen, std::chrono::seconds(15))) {
+                      if (!sendOnLoop(shared, ": keepalive\n\n")) break;
+                    }
+                  }
+                } catch (...) {
+                }
+              closed:
+                closeOnLoop(shared);
+              }).detach();
+            },
+            true);
+        resp->setContentTypeCodeAndCustomString(
+            CT_CUSTOM, "text/event-stream; charset=utf-8");
+        resp->addHeader("Cache-Control", "no-cache");
+        resp->addHeader("Connection", "keep-alive");
+        resp->addHeader("X-Accel-Buffering", "no");
+        resp->setAllowCompression(false);
+        callback(resp);
+      },
+      {Get, "wikicore::auth::AuthFilter"});
 
   app.registerHandlerViaRegex(
       "^/api/agent/sessions/([^/]+)$",
