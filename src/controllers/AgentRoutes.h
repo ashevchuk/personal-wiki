@@ -11,7 +11,8 @@ namespace wikicore::controllers {
 // not involved — Claude/OpenAI never see stdio wiki-mcp or POST /mcp.
 //
 //   POST   /api/agent/sessions              {instruction, path, title,
-//                                           tags, type, body, selection, isNew}
+//                                           tags, type, body, selection,
+//                                           caretBefore, isNew}
 //   GET    /api/agent/sessions/{id}
 //   POST   /api/agent/sessions/{id}/messages  same snapshot + instruction
 //   POST   /api/agent/sessions/{id}/cancel

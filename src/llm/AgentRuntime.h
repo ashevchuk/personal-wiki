@@ -25,6 +25,9 @@ struct AgentDocumentSnapshot {
   std::string type;
   std::string body;
   std::string selection;  // current editor selection, wiki-link form
+  // Text before the caret when the selection is empty. nullopt means
+  // the client did not capture a caret; empty string means the start.
+  std::optional<std::string> caretBefore;
   std::vector<std::string> tags;
   bool isNew = true;
 };

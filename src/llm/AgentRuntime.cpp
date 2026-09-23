@@ -4,6 +4,7 @@
 #include "util/Uuid.h"
 #include "vault/PathGuard.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <optional>
@@ -25,10 +26,12 @@ const char* kSystemPrompt =
     "For a new document or a full rewrite, call propose_draft with path, "
     "title, tags, type, and the complete body.\n"
     "For a follow-up that only adds or changes part of the current body, "
-    "do not call propose_draft. Use append_to_draft to add at the end, or "
-    "replace_in_draft to change one unique span. replace_in_draft's find "
-    "must appear exactly once in the current body; if the snapshot has "
-    "selected text, omit find and that selection is the span.\n"
+    "do not call propose_draft. Use append_to_draft to add at the end, "
+    "insert_in_draft to insert at the caret, or replace_in_draft to change "
+    "one unique span. replace_in_draft's find must appear exactly once in "
+    "the current body; if the snapshot has selected text, omit find and "
+    "that selection is the span. insert_in_draft uses the snapshot caret "
+    "when there is no selection.\n"
     "Link existing notes as literal wiki-links: [[vault/relative/path.md]] "
     "or [[path.md|Label]]. Never backslash-escape [, ], |, -, or . inside "
     "them — write [[notes/foo.md|Foo]], not \\[\\[notes/foo.md\\|Foo\\]\\].\n"
@@ -41,12 +44,12 @@ const char* kSystemPrompt =
     "If the instruction is ambiguous — which document or span, what to "
     "keep versus replace, missing path/title, or two reasonable readings "
     "— ask one to three short questions in the user's language and stop. "
-    "Do not call propose_draft, append_to_draft, or replace_in_draft "
-    "until the human answers in this panel. Search and get_document are "
-    "fine first, so the questions can be specific. Do not stall on a "
-    "clear request: a non-empty selection plus \"fix this\", \"add a "
-    "paragraph at the end\", or an explicit full rewrite is enough to "
-    "act. "
+    "Do not call propose_draft, append_to_draft, insert_in_draft, or "
+    "replace_in_draft until the human answers in this panel. Search and "
+    "get_document are fine first, so the questions can be specific. Do "
+    "not stall on a clear request: a non-empty selection plus \"fix "
+    "this\", \"add a paragraph at the end\", \"insert a paragraph here\" "
+    "with a known caret, or an explicit full rewrite is enough to act. "
     "Do not claim you saved anything.";
 
 // Models often over-escape markdown punctuation in JSON tool arguments
@@ -104,6 +107,30 @@ nlohmann::json searchItemJson(const index::SearchResultItem& item) {
                         {"snippet", snippetForModel(item)}};
 }
 
+constexpr std::size_t kBodyExcerptPad = 800;
+constexpr std::size_t kCaretPrefixPad = 400;
+
+std::string excerptAroundSelection(const std::string& body, const std::string& selection) {
+  if (selection.empty() || body.empty()) return body;
+  const auto pos = body.find(selection);
+  if (pos == std::string::npos) return body;
+  std::size_t start = pos > kBodyExcerptPad ? pos - kBodyExcerptPad : 0;
+  std::size_t end = std::min(body.size(), pos + selection.size() + kBodyExcerptPad);
+  if (start > 0) {
+    const auto nl = body.find('\n', start);
+    if (nl != std::string::npos && nl < pos) start = nl + 1;
+  }
+  if (end < body.size()) {
+    const auto nl = body.rfind('\n', end);
+    if (nl != std::string::npos && nl > pos + selection.size()) end = nl;
+  }
+  std::string out;
+  if (start > 0) out += "[...]\n";
+  out.append(body, start, end - start);
+  if (end < body.size()) out += "\n[...]";
+  return out;
+}
+
 std::string snapshotUserPrefix(const AgentDocumentSnapshot& snap) {
   nlohmann::json meta;
   meta["isNew"] = snap.isNew;
@@ -114,12 +141,34 @@ std::string snapshotUserPrefix(const AgentDocumentSnapshot& snap) {
   std::string out = "Current editor snapshot (not yet saved unless this is an "
                     "existing document):\n";
   out += meta.dump(2);
-  out += "\n\nCurrent body:\n";
-  out += snap.body.empty() ? "(empty)" : snap.body;
+  const bool excerpted = !snap.selection.empty() &&
+                         snap.body.find(snap.selection) != std::string::npos;
+  out += excerpted ? "\n\nCurrent body (excerpt around the selection; the rest "
+                     "of the document is unchanged):\n"
+                   : "\n\nCurrent body:\n";
+  if (snap.body.empty()) {
+    out += "(empty)";
+  } else if (excerpted) {
+    out += excerptAroundSelection(snap.body, snap.selection);
+  } else {
+    out += snap.body;
+  }
   if (!snap.selection.empty()) {
     out += "\n\nSelected text in the editor (the instruction is about this "
            "span unless the user says otherwise):\n";
     out += snap.selection;
+  } else if (snap.caretBefore) {
+    out += "\n\nThe editor caret is at this insert point (use insert_in_draft). "
+           "Text immediately before the caret:\n";
+    const std::string& before = *snap.caretBefore;
+    if (before.empty()) {
+      out += "(start of document)";
+    } else if (before.size() <= kCaretPrefixPad) {
+      out += before;
+    } else {
+      out += "[...]\n";
+      out.append(before, before.size() - kCaretPrefixPad, kCaretPrefixPad);
+    }
   }
   return out;
 }
@@ -139,6 +188,22 @@ void appendBlock(std::string& body, const std::string& extra) {
   if (!body.empty() && body.back() != '\n') body.push_back('\n');
   if (!body.empty()) body.push_back('\n');
   body += extra;
+}
+
+std::size_t insertOffset(const std::string& body, const std::string& before) {
+  if (before.empty()) return 0;
+  if (body.size() >= before.size() && body.compare(0, before.size(), before) == 0) {
+    return before.size();
+  }
+  const std::size_t hits = countOccurrences(body, before);
+  if (hits == 0) {
+    throw std::runtime_error("caret prefix not found in the current body");
+  }
+  if (hits > 1) {
+    throw std::runtime_error("caret prefix matches " + std::to_string(hits) +
+                             " times — select a span or insert at the end");
+  }
+  return body.find(before) + before.size();
 }
 
 void ensureDraftFromSnapshot(std::optional<AgentDraft>& draft,
@@ -284,7 +349,8 @@ nlohmann::json AgentRuntime::toolSchemas() {
          "Replace the whole editor with this document. Use only for a new "
          "note or a requested full rewrite, and only after any needed "
          "clarifying questions have been answered. For a local change, use "
-         "append_to_draft or replace_in_draft instead. Does not save. "
+         "append_to_draft, insert_in_draft, or replace_in_draft instead. "
+         "Does not save. "
          "Wiki-links in body must be literal [[path.md]] or "
          "[[path.md|Label]], never backslash-escaped."},
         {"parameters",
@@ -308,6 +374,20 @@ nlohmann::json AgentRuntime::toolSchemas() {
         {"parameters",
          {{"type", "object"},
           {"properties", {{"text", strProp("Markdown to append")}}},
+          {"required", nlohmann::json::array({"text"})}}}}},
+  });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
+       {{"name", "insert_in_draft"},
+        {"description",
+         "Insert markdown at the editor caret (no selection). Use this "
+         "for 'insert a paragraph here' / 'add this above'. For the end "
+         "of the document, append_to_draft is fine. Call only after the "
+         "request is clear. Does not save."},
+        {"parameters",
+         {{"type", "object"},
+          {"properties", {{"text", strProp("Markdown to insert at the caret")}}},
           {"required", nlohmann::json::array({"text"})}}}}},
   });
   tools.push_back({
@@ -502,7 +582,7 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
           session->messages.push_back(toolMsg);
           const bool wrote =
               call.name == "propose_draft" || call.name == "append_to_draft" ||
-              call.name == "replace_in_draft";
+              call.name == "insert_in_draft" || call.name == "replace_in_draft";
           if (wrote && session->draft && result.rfind("error:", 0) != 0) {
             finished = true;
           }
@@ -708,6 +788,33 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     }
     audit(name, path, true, extra.substr(0, 80));
     return "Appended to the editor. Stop. Do not claim the file was saved.";
+  }
+
+  if (name == "insert_in_draft") {
+    if (!args.contains("text") || !args["text"].is_string() ||
+        args["text"].get<std::string>().empty()) {
+      throw std::runtime_error("insert_in_draft requires non-empty text");
+    }
+    if (!session.snapshot.caretBefore) {
+      throw std::runtime_error(
+          "insert_in_draft needs the editor caret (no selection). Put the "
+          "caret where the text should go, or use append_to_draft / "
+          "replace_in_draft");
+    }
+    const std::string extra = unescapeModelMarkdown(args["text"].get<std::string>());
+    const std::string after = *session.snapshot.caretBefore;
+    std::string path;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      ensureDraftFromSnapshot(session.draft, session.snapshot);
+      const std::size_t pos = insertOffset(session.draft->body, after);
+      session.draft->body.insert(pos, extra);
+      path = session.draft->path;
+      session.events.push_back(AgentEvent{
+          "edit", nlohmann::json{{"op", "insert"}, {"after", after}, {"text", extra}}});
+    }
+    audit(name, path, true, extra.substr(0, 80));
+    return "Inserted at the caret. Stop. Do not claim the file was saved.";
   }
 
   if (name == "replace_in_draft") {

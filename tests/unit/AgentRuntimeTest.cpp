@@ -44,14 +44,13 @@ class ScriptedChatClient : public llm::ChatClient {
   std::vector<llm::ChatCompletion> replies;
   std::size_t index = 0;
   std::string lastSystem;
+  std::string lastUser;
 
   llm::ChatCompletion complete(const std::vector<llm::ChatMessage>& messages,
                                const nlohmann::json&) override {
     for (const auto& msg : messages) {
-      if (msg.role == "system") {
-        lastSystem = msg.content;
-        break;
-      }
+      if (msg.role == "system") lastSystem = msg.content;
+      if (msg.role == "user") lastUser = msg.content;
     }
     if (index >= replies.size()) {
       llm::ChatCompletion done;
@@ -219,6 +218,7 @@ TEST_CASE("AgentRuntime: empty system prompt keeps the compiled default",
   waitDone(agent, id);
   REQUIRE(chat.lastSystem.find("propose_draft") != std::string::npos);
   REQUIRE(chat.lastSystem.find("append_to_draft") != std::string::npos);
+  REQUIRE(chat.lastSystem.find("insert_in_draft") != std::string::npos);
   REQUIRE(chat.lastSystem.find("until the human answers") != std::string::npos);
   REQUIRE(chat.lastSystem.find("mermaid") != std::string::npos);
 }
@@ -397,4 +397,103 @@ TEST_CASE("AgentRuntime: cancel stops an in-flight complete", "[AgentRuntime]") 
   agent.cancel(id);
   const auto view = waitDone(agent, id);
   REQUIRE(view.status == "cancelled");
+}
+
+TEST_CASE("AgentRuntime: insert_in_draft splices at the caret prefix", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("insert_in_draft", R"({"text":"INSERTED\n"})"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.body = "alpha\nomega";
+  snap.caretBefore = std::string("alpha\n");
+  const std::string id = agent.start("insert a paragraph here", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(view.draft);
+  REQUIRE(view.draft->body == "alpha\nINSERTED\nomega");
+}
+
+TEST_CASE("AgentRuntime: insert_in_draft at the start", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("insert_in_draft", R"({"text":"HEAD\n"})"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.body = "body";
+  snap.caretBefore = std::string("");
+  const std::string id = agent.start("insert at the top", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(view.draft);
+  REQUIRE(view.draft->body == "HEAD\nbody");
+}
+
+TEST_CASE("AgentRuntime: insert_in_draft without a caret does not change the body",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("insert_in_draft", R"({"text":"NOPE"})"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.body = "keep me";
+  const std::string id = agent.start("insert here", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE_FALSE(view.draft);
+}
+
+TEST_CASE("AgentRuntime: a selection sends an excerpt, not the whole body",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.body = std::string(5000, 'a') + "UNIQUE_SEL" + std::string(5000, 'b');
+  snap.selection = "UNIQUE_SEL";
+  const std::string id = agent.start("fix this", snap);
+  waitDone(agent, id);
+  REQUIRE(chat.lastUser.find("UNIQUE_SEL") != std::string::npos);
+  REQUIRE(chat.lastUser.find("[...]") != std::string::npos);
+  REQUIRE(chat.lastUser.find(std::string(2000, 'a')) == std::string::npos);
+  REQUIRE(chat.lastUser.find(std::string(2000, 'b')) == std::string::npos);
 }

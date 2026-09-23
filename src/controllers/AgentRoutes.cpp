@@ -43,6 +43,9 @@ AgentDocumentSnapshot snapshotFromJson(const Json::Value& json) {
   if (json.isMember("selection") && json["selection"].isString()) {
     snap.selection = json["selection"].asString();
   }
+  if (json.isMember("caretBefore") && json["caretBefore"].isString()) {
+    snap.caretBefore = json["caretBefore"].asString();
+  }
   if (json.isMember("isNew") && json["isNew"].isBool()) snap.isNew = json["isNew"].asBool();
   if (json.isMember("tags") && json["tags"].isArray()) {
     for (const auto& t : json["tags"]) {

@@ -19,6 +19,7 @@ window.WikiAgent = (function () {
   var inputEl = null;
   var sendBtn = null;
   var stopBtn = null;
+  var revertBtn = null;
   var statusEl = null;
   var pendingEl = null;
   var selectionEl = null;
@@ -26,6 +27,7 @@ window.WikiAgent = (function () {
   var sessionId = null;
   var lastSentBody = "";
   var pendingDraft = null;
+  var undoState = null;
   var pollTimer = null;
   var hooks = null;
   var seenEvents = 0;
@@ -118,10 +120,12 @@ window.WikiAgent = (function () {
       "<p>Searches the vault, then fills this editor. <strong>Save</strong> is still the only write to disk.</p>" +
       "<ul>" +
       "<li>New note or a full rewrite: describe it and Send (Ctrl/Cmd+Enter).</li>" +
+      "<li>Insert at the caret: click in the editor with no selection. The caret itself disappears when this panel takes focus (Toast UI); a chip remembers the insert point, same idea as a selection.</li>" +
       "<li>Change a fragment: select it in the editor first. This panel remembers the selection after the editor loses focus — a chip appears; Clear drops it and the highlight in the editor.</li>" +
       "<li>Follow-ups like \"add a paragraph\" or \"fix that span\" change only that part.</li>" +
       "<li>If the request is unclear, the agent asks here. Answer in this box; the editor will not change until you do.</li>" +
-      "<li>Stop cancels a run. Close hides the panel; the session stays until Save or you leave the page.</li>" +
+      "<li>Stop cancels a run. Revert undoes the last applied draft in the editor (Toast UI cannot).</li>" +
+      "<li>Close hides the panel; Save keeps this session. View opens the saved document. Leaving the page drops the session.</li>" +
       "<li>If you typed while it was working, a full rewrite asks Apply anyway / Keep mine.</li>" +
       "</ul></div>" +
       '<div class="agent-panel-log" id="agent-log"></div>' +
@@ -138,6 +142,7 @@ window.WikiAgent = (function () {
       "<textarea id=\"agent-input\" rows=\"4\" placeholder=\"Describe the note to draft…\"></textarea>" +
       '<div class="agent-panel-actions">' +
       '<button type="button" id="agent-stop" hidden>Stop</button>' +
+      '<button type="button" id="agent-revert" hidden>Revert last draft</button>' +
       '<button type="button" id="agent-send">Send</button>' +
       "</div>" +
       '<div class="agent-panel-resize" aria-hidden="true"></div>';
@@ -146,6 +151,7 @@ window.WikiAgent = (function () {
     inputEl = panel.querySelector("#agent-input");
     sendBtn = panel.querySelector("#agent-send");
     stopBtn = panel.querySelector("#agent-stop");
+    revertBtn = panel.querySelector("#agent-revert");
     statusEl = panel.querySelector("#agent-status");
     pendingEl = panel.querySelector("#agent-pending");
     selectionEl = panel.querySelector("#agent-selection");
@@ -173,6 +179,7 @@ window.WikiAgent = (function () {
     });
     sendBtn.addEventListener("click", send);
     stopBtn.addEventListener("click", stop);
+    revertBtn.addEventListener("click", revertLastDraft);
     panel.querySelector("#agent-apply-anyway").addEventListener("click", applyPending);
     panel.querySelector("#agent-keep").addEventListener("click", keepMine);
     panel.querySelector(".agent-selection-clear").addEventListener("click", function (ev) {
@@ -229,15 +236,56 @@ window.WikiAgent = (function () {
     return oneLine;
   }
 
+  // The insert point is the *end* of this prefix. Showing the start of
+  // the document (selectionPreview) made the chip look unrelated to the
+  // caret. Keep the last ~48 visible characters, then │.
+  function caretPreview(text) {
+    var oneLine = String(text || "").replace(/\s+/g, " ").trim();
+    if (oneLine.length > 80) oneLine = "…" + oneLine.slice(-80);
+    return oneLine;
+  }
+
+  function fillCaretChip(label, tail) {
+    selectionEl.classList.add("agent-selection--caret");
+    selectionTextEl.textContent = "";
+    var lab = document.createElement("span");
+    lab.className = "agent-selection-label";
+    lab.textContent = label;
+    selectionTextEl.appendChild(lab);
+    if (!tail) return;
+    var wrap = document.createElement("span");
+    wrap.className = "agent-caret-tail";
+    var inner = document.createElement("span");
+    inner.className = "agent-caret-tail-inner";
+    inner.textContent = tail;
+    wrap.appendChild(inner);
+    selectionTextEl.appendChild(wrap);
+  }
+
   function refreshSelectionChip() {
     if (!selectionEl) return;
     var text = hooks && hooks.currentSelection ? hooks.currentSelection() : "";
-    if (!text) {
-      selectionEl.hidden = true;
+    if (text) {
+      selectionEl.hidden = false;
+      selectionEl.classList.remove("agent-selection--caret");
+      selectionTextEl.textContent = "Selection: " + selectionPreview(text);
       return;
     }
-    selectionEl.hidden = false;
-    selectionTextEl.textContent = "Selection: " + selectionPreview(text);
+    var caret = hooks && hooks.currentCaret ? hooks.currentCaret() : null;
+    if (caret) {
+      selectionEl.hidden = false;
+      var prev = caretPreview(caret.preview || caret.before);
+      if (!caret.known && !prev) {
+        fillCaretChip("Insert at caret");
+      } else if (!prev) {
+        fillCaretChip("Insert at caret", "start of document");
+      } else {
+        fillCaretChip("Insert at caret", prev + "│");
+      }
+      return;
+    }
+    selectionEl.hidden = true;
+    selectionEl.classList.remove("agent-selection--caret");
   }
 
   function syncSelection() {
@@ -245,8 +293,32 @@ window.WikiAgent = (function () {
     refreshSelectionChip();
   }
 
+  function refreshRevert() {
+    if (revertBtn) revertBtn.hidden = !undoState;
+  }
+
+  function rememberUndo() {
+    if (!hooks || !hooks.editorState) return;
+    undoState = hooks.editorState();
+    refreshRevert();
+  }
+
+  function revertLastDraft() {
+    if (!undoState || !hooks || !hooks.restoreEditorState) return;
+    hooks.restoreEditorState(undoState);
+    undoState = null;
+    lastSentBody = currentBody();
+    refreshRevert();
+    refreshSelectionChip();
+    appendEvent({
+      type: "assistant",
+      data: { text: "Reverted the last draft in the editor." },
+    });
+  }
+
   function applyFull(d) {
     if (!d) return;
+    rememberUndo();
     if (hooks && hooks.applyDraft) hooks.applyDraft(d);
     hidePending();
     refreshSelectionChip();
@@ -273,8 +345,26 @@ window.WikiAgent = (function () {
 
   function applyEdit(data) {
     if (!hooks) return;
+    var prev = hooks.editorState ? hooks.editorState() : null;
     if (data.op === "append" && hooks.appendToBody) {
       hooks.appendToBody(data.text || "");
+      undoState = prev;
+      refreshRevert();
+      lastSentBody = currentBody();
+      refreshSelectionChip();
+      return;
+    }
+    if (data.op === "insert" && hooks.insertInBody) {
+      var inserted = hooks.insertInBody(data.after || "", data.text || "");
+      if (!inserted) {
+        appendEvent({
+          type: "error",
+          data: { text: "Could not insert at the caret — the editor moved." },
+        });
+        return;
+      }
+      undoState = prev;
+      refreshRevert();
       lastSentBody = currentBody();
       refreshSelectionChip();
       return;
@@ -288,6 +378,8 @@ window.WikiAgent = (function () {
         });
         return;
       }
+      undoState = prev;
+      refreshRevert();
       lastSentBody = currentBody();
       refreshSelectionChip();
     }
@@ -310,6 +402,7 @@ window.WikiAgent = (function () {
       p.textContent = "Filled the editor: " + (data.title || data.path || "");
     } else if (type === "edit") {
       if (data.op === "append") p.textContent = "Appended to the editor.";
+      else if (data.op === "insert") p.textContent = "Inserted at the caret.";
       else if (data.op === "replace") p.textContent = "Updated text in the editor.";
       else p.textContent = "Updated the editor.";
     } else if (type === "error") {
@@ -494,9 +587,11 @@ window.WikiAgent = (function () {
     sessionId = null;
     lastSentBody = "";
     pendingDraft = null;
+    undoState = null;
     seenEvents = 0;
     if (logEl) logEl.innerHTML = "";
     hidePending();
+    refreshRevert();
     hide();
   }
 

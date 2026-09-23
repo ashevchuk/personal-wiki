@@ -52,38 +52,54 @@ Read-only vault tools, then one write-shaped tool that does not write:
 | `list_tags` / `list_documents` | Browse |
 | `propose_draft` | Replaces the whole editor (new notes / full rewrites) |
 | `append_to_draft` | Appends markdown at the end of the current body |
+| `insert_in_draft` | Inserts markdown at the editor caret (no selection) |
 | `replace_in_draft` | Replaces one unique span (or the current editor selection) |
 
 `propose_draft` is the full-document tool. Follow-ups like "add a paragraph"
-or "fix the examples" should use `append_to_draft` / `replace_in_draft` so
-the rest of the editor is left alone. If the WYSIWYG/markdown selection is
-non-empty, the snapshot includes it and `replace_in_draft` may omit `find`.
-The visible editor highlight goes away when the Draft panel takes focus;
-the panel stashes the last non-empty range (shown as a chip) from a
-pointer-down on Draft / the panel, before that blur. Clear drops the
-chip and collapses the highlight in the editor so focusing the prompt
-does not recapture it; selecting again in the editor restores the chip.
+or "fix the examples" should use `append_to_draft` / `insert_in_draft` /
+`replace_in_draft` so the rest of the editor is left alone. If the
+WYSIWYG/markdown selection is non-empty, the snapshot includes it and
+`replace_in_draft` may omit `find`. The visible editor highlight goes away
+when the Draft panel takes focus; the panel stashes the last non-empty
+range (shown as a chip) from a pointer-down on Draft / the panel, before
+that blur. Clear drops the chip and collapses the highlight in the editor
+so focusing the prompt does not recapture it; selecting again in the
+editor restores the chip. The caret itself also disappears on that blur
+(Toast UI); the same chip shows **Insert at caret** and Clear drops it.
+The insert point is read from Toast UI's own markdown/WYSIWYG model
+before that blur (not from `window.getSelection()`, which jumps to the
+start). `insert_in_draft` uses the stashed prefix so "here" still means
+the place you clicked.
+
+A follow-up snapshot still sends the full body for tool execution. When
+there is a selection, the **model prompt** only gets an excerpt around
+that span (plus the selection itself), not the whole note.
 
 A full `propose_draft` does **not** auto-apply if the editor changed after
 the turn was sent (you typed while it was Working). The panel asks
 Apply anyway / Keep mine. Surgical `edit` events still apply to whatever
-is currently in the editor.
+is currently in the editor. `setMarkdown` wipes Toast UI undo; **Revert
+last draft** in the panel restores the editor (and metadata) from just
+before the last applied draft.
 
 If the instruction is ambiguous, the compiled prompt tells the model to
 ask one to three short questions **in the panel** and not to call
-`propose_draft` / `append_to_draft` / `replace_in_draft` until you
-answer. A text-only reply is a normal assistant event; the editor is
-left alone. Search/get are still allowed first so the questions can be
-specific. A clear request (selection + "fix this", "add a paragraph at
-the end", an explicit rewrite) should not stall.
+`propose_draft` / `append_to_draft` / `insert_in_draft` /
+`replace_in_draft` until you answer. A text-only reply is a normal
+assistant event; the editor is left alone. Search/get are still allowed
+first so the questions can be specific. A clear request (selection +
+"fix this", "add a paragraph at the end", "insert here" at a known
+caret, an explicit rewrite) should not stall.
 
 Stop aborts the in-flight cloud HTTP call (`POST .../cancel`); Close still
-only hides the panel. Save or navigating away drops the session.
+only hides the panel. Save stays on the edit page and keeps the in-memory
+session; **View** (next to Save) opens the saved document. Navigating away
+drops the session.
 
 The panel keeps the same in-memory session across Close/Draft on this edit
-page; Save or navigating away drops it. Follow-ups send a fresh snapshot
-of whatever is currently in the editor, including the selection. A
-question-mark control in the panel header toggles this usage summary.
+page, and across Save. Follow-ups send a fresh snapshot of whatever is
+currently in the editor, including the selection or caret. A question-mark
+control in the panel header toggles this usage summary.
 
 Every tool call is audit-logged with a `compose:` prefix on
 `mcp_audit_log`, success or failure — the Account page lists those
@@ -104,9 +120,9 @@ configured *and* the caller is authenticated).
 
 The compiled prompt asks for literal `[[vault/relative/path.md]]` /
 `[[path.md|Label]]`. Models still over-escape punctuation in JSON tool
-arguments (`\[\[path\|Label\]\]`). `propose_draft`, `append_to_draft`, and
-`replace_in_draft` strip those escapes (several passes — a doubled JSON
-escape is a real case).
+arguments (`\[\[path\|Label\]\]`). `propose_draft`, `append_to_draft`,
+`insert_in_draft`, and `replace_in_draft` strip those escapes (several
+passes — a doubled JSON escape is a real case).
 
 Toast UI's WYSIWYG writer is CommonMark: `[[path|label]]` is not a link,
 so a round-trip re-escapes the brackets (and can smash path+label into one

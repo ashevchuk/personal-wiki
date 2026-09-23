@@ -1741,13 +1741,20 @@ extension, not this repo.
 Optional cloud drafting on the edit page (`docs/llm.md`). wiki-server is
 an OpenAI-compatible chat *client*; tools run locally; `propose_draft`
 fills the editor; Save is the only disk write. MCP is not in this path.
-Follow-up edits use `append_to_draft` / `replace_in_draft` rather than
-rewriting the whole body. `search_documents` is `FtsSearch::search` (hybrid
-when embeddings are on). Account lists `compose:` rows next to MCP audit.
+Follow-up edits use `append_to_draft` / `insert_in_draft` /
+`replace_in_draft` rather than rewriting the whole body.
+`search_documents` is `FtsSearch::search` (hybrid when embeddings are on).
+Account lists `compose:` rows next to MCP audit.
 Ambiguous instructions are supposed to come back as questions in the Draft
 panel, not as a silent rewrite. The panel stashes the editor selection
-across that focus change (chip + Clear) so a fragment edit still has a
-span after the highlight is gone.
+(and the caret, for insert) across that focus change from Toast UI's
+own markdown/WYSIWYG model, not `window.getSelection()` (that jumps to
+the start on blur); a chip in the panel
+is the stand-in once Toast UI drops the visible caret / highlight. Save stays on the edit page
+and keeps the session; View (next to Save) goes back to the document.
+Revert undoes the last applied draft because
+`setMarkdown` wipes Toast UI history. A selected follow-up sends the
+model an excerpt around that span, not the whole body.
 
 `[llm].provider = "none"` (default) hides the button. `system_prompt` in
 config.toml replaces the compiled prompt when non-empty.

@@ -480,6 +480,11 @@ window.WikiPages = window.WikiPages || {};
       '<div id="editor"></div>' +
       '<div class="field-row" id="edit-actions-row">' +
       '<button type="submit" id="f-save">Save</button>' +
+      (isNew
+        ? ""
+        : '<a class="btn" id="f-view" href="' +
+          escapeHtml(basePath() + "/d/" + encodeVaultPath(docPath)) +
+          '">View</a>') +
       (session && session.agentEnabled
         ? '<button type="button" id="f-draft-btn">Draft</button>'
         : "") +
@@ -810,7 +815,15 @@ window.WikiPages = window.WikiPages || {};
     // editor's own selection, otherwise the next click in the prompt
     // recaptures it.
     var lastEditorSelection = "";
+    var lastCaretBefore = "";
+    var lastCaretPlain = "";
+    var hasCaret = false;
+    var caretPrefixKnown = false;
     var ignoreEditorSelection = false;
+    // Once focus leaves the editor, freeze the stash so a later
+    // getSelection/window.getSelection (start of document) cannot
+    // overwrite it. Clicking back in the editor unfreezes.
+    var caretFrozen = false;
     function readEditorSelection() {
       try {
         return editor.getSelectedText() || "";
@@ -846,17 +859,29 @@ window.WikiPages = window.WikiPages || {};
     // the next non-empty range is a new selection, not the one we just
     // collapsed. rAF waits until Toast UI has committed the range
     // (mouseup can beat ProseMirror's own handler).
+    function editorHasFocus() {
+      var root = document.getElementById("editor");
+      return !!(root && root.contains(document.activeElement));
+    }
     function acceptEditorSelection() {
+      if (!editorHasFocus()) return;
+      caretFrozen = false;
       requestAnimationFrame(function () {
+        if (!editorHasFocus()) return;
         var text = readEditorSelection();
         if (text) {
           lastEditorSelection = text;
+          hasCaret = false;
+          caretPrefixKnown = false;
+          lastCaretBefore = "";
+          lastCaretPlain = "";
           ignoreEditorSelection = false;
           syncAgentSelectionChip();
           return;
         }
         if (ignoreEditorSelection) return;
         lastEditorSelection = "";
+        captureCaretBefore(false);
         syncAgentSelectionChip();
       });
     }
@@ -865,13 +890,283 @@ window.WikiPages = window.WikiPages || {};
         ? window.WikiCommon.wikiBodyFromEditor(lastEditorSelection)
         : "";
     }
+    function caretForAgent() {
+      if (selectionForAgent() || !hasCaret) return null;
+      return {
+        before: lastCaretBefore,
+        known: caretPrefixKnown,
+        preview: lastCaretPlain || lastCaretBefore,
+      };
+    }
     function clearRememberedSelection() {
       collapseEditorSelection();
       lastEditorSelection = "";
+      lastCaretBefore = "";
+      lastCaretPlain = "";
+      hasCaret = false;
+      caretPrefixKnown = false;
       ignoreEditorSelection = true;
+      caretFrozen = true;
     }
-    document.getElementById("editor").addEventListener("mouseup", acceptEditorSelection);
-    document.getElementById("editor").addEventListener("keyup", acceptEditorSelection);
+    function isCollapsedRange(range) {
+      if (!range || range[0] == null) return false;
+      if (typeof range[0] === "number") return range[0] === range[1];
+      return (
+        Array.isArray(range[0]) &&
+        Array.isArray(range[1]) &&
+        range[0][0] === range[1][0] &&
+        range[0][1] === range[1][1]
+      );
+    }
+    // Toast UI 3 markdown getSelection is [[line, ch], [line, ch]]
+    // (1-based). Slicing getMarkdown at range[0] as a source index was
+    // never valid in this bundle; that path only looked like it worked
+    // for a caret at the start.
+    function markdownOffsetFromLineCh(md, line, ch) {
+      var lines = md.split("\n");
+      var lineIdx = Math.max((line || 1) - 1, 0);
+      var off = 0;
+      var i;
+      for (i = 0; i < lineIdx && i < lines.length; i++) {
+        off += lines[i].length + 1;
+      }
+      var col = Math.max((ch || 1) - 1, 0);
+      if (lineIdx < lines.length) col = Math.min(col, lines[lineIdx].length);
+      return off + col;
+    }
+    function lineChFromOffset(md, offset) {
+      if (offset < 0) offset = 0;
+      if (offset > md.length) offset = md.length;
+      var line = 1;
+      var col = 1;
+      var i;
+      for (i = 0; i < offset; i++) {
+        if (md.charAt(i) === "\n") {
+          line += 1;
+          col = 1;
+        } else {
+          col += 1;
+        }
+      }
+      return [line, col];
+    }
+    function uniqueCaretToken(haystack) {
+      var token = "WIKICARET";
+      var n = 0;
+      while ((haystack || "").indexOf(token) >= 0) {
+        n += 1;
+        token = "WIKICARET" + n;
+      }
+      return token;
+    }
+    function findTextInPm(doc, token) {
+      var found = -1;
+      if (!doc || !doc.descendants) return found;
+      doc.descendants(function (node, pos) {
+        if (found >= 0 || !node.isText || !node.text) return;
+        var i = node.text.indexOf(token);
+        if (i >= 0) found = pos + i;
+      });
+      return found;
+    }
+    // setMarkdown(..., true) moves the caret to the end of the document.
+    // Drop a unique token at the wiki offset, convert, then put the
+    // caret where the token was and delete it.
+    function setBodyAndCaret(wikiBody, caretAt) {
+      var token = uniqueCaretToken(wikiBody);
+      var marked = wikiBody.slice(0, caretAt) + token + wikiBody.slice(caretAt);
+      editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(marked), false);
+      try {
+        if (editor.isMarkdownMode && editor.isMarkdownMode()) {
+          var md = editor.getMarkdown() || "";
+          var idx = md.indexOf(token);
+          if (idx < 0) {
+            editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(wikiBody), false);
+            return;
+          }
+          var cleaned = md.slice(0, idx) + md.slice(idx + token.length);
+          editor.setMarkdown(cleaned, false);
+          var lc = lineChFromOffset(cleaned, idx);
+          editor.setSelection(lc, lc);
+        } else {
+          var view = wwView();
+          var found = view && view.state ? findTextInPm(view.state.doc, token) : -1;
+          if (found < 0) {
+            editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(wikiBody), false);
+            return;
+          }
+          view.dispatch(
+            view.state.tr.delete(found, found + token.length).setMeta("addToHistory", false)
+          );
+          editor.setSelection(found, found);
+        }
+      } catch (e) {
+        editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(wikiBody), false);
+      }
+      if (typeof editor.focus === "function") editor.focus();
+    }
+    function wwView() {
+      try {
+        return editor.wwEditor && editor.wwEditor.view;
+      } catch (e) {
+        return null;
+      }
+    }
+    // WYSIWYG getSelection is a ProseMirror [from, to] — not a markdown
+    // offset, and not a DOM window.getSelection() (that one jumps to the
+    // start on blur). Drop a unique token at the PM caret, convert with
+    // Toast UI's own WW→markdown, then delete the token off the undo
+    // stack. That prefix is what insert_in_draft searches for.
+    var capturingCaret = false;
+    function captureWysiwygWikiPrefix() {
+      if (capturingCaret) {
+        return { before: lastCaretBefore, plain: lastCaretPlain, known: caretPrefixKnown };
+      }
+      var view = wwView();
+      if (!view || !view.state) return { before: "", plain: "", known: false };
+      var from = view.state.selection.from;
+      var plain = "";
+      try {
+        plain = view.state.doc.textBetween(0, from, "\n\n", "\n") || "";
+      } catch (e) {}
+      var md0 = editor.getMarkdown() || "";
+      var token = "WIKICARET";
+      var n = 0;
+      while (md0.indexOf(token) >= 0) {
+        n += 1;
+        token = "WIKICARET" + n;
+      }
+      capturingCaret = true;
+      try {
+        view.dispatch(view.state.tr.insertText(token).setMeta("addToHistory", false));
+        var md = editor.getMarkdown() || "";
+        var idx = md.indexOf(token);
+        view = wwView();
+        if (view) {
+          view.dispatch(
+            view.state.tr.delete(from, from + token.length).setMeta("addToHistory", false)
+          );
+        }
+        if (idx < 0) return { before: "", plain: plain, known: false };
+        return {
+          before: window.WikiCommon.wikiBodyFromEditor(md.slice(0, idx)),
+          plain: plain,
+          known: true,
+        };
+      } catch (e) {
+        return { before: "", plain: plain, known: false };
+      } finally {
+        capturingCaret = false;
+      }
+    }
+    function captureCaretPreview() {
+      var view = wwView();
+      if (!view || !view.state) return;
+      var from = view.state.selection.from;
+      lastCaretPlain = "";
+      try {
+        lastCaretPlain = view.state.doc.textBetween(0, from, "\n\n", "\n") || "";
+      } catch (e) {}
+      hasCaret = true;
+      caretPrefixKnown = false;
+      lastCaretBefore = "";
+    }
+    function captureCaretBefore(exact) {
+      if (caretFrozen || capturingCaret) return;
+      if (lastEditorSelection || readEditorSelection()) {
+        hasCaret = false;
+        caretPrefixKnown = false;
+        lastCaretBefore = "";
+        lastCaretPlain = "";
+        return;
+      }
+      try {
+        var range = editor.getSelection();
+        if (!range || range[0] == null || !isCollapsedRange(range)) return;
+        if (editor.isMarkdownMode && editor.isMarkdownMode()) {
+          var md = editor.getMarkdown() || "";
+          var off;
+          if (typeof range[0] === "number") off = range[0];
+          else if (Array.isArray(range[0])) off = markdownOffsetFromLineCh(md, range[0][0], range[0][1]);
+          else return;
+          if (off < 0) off = 0;
+          if (off > md.length) off = md.length;
+          lastCaretBefore = window.WikiCommon.wikiBodyFromEditor(md.slice(0, off));
+          lastCaretPlain = lastCaretBefore;
+          hasCaret = true;
+          caretPrefixKnown = true;
+          return;
+        }
+        if (!exact) {
+          captureCaretPreview();
+          return;
+        }
+        var mapped = captureWysiwygWikiPrefix();
+        hasCaret = true;
+        lastCaretBefore = mapped.before;
+        lastCaretPlain = mapped.plain || mapped.before;
+        caretPrefixKnown = mapped.known;
+      } catch (e) {}
+    }
+    function freezeCaret() {
+      if (caretFrozen) return;
+      rememberSelection(false);
+      captureCaretBefore(true);
+      caretFrozen = true;
+      syncAgentSelectionChip();
+    }
+    function stashForAgent() {
+      freezeCaret();
+    }
+    document.getElementById("editor").addEventListener("mouseup", function () {
+      acceptEditorSelection();
+    });
+    document.getElementById("editor").addEventListener("keyup", function () {
+      acceptEditorSelection();
+    });
+    document.getElementById("editor").addEventListener(
+      "focusin",
+      function () {
+        caretFrozen = false;
+        ignoreEditorSelection = false;
+      }
+    );
+    document.getElementById("editor").addEventListener(
+      "focusout",
+      function () {
+        if (ignoreEditorSelection) return;
+        freezeCaret();
+      },
+      true
+    );
+    document.addEventListener("selectionchange", function () {
+      if (capturingCaret || caretFrozen) return;
+      if (!editorHasFocus() || ignoreEditorSelection) return;
+      var text = readEditorSelection();
+      if (text) {
+        lastEditorSelection = text;
+        hasCaret = false;
+        caretPrefixKnown = false;
+        lastCaretBefore = "";
+        lastCaretPlain = "";
+        syncAgentSelectionChip();
+        return;
+      }
+      lastEditorSelection = "";
+      captureCaretBefore(false);
+      syncAgentSelectionChip();
+    });
+    document.addEventListener(
+      "pointerdown",
+      function (ev) {
+        var t = ev.target;
+        if (!t || !t.closest) return;
+        if (!t.closest("#f-draft-btn") && !t.closest(".agent-panel")) return;
+        if (t.closest(".agent-selection-clear")) return;
+        stashForAgent();
+      },
+      true
+    );
     // Also cover the initial mount: an existing document opened straight
     // into Markdown mode (or with a saved user preference -- editType
     // isn't currently persisted, but this costs nothing to be correct
@@ -908,18 +1203,12 @@ window.WikiPages = window.WikiPages || {};
 
     var draftBtn = document.getElementById("f-draft-btn");
     if (draftBtn && window.WikiAgent) {
-      draftBtn.addEventListener(
-        "pointerdown",
-        function () {
-          rememberSelection(false);
-        },
-        true
-      );
       draftBtn.addEventListener("click", function () {
-        rememberSelection(false);
+        stashForAgent();
         window.WikiAgent.open({
           snapshot: function () {
-            return {
+            var sel = selectionForAgent();
+            var snap = {
               path: pathInput.value.trim(),
               title: titleInput.value.trim(),
               type: typeInput.value.trim(),
@@ -932,20 +1221,54 @@ window.WikiPages = window.WikiPages || {};
                   return t.length > 0;
                 }),
               body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
-              selection: selectionForAgent(),
+              selection: sel,
               isNew: isNew,
             };
+            if (!sel) {
+              if (editorHasFocus() && !caretFrozen) captureCaretBefore(true);
+              if (hasCaret && caretPrefixKnown) snap.caretBefore = lastCaretBefore;
+            }
+            return snap;
           },
           captureSelection: function () {
-            rememberSelection(false);
+            stashForAgent();
           },
           currentSelection: selectionForAgent,
+          currentCaret: caretForAgent,
           clearSelection: clearRememberedSelection,
           currentBody: function () {
             return window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
           },
+          editorState: function () {
+            return {
+              path: pathInput.value,
+              title: titleInput.value,
+              type: typeInput.value,
+              tags: tagsInput.value,
+              body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
+            };
+          },
+          restoreEditorState: function (state) {
+            if (!state) return;
+            if (isNew && !pathInput.readOnly && state.path) {
+              pathInput.value = state.path;
+            }
+            titleInput.value = state.title || "";
+            typeInput.value = state.type || "";
+            tagsInput.value = state.tags || "";
+            editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(state.body || ""));
+            lastEditorSelection = "";
+            lastCaretBefore = "";
+            lastCaretPlain = "";
+            hasCaret = false;
+            caretPrefixKnown = false;
+          },
           applyDraft: function (draft) {
             lastEditorSelection = "";
+            lastCaretBefore = "";
+            lastCaretPlain = "";
+            hasCaret = false;
+            caretPrefixKnown = false;
             if (draft.path && isNew && !pathInput.readOnly) {
               pathInput.value = draft.path;
             }
@@ -960,11 +1283,39 @@ window.WikiPages = window.WikiPages || {};
           },
           appendToBody: function (text) {
             lastEditorSelection = "";
+            lastCaretBefore = "";
+            lastCaretPlain = "";
+            hasCaret = false;
+            caretPrefixKnown = false;
             var body = window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
             if (body && body.charAt(body.length - 1) !== "\n") body += "\n";
             if (body) body += "\n";
             body += text || "";
             editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(body));
+          },
+          insertInBody: function (after, text) {
+            var body = window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
+            var pos = 0;
+            if (after) {
+              if (body.indexOf(after) === 0) {
+                pos = after.length;
+              } else {
+                var idx = body.indexOf(after);
+                if (idx < 0 || body.indexOf(after, idx + 1) >= 0) return false;
+                pos = idx + after.length;
+              }
+            }
+            var next = body.slice(0, pos) + (text || "") + body.slice(pos);
+            setBodyAndCaret(next, pos + (text || "").length);
+            lastEditorSelection = "";
+            lastCaretBefore = "";
+            lastCaretPlain = "";
+            ignoreEditorSelection = false;
+            caretFrozen = false;
+            captureCaretBefore(true);
+            caretFrozen = true;
+            syncAgentSelectionChip();
+            return true;
           },
           replaceInBody: function (find, replacement) {
             if (!find) return false;
@@ -974,6 +1325,10 @@ window.WikiPages = window.WikiPages || {};
             var next = body.slice(0, idx) + replacement + body.slice(idx + find.length);
             editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(next));
             lastEditorSelection = "";
+            lastCaretBefore = "";
+            lastCaretPlain = "";
+            hasCaret = false;
+            caretPrefixKnown = false;
             return true;
           },
         });
@@ -1033,11 +1388,50 @@ window.WikiPages = window.WikiPages || {};
           if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
           return resp.json().then(function (data) {
             var savedPath = (data && data.path) || path;
-            setStatus("Saved.", "ok");
-            if (window.WikiAgent && window.WikiAgent.endSession) {
-              window.WikiAgent.endSession();
+            if (isNew) {
+              isNew = false;
+              pathInput.readOnly = true;
+              pathInput.value = savedPath;
+              document.getElementById("page-title").textContent =
+                "Edit — " + (titleInput.value.trim() || savedPath) + " — wiki";
+              var crumbs = container.querySelector("nav.breadcrumbs");
+              if (crumbs) {
+                var wrap = document.createElement("div");
+                wrap.innerHTML = renderBreadcrumbs(savedPath);
+                if (wrap.firstChild) crumbs.replaceWith(wrap.firstChild);
+              }
+              if (!document.getElementById("f-view")) {
+                var view = document.createElement("a");
+                view.className = "btn";
+                view.id = "f-view";
+                view.href = basePath() + "/d/" + encodeVaultPath(savedPath);
+                view.textContent = "View";
+                var saveBtn = document.getElementById("f-save");
+                saveBtn.parentNode.insertBefore(view, saveBtn.nextSibling);
+              } else {
+                document.getElementById("f-view").href =
+                  basePath() + "/d/" + encodeVaultPath(savedPath);
+              }
+              if (!document.getElementById("doc-delete-btn")) {
+                var statusEl = document.getElementById("f-status");
+                var del = document.createElement("button");
+                del.type = "button";
+                del.id = "doc-delete-btn";
+                del.setAttribute("data-path", savedPath);
+                del.textContent = "Delete";
+                statusEl.parentNode.insertBefore(del, statusEl);
+                if (window.WikiDocument) window.WikiDocument.wireDeleteButton(del);
+              } else {
+                document.getElementById("doc-delete-btn").setAttribute("data-path", savedPath);
+              }
+              history.replaceState(
+                {},
+                "",
+                basePath() + "/edit/" + encodeVaultPath(savedPath)
+              );
+              loadAttachments();
             }
-            window.location.href = basePath() + "/d/" + encodeVaultPath(savedPath);
+            setStatus("Saved.", "ok");
           });
         })
         .catch(function (err) {
