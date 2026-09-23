@@ -2,6 +2,8 @@
 
 #include "llm/ChatClient.h"
 
+#include <atomic>
+#include <mutex>
 #include <string>
 
 namespace wikicore::llm {
@@ -17,12 +19,16 @@ class CloudChatClient : public ChatClient {
 
   ChatCompletion complete(const std::vector<ChatMessage>& messages,
                           const nlohmann::json& tools) override;
+  void cancel() override;
 
  private:
   std::string origin_;
   std::string chatPath_;
   std::string model_;
   std::string apiKey_;
+  std::mutex requestMu_;
+  std::atomic<bool> stopRequested_{false};
+  void* activeClient_ = nullptr;  // httplib::Client*, only while Post is in flight
 };
 
 }  // namespace wikicore::llm

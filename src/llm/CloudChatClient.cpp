@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <stdexcept>
+#include <string>
 
 namespace wikicore::llm {
 
@@ -102,8 +103,17 @@ CloudChatClient::CloudChatClient(const std::string& apiKeyEnvVar, std::string ap
   model_ = model.empty() ? kDefaultModel : std::move(model);
 }
 
+void CloudChatClient::cancel() {
+  stopRequested_.store(true);
+  std::lock_guard<std::mutex> lock(requestMu_);
+  if (auto* client = static_cast<httplib::Client*>(activeClient_)) {
+    client->stop();
+  }
+}
+
 ChatCompletion CloudChatClient::complete(const std::vector<ChatMessage>& messages,
                                          const nlohmann::json& tools) {
+  stopRequested_.store(false);
   httplib::Client client(origin_);
   if (!apiKey_.empty()) {
     client.set_bearer_token_auth(apiKey_);
@@ -120,7 +130,21 @@ ChatCompletion CloudChatClient::complete(const std::vector<ChatMessage>& message
   body["messages"] = msgs;
   if (!tools.is_null() && !tools.empty()) body["tools"] = tools;
 
+  {
+    std::lock_guard<std::mutex> lock(requestMu_);
+    if (stopRequested_.load()) {
+      throw std::runtime_error("cancelled");
+    }
+    activeClient_ = &client;
+  }
   const auto res = client.Post(chatPath_, body.dump(), "application/json");
+  {
+    std::lock_guard<std::mutex> lock(requestMu_);
+    activeClient_ = nullptr;
+  }
+  if (stopRequested_.load() || (!res && res.error() == httplib::Error::Canceled)) {
+    throw std::runtime_error("cancelled");
+  }
   if (!res) {
     throw std::runtime_error("CloudChatClient: HTTP request failed (" +
                               httplib::to_string(res.error()) + ")");

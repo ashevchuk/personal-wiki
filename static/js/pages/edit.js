@@ -841,6 +841,12 @@ window.WikiPages = window.WikiPages || {};
       draftBtn.addEventListener("click", function () {
         window.WikiAgent.open({
           snapshot: function () {
+            var rawSelection = "";
+            try {
+              rawSelection = editor.getSelectedText() || "";
+            } catch (e) {
+              rawSelection = "";
+            }
             return {
               path: pathInput.value.trim(),
               title: titleInput.value.trim(),
@@ -854,8 +860,14 @@ window.WikiPages = window.WikiPages || {};
                   return t.length > 0;
                 }),
               body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
+              selection: rawSelection
+                ? window.WikiCommon.wikiBodyFromEditor(rawSelection)
+                : "",
               isNew: isNew,
             };
+          },
+          currentBody: function () {
+            return window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
           },
           applyDraft: function (draft) {
             if (draft.path && isNew && !pathInput.readOnly) {
@@ -869,6 +881,22 @@ window.WikiPages = window.WikiPages || {};
             if (typeof draft.body === "string") {
               editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(draft.body));
             }
+          },
+          appendToBody: function (text) {
+            var body = window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
+            if (body && body.charAt(body.length - 1) !== "\n") body += "\n";
+            if (body) body += "\n";
+            body += text || "";
+            editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(body));
+          },
+          replaceInBody: function (find, replacement) {
+            if (!find) return false;
+            var body = window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
+            var idx = body.indexOf(find);
+            if (idx < 0) return false;
+            var next = body.slice(0, idx) + replacement + body.slice(idx + find.length);
+            editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(next));
+            return true;
           },
         });
       });

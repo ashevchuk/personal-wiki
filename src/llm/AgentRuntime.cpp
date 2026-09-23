@@ -4,7 +4,9 @@
 #include "util/Uuid.h"
 #include "vault/PathGuard.h"
 
+#include <atomic>
 #include <cctype>
+#include <optional>
 #include <stdexcept>
 
 namespace wikicore::llm {
@@ -12,19 +14,21 @@ namespace wikicore::llm {
 namespace {
 
 constexpr int kMaxSteps = 8;
-constexpr int kSearchLimit = 8;
+constexpr int kSearchLimit = 12;
 constexpr int kListLimit = 30;
 constexpr int kMaxGetDocument = 6;
 
 const char* kSystemPrompt =
     "You draft markdown for a personal wiki. Existing notes in the vault "
     "are the source of truth — search them before writing.\n"
-    "When the draft is ready, call propose_draft with path, title, tags, "
-    "type, and body. You cannot save files; propose_draft fills the editor "
-    "immediately. The human will review and Save.\n"
-    "propose_draft always replaces the whole editor. If the snapshot body "
-    "is not empty, treat the instruction as an edit: keep the rest of the "
-    "document and return the complete body, not a fragment.\n"
+    "You cannot save files. The human reviews the editor and hits Save.\n"
+    "For a new document or a full rewrite, call propose_draft with path, "
+    "title, tags, type, and the complete body.\n"
+    "For a follow-up that only adds or changes part of the current body, "
+    "do not call propose_draft. Use append_to_draft to add at the end, or "
+    "replace_in_draft to change one unique span. replace_in_draft's find "
+    "must appear exactly once in the current body; if the snapshot has "
+    "selected text, omit find and that selection is the span.\n"
     "Link existing notes as literal wiki-links: [[vault/relative/path.md]] "
     "or [[path.md|Label]]. Never backslash-escape [, ], |, -, or . inside "
     "them — write [[notes/foo.md|Foo]], not \\[\\[notes/foo.md\\|Foo\\]\\].\n"
@@ -103,7 +107,41 @@ std::string snapshotUserPrefix(const AgentDocumentSnapshot& snap) {
   out += meta.dump(2);
   out += "\n\nCurrent body:\n";
   out += snap.body.empty() ? "(empty)" : snap.body;
+  if (!snap.selection.empty()) {
+    out += "\n\nSelected text in the editor (the instruction is about this "
+           "span unless the user says otherwise):\n";
+    out += snap.selection;
+  }
   return out;
+}
+
+std::size_t countOccurrences(const std::string& haystack, const std::string& needle) {
+  if (needle.empty()) return 0;
+  std::size_t count = 0;
+  std::size_t pos = 0;
+  while ((pos = haystack.find(needle, pos)) != std::string::npos) {
+    ++count;
+    pos += needle.size();
+  }
+  return count;
+}
+
+void appendBlock(std::string& body, const std::string& extra) {
+  if (!body.empty() && body.back() != '\n') body.push_back('\n');
+  if (!body.empty()) body.push_back('\n');
+  body += extra;
+}
+
+void ensureDraftFromSnapshot(std::optional<AgentDraft>& draft,
+                             const AgentDocumentSnapshot& snapshot) {
+  if (draft) return;
+  AgentDraft next;
+  next.path = snapshot.path;
+  next.title = snapshot.title;
+  next.type = snapshot.type.empty() ? "note" : snapshot.type;
+  next.tags = snapshot.tags;
+  next.body = snapshot.body;
+  draft = std::move(next);
 }
 
 std::string trimCopy(std::string s) {
@@ -138,6 +176,7 @@ struct AgentRuntime::Session {
   std::vector<ChatMessage> messages;
   AgentDocumentSnapshot snapshot;
   int getDocumentCount = 0;
+  std::atomic<bool> cancelled{false};
   std::thread worker;
 };
 
@@ -159,10 +198,12 @@ AgentRuntime::~AgentRuntime() {
     std::lock_guard<std::mutex> lock(mu_);
     for (auto& [id, session] : sessions_) {
       (void)id;
+      session->cancelled.store(true);
       toJoin.push_back(session);
     }
     sessions_.clear();
   }
+  if (chat_) chat_->cancel();
   for (auto& session : toJoin) {
     if (session->worker.joinable()) session->worker.join();
   }
@@ -183,8 +224,10 @@ nlohmann::json AgentRuntime::toolSchemas() {
       {"function",
        {{"name", "search_documents"},
         {"description",
-         "Full-text search over the wiki. Returns matching paths, titles, "
-         "tags, and a short snippet. Call this before writing."},
+         "Search the wiki (FTS5 plus semantic ranking when embeddings "
+         "are enabled — the same engine as the site search). Returns "
+         "matching paths, titles, tags, and a short snippet. Call this "
+         "before writing."},
         {"parameters",
          {{"type", "object"},
           {"properties",
@@ -229,9 +272,11 @@ nlohmann::json AgentRuntime::toolSchemas() {
       {"function",
        {{"name", "propose_draft"},
         {"description",
-         "Fill the user's editor with this document. Does not save. Call "
-         "this when the draft is ready. Wiki-links in body must be "
-         "literal [[path.md]] or [[path.md|Label]], never backslash-escaped."},
+         "Replace the whole editor with this document. Use only for a new "
+         "note or a requested full rewrite. For a local change, use "
+         "append_to_draft or replace_in_draft instead. Does not save. "
+         "Wiki-links in body must be literal [[path.md]] or "
+         "[[path.md|Label]], never backslash-escaped."},
         {"parameters",
          {{"type", "object"},
           {"properties",
@@ -241,6 +286,33 @@ nlohmann::json AgentRuntime::toolSchemas() {
             {"type", strProp("Document type, e.g. note")},
             {"tags", arrStr("Tags")}}},
           {"required", nlohmann::json::array({"path", "title", "body"})}}}}},
+  });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
+       {{"name", "append_to_draft"},
+        {"description",
+         "Append markdown to the end of the current editor body. Use this "
+         "for 'add a paragraph' / 'add a section at the end'. Does not save."},
+        {"parameters",
+         {{"type", "object"},
+          {"properties", {{"text", strProp("Markdown to append")}}},
+          {"required", nlohmann::json::array({"text"})}}}}},
+  });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
+       {{"name", "replace_in_draft"},
+        {"description",
+         "Replace one unique span in the current body. If the editor has a "
+         "selection, omit find and that selection is used. find must match "
+         "exactly once. Does not save."},
+        {"parameters",
+         {{"type", "object"},
+          {"properties",
+           {{"find", strProp("Exact text to replace; omit to use the editor selection")},
+            {"replacement", strProp("Replacement markdown")}}},
+          {"required", nlohmann::json::array({"replacement"})}}}}},
   });
   return tools;
 }
@@ -294,6 +366,7 @@ void AgentRuntime::send(const std::string& sessionId, const std::string& instruc
 
   session->snapshot = std::move(snapshot);
   session->status = "running";
+  session->cancelled.store(false);
   session->getDocumentCount = 0;
   const std::string userText = snapshotUserPrefix(session->snapshot) + "\n\nInstruction:\n" +
                                instruction;
@@ -314,6 +387,18 @@ std::optional<AgentSessionView> AgentRuntime::view(const std::string& sessionId)
   return out;
 }
 
+void AgentRuntime::cancel(const std::string& sessionId) {
+  std::shared_ptr<Session> session;
+  {
+    std::lock_guard<std::mutex> lock(mu_);
+    auto it = sessions_.find(sessionId);
+    if (it == sessions_.end()) throw std::runtime_error("session not found");
+    session = it->second;
+    session->cancelled.store(true);
+  }
+  if (chat_) chat_->cancel();
+}
+
 void AgentRuntime::drop(const std::string& sessionId) {
   std::shared_ptr<Session> session;
   {
@@ -321,8 +406,10 @@ void AgentRuntime::drop(const std::string& sessionId) {
     auto it = sessions_.find(sessionId);
     if (it == sessions_.end()) return;
     session = it->second;
+    session->cancelled.store(true);
     sessions_.erase(it);
   }
+  if (chat_) chat_->cancel();
   if (session && session->worker.joinable()) session->worker.join();
 }
 
@@ -341,16 +428,32 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
     session->events.push_back(AgentEvent{"error", nlohmann::json{{"text", message}}});
   };
 
+  auto finishCancelled = [&]() {
+    std::lock_guard<std::mutex> lock(mu_);
+    if (session->status == "running") {
+      session->status = "cancelled";
+      session->events.push_back(AgentEvent{"cancelled", nlohmann::json::object()});
+    }
+  };
+
   try {
     const nlohmann::json tools = toolSchemas();
     bool finished = false;
     for (int step = 0; step < kMaxSteps && !finished; ++step) {
+      if (session->cancelled.load()) {
+        finishCancelled();
+        return;
+      }
       std::vector<ChatMessage> messages;
       {
         std::lock_guard<std::mutex> lock(mu_);
         messages = session->messages;
       }
       const ChatCompletion completion = chat_->complete(messages, tools);
+      if (session->cancelled.load()) {
+        finishCancelled();
+        return;
+      }
 
       if (!completion.toolCalls.empty()) {
         ChatMessage assistant;
@@ -362,6 +465,10 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
           session->messages.push_back(assistant);
         }
         for (const auto& call : completion.toolCalls) {
+          if (session->cancelled.load()) {
+            finishCancelled();
+            return;
+          }
           nlohmann::json args = nlohmann::json::object();
           if (!call.arguments.empty()) {
             try {
@@ -382,7 +489,12 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
           toolMsg.content = result;
           std::lock_guard<std::mutex> lock(mu_);
           session->messages.push_back(toolMsg);
-          if (call.name == "propose_draft" && session->draft) finished = true;
+          const bool wrote =
+              call.name == "propose_draft" || call.name == "append_to_draft" ||
+              call.name == "replace_in_draft";
+          if (wrote && session->draft && result.rfind("error:", 0) != 0) {
+            finished = true;
+          }
         }
         continue;
       }
@@ -399,13 +511,21 @@ void AgentRuntime::runLoop(const std::string& sessionId) {
       finished = true;
     }
 
+    if (session->cancelled.load()) {
+      finishCancelled();
+      return;
+    }
     std::lock_guard<std::mutex> lock(mu_);
     if (session->status == "running") {
       session->status = "done";
       session->events.push_back(AgentEvent{"done", nlohmann::json::object()});
     }
   } catch (const std::exception& e) {
-    fail(e.what());
+    if (session->cancelled.load()) {
+      finishCancelled();
+    } else {
+      fail(e.what());
+    }
   }
 }
 
@@ -558,6 +678,63 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
     }
     audit(name, draft.path, true, draft.title);
     return "Draft recorded for the editor. Stop. Do not claim the file was saved.";
+  }
+
+  if (name == "append_to_draft") {
+    if (!args.contains("text") || !args["text"].is_string() ||
+        args["text"].get<std::string>().empty()) {
+      throw std::runtime_error("append_to_draft requires non-empty text");
+    }
+    const std::string extra = unescapeModelMarkdown(args["text"].get<std::string>());
+    std::string path;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      ensureDraftFromSnapshot(session.draft, session.snapshot);
+      appendBlock(session.draft->body, extra);
+      path = session.draft->path;
+      session.events.push_back(
+          AgentEvent{"edit", nlohmann::json{{"op", "append"}, {"text", extra}}});
+    }
+    audit(name, path, true, extra.substr(0, 80));
+    return "Appended to the editor. Stop. Do not claim the file was saved.";
+  }
+
+  if (name == "replace_in_draft") {
+    if (!args.contains("replacement") || !args["replacement"].is_string()) {
+      throw std::runtime_error("replace_in_draft requires replacement");
+    }
+    std::string find;
+    if (args.contains("find") && args["find"].is_string()) {
+      find = unescapeModelMarkdown(args["find"].get<std::string>());
+    }
+    if (find.empty()) find = session.snapshot.selection;
+    if (find.empty()) {
+      throw std::runtime_error(
+          "replace_in_draft needs find, or a non-empty editor selection");
+    }
+    const std::string replacement =
+        unescapeModelMarkdown(args["replacement"].get<std::string>());
+    std::string path;
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      ensureDraftFromSnapshot(session.draft, session.snapshot);
+      const std::size_t hits = countOccurrences(session.draft->body, find);
+      if (hits == 0) {
+        throw std::runtime_error("find text not found in the current body");
+      }
+      if (hits > 1) {
+        throw std::runtime_error("find text matches " + std::to_string(hits) +
+                                 " times — include more surrounding context");
+      }
+      const auto pos = session.draft->body.find(find);
+      session.draft->body.replace(pos, find.size(), replacement);
+      path = session.draft->path;
+      session.events.push_back(AgentEvent{
+          "edit",
+          nlohmann::json{{"op", "replace"}, {"find", find}, {"replacement", replacement}}});
+    }
+    audit(name, path, true, find.substr(0, 80));
+    return "Replaced the span in the editor. Stop. Do not claim the file was saved.";
   }
 
   throw std::runtime_error("unknown tool: " + name);

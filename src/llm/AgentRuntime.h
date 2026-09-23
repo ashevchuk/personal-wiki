@@ -24,6 +24,7 @@ struct AgentDocumentSnapshot {
   std::string title;
   std::string type;
   std::string body;
+  std::string selection;  // current editor selection, wiki-link form
   std::vector<std::string> tags;
   bool isNew = true;
 };
@@ -43,7 +44,7 @@ struct AgentEvent {
 
 struct AgentSessionView {
   std::string id;
-  std::string status;  // running | done | error
+  std::string status;  // running | done | error | cancelled
   std::vector<AgentEvent> events;
   std::optional<AgentDraft> draft;
 };
@@ -75,6 +76,9 @@ class AgentRuntime {
             AgentDocumentSnapshot snapshot);
 
   std::optional<AgentSessionView> view(const std::string& sessionId) const;
+  // Abort an in-flight cloud call. Keeps the session so the log stays
+  // visible; a later send() starts a new turn. Throws if missing.
+  void cancel(const std::string& sessionId);
   void drop(const std::string& sessionId);
 
  private:

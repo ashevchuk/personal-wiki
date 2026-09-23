@@ -407,6 +407,18 @@ button.agent-panel-close:focus {
   justify-content: flex-end;
   flex-shrink: 0;
 }
+.agent-panel [hidden] {
+  display: none !important;
+}
+.agent-panel-pending {
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+  margin: 0 0 0.6rem;
+  flex-shrink: 0;
+}
+.agent-panel-pending p {
+  margin: 0 0 0.4rem;
+}
 .agent-panel-resize {
   position: absolute;
   right: 0;

@@ -40,6 +40,9 @@ AgentDocumentSnapshot snapshotFromJson(const Json::Value& json) {
   if (json.isMember("title") && json["title"].isString()) snap.title = json["title"].asString();
   if (json.isMember("type") && json["type"].isString()) snap.type = json["type"].asString();
   if (json.isMember("body") && json["body"].isString()) snap.body = json["body"].asString();
+  if (json.isMember("selection") && json["selection"].isString()) {
+    snap.selection = json["selection"].asString();
+  }
   if (json.isMember("isNew") && json["isNew"].isBool()) snap.isNew = json["isNew"].asBool();
   if (json.isMember("tags") && json["tags"].isArray()) {
     for (const auto& t : json["tags"]) {
@@ -145,6 +148,38 @@ void registerAgentRoutes(HttpAppFramework& app, AgentRuntime& agent) {
           }
           if (msg == "session is still running" || msg == "an agent session is already running") {
             callback(jsonError(k409Conflict, msg));
+            return;
+          }
+          callback(jsonError(k400BadRequest, msg));
+        }
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandlerViaRegex(
+      "^/api/agent/sessions/([^/]+)/cancel$",
+      [&agent](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback,
+               const std::string& sessionId) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        if (!agent.enabled()) {
+          callback(jsonError(k404NotFound, "agent not configured"));
+          return;
+        }
+        try {
+          agent.cancel(sessionId);
+          const auto view = agent.view(sessionId);
+          if (!view) {
+            callback(jsonError(k404NotFound, "session not found"));
+            return;
+          }
+          callback(HttpResponse::newHttpJsonResponse(sessionToJson(*view)));
+        } catch (const std::exception& e) {
+          const std::string msg = e.what();
+          if (msg == "session not found") {
+            callback(jsonError(k404NotFound, msg));
             return;
           }
           callback(jsonError(k400BadRequest, msg));

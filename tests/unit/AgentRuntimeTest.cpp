@@ -8,8 +8,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
+#include <mutex>
 #include <thread>
 
 namespace fs = std::filesystem;
@@ -215,6 +218,7 @@ TEST_CASE("AgentRuntime: empty system prompt keeps the compiled default",
   const std::string id = agent.start("draft", snap);
   waitDone(agent, id);
   REQUIRE(chat.lastSystem.find("propose_draft") != std::string::npos);
+  REQUIRE(chat.lastSystem.find("append_to_draft") != std::string::npos);
   REQUIRE(chat.lastSystem.find("mermaid") != std::string::npos);
 }
 
@@ -237,4 +241,125 @@ TEST_CASE("AgentRuntime: non-empty system prompt replaces the compiled default",
   const std::string id = agent.start("draft", snap);
   waitDone(agent, id);
   REQUIRE(chat.lastSystem == "CUSTOM PROMPT ONLY");
+}
+
+TEST_CASE("AgentRuntime: append_to_draft extends the snapshot body", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("append_to_draft", R"({"text":"Second paragraph."})"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.isNew = false;
+  snap.path = "notes/x.md";
+  snap.title = "X";
+  snap.body = "First paragraph.";
+  const std::string id = agent.start("add a paragraph at the end", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(view.draft);
+  REQUIRE(view.draft->body.find("First paragraph.") != std::string::npos);
+  REQUIRE(view.draft->body.find("Second paragraph.") != std::string::npos);
+  bool sawAppend = false;
+  for (const auto& ev : view.events) {
+    if (ev.type == "edit" && ev.data.value("op", "") == "append") sawAppend = true;
+  }
+  REQUIRE(sawAppend);
+}
+
+TEST_CASE("AgentRuntime: replace_in_draft uses the editor selection", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("replace_in_draft", R"({"replacement":"fixed"})"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.body = "alpha\nfix me\nomega";
+  snap.selection = "fix me";
+  const std::string id = agent.start("fix the examples", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(view.draft);
+  REQUIRE(view.draft->body == "alpha\nfixed\nomega");
+}
+
+TEST_CASE("AgentRuntime: replace_in_draft rejects an ambiguous find", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(
+      toolCall("replace_in_draft", R"({"find":"same","replacement":"x"})"));
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.body = "same same";
+  const std::string id = agent.start("change one same", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE(view.draft);
+  REQUIRE(view.draft->body == "same same");
+}
+
+TEST_CASE("AgentRuntime: cancel stops an in-flight complete", "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  class BlockingChatClient : public llm::ChatClient {
+   public:
+    std::mutex m;
+    std::condition_variable cv;
+    std::atomic<bool> cancelled{false};
+
+    llm::ChatCompletion complete(const std::vector<llm::ChatMessage>&,
+                                 const nlohmann::json&) override {
+      std::unique_lock lock(m);
+      cv.wait(lock, [&] { return cancelled.load(); });
+      throw std::runtime_error("cancelled");
+    }
+    void cancel() override {
+      cancelled.store(true);
+      cv.notify_all();
+    }
+  };
+
+  BlockingChatClient chat;
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  const std::string id = agent.start("draft", snap);
+  agent.cancel(id);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "cancelled");
 }

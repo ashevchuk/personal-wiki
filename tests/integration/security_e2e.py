@@ -241,6 +241,8 @@ def run_checks(sandbox, vault):
     check("anon agent follow-up -> 401", status == 401, f"got {status}")
     status, _, _ = anon.delete("/api/agent/sessions/not-a-real-id")
     check("anon agent drop -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/agent/sessions/not-a-real-id/cancel", {})
+    check("anon agent cancel -> 401", status == 401, f"got {status}")
     status, _, _ = anon.post_json("/api/documents", {"path": "x.md", "title": "x", "body": "y"})
     check("anon create -> 401", status == 401, f"got {status}")
     status, _, _ = anon.put_json("/api/documents/x.md", {"title": "x", "body": "y"})
@@ -343,6 +345,14 @@ def run_checks(sandbox, vault):
                                       headers={"X-CSRF-Token": csrf})
     body = json.loads(raw) if raw else None
     check("agent start while unconfigured -> 404",
+          status == 404 and body and body.get("error") == "agent not configured",
+          f"got {status} {body}")
+    status, _, _ = admin.post_json("/api/agent/sessions/not-a-real-id/cancel", {})
+    check("agent cancel without csrf header -> 403", status == 403, f"got {status}")
+    status, _, raw = admin.post_json("/api/agent/sessions/not-a-real-id/cancel", {},
+                                      headers={"X-CSRF-Token": csrf})
+    body = json.loads(raw) if raw else None
+    check("agent cancel while unconfigured -> 404",
           status == 404 and body and body.get("error") == "agent not configured",
           f"got {status} {body}")
 

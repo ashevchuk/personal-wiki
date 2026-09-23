@@ -1741,6 +1741,9 @@ extension, not this repo.
 Optional cloud drafting on the edit page (`docs/llm.md`). wiki-server is
 an OpenAI-compatible chat *client*; tools run locally; `propose_draft`
 fills the editor; Save is the only disk write. MCP is not in this path.
+Follow-up edits use `append_to_draft` / `replace_in_draft` rather than
+rewriting the whole body. `search_documents` is `FtsSearch::search` (hybrid
+when embeddings are on). Account lists `compose:` rows next to MCP audit.
 
 `[llm].provider = "none"` (default) hides the button. `system_prompt` in
 config.toml replaces the compiled prompt when non-empty.

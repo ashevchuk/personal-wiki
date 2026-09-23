@@ -36,6 +36,9 @@ class ChatClient {
   virtual ~ChatClient() = default;
   virtual ChatCompletion complete(const std::vector<ChatMessage>& messages,
                                   const nlohmann::json& tools) = 0;
+  // Abort an in-flight complete() from another thread. Default is a
+  // no-op (scripted unit-test clients); CloudChatClient stops httplib.
+  virtual void cancel() {}
 };
 
 }  // namespace wikicore::llm

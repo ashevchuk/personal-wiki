@@ -18,9 +18,12 @@ window.WikiAgent = (function () {
   var logEl = null;
   var inputEl = null;
   var sendBtn = null;
+  var stopBtn = null;
   var statusEl = null;
+  var pendingEl = null;
   var sessionId = null;
-  var appliedKey = "";
+  var lastSentBody = "";
+  var pendingDraft = null;
   var pollTimer = null;
   var hooks = null;
   var seenEvents = 0;
@@ -102,8 +105,15 @@ window.WikiAgent = (function () {
       "</div>" +
       '<div class="agent-panel-log" id="agent-log"></div>' +
       '<p class="agent-status" id="agent-status" hidden></p>' +
+      '<div class="agent-panel-pending" id="agent-pending" hidden>' +
+      "<p>The editor changed after this draft was sent. Applying it would overwrite your edits.</p>" +
+      '<div class="agent-panel-actions">' +
+      '<button type="button" id="agent-keep">Keep mine</button>' +
+      '<button type="button" id="agent-apply-anyway">Apply anyway</button>' +
+      "</div></div>" +
       "<textarea id=\"agent-input\" rows=\"4\" placeholder=\"Describe the note to draft…\"></textarea>" +
       '<div class="agent-panel-actions">' +
+      '<button type="button" id="agent-stop" hidden>Stop</button>' +
       '<button type="button" id="agent-send">Send</button>' +
       "</div>" +
       '<div class="agent-panel-resize" aria-hidden="true"></div>';
@@ -111,12 +121,17 @@ window.WikiAgent = (function () {
     logEl = panel.querySelector("#agent-log");
     inputEl = panel.querySelector("#agent-input");
     sendBtn = panel.querySelector("#agent-send");
+    stopBtn = panel.querySelector("#agent-stop");
     statusEl = panel.querySelector("#agent-status");
+    pendingEl = panel.querySelector("#agent-pending");
     panel.querySelector(".agent-panel-close").addEventListener("click", function (ev) {
       ev.stopPropagation();
       hide();
     });
     sendBtn.addEventListener("click", send);
+    stopBtn.addEventListener("click", stop);
+    panel.querySelector("#agent-apply-anyway").addEventListener("click", applyPending);
+    panel.querySelector("#agent-keep").addEventListener("click", keepMine);
     inputEl.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
         ev.preventDefault();
@@ -147,6 +162,64 @@ window.WikiAgent = (function () {
     });
   }
 
+  function currentBody() {
+    return hooks && hooks.currentBody ? hooks.currentBody() : "";
+  }
+
+  function hidePending() {
+    pendingDraft = null;
+    if (pendingEl) pendingEl.hidden = true;
+  }
+
+  function showPending() {
+    if (pendingEl) pendingEl.hidden = false;
+  }
+
+  function applyFull(d) {
+    if (!d) return;
+    if (hooks && hooks.applyDraft) hooks.applyDraft(d);
+    hidePending();
+  }
+
+  function applyPending() {
+    var d = pendingDraft;
+    if (!d) return;
+    applyFull(d);
+    appendEvent({ type: "draft", data: { title: d.title, path: d.path } });
+  }
+
+  function keepMine() {
+    hidePending();
+    appendEvent({
+      type: "assistant",
+      data: { text: "Kept your editor text. The draft was not applied." },
+    });
+  }
+
+  function editorChangedSinceSend() {
+    return currentBody() !== lastSentBody;
+  }
+
+  function applyEdit(data) {
+    if (!hooks) return;
+    if (data.op === "append" && hooks.appendToBody) {
+      hooks.appendToBody(data.text || "");
+      lastSentBody = currentBody();
+      return;
+    }
+    if (data.op === "replace" && hooks.replaceInBody) {
+      var ok = hooks.replaceInBody(data.find || "", data.replacement || "");
+      if (!ok) {
+        appendEvent({
+          type: "error",
+          data: { text: "Could not apply replace — that text is no longer in the editor." },
+        });
+        return;
+      }
+      lastSentBody = currentBody();
+    }
+  }
+
   function appendEvent(ev) {
     var p = document.createElement("p");
     var type = ev.type;
@@ -162,9 +235,15 @@ window.WikiAgent = (function () {
       p.textContent = (data.name || "tool") + extra;
     } else if (type === "draft") {
       p.textContent = "Filled the editor: " + (data.title || data.path || "");
+    } else if (type === "edit") {
+      if (data.op === "append") p.textContent = "Appended to the editor.";
+      else if (data.op === "replace") p.textContent = "Updated text in the editor.";
+      else p.textContent = "Updated the editor.";
     } else if (type === "error") {
       p.className = "agent-error";
       p.textContent = data.text || "error";
+    } else if (type === "cancelled") {
+      p.textContent = "Stopped.";
     } else if (type === "done") {
       return;
     } else {
@@ -174,19 +253,43 @@ window.WikiAgent = (function () {
     logEl.scrollTop = logEl.scrollHeight;
   }
 
-  function renderView(view) {
-    if (!view) return;
-    sessionId = view.id;
-    var events = view.events || [];
-    for (var i = seenEvents; i < events.length; i++) appendEvent(events[i]);
-    seenEvents = events.length;
-    maybeApply(view.draft);
-    var running = view.status === "running";
+  function setRunning(running) {
     sendBtn.disabled = running;
+    stopBtn.hidden = !running;
+    stopBtn.disabled = !running;
     statusEl.hidden = !running;
     statusEl.textContent = running ? "Working…" : "";
     if (running) startPoll();
     else stopPoll();
+  }
+
+  function renderView(view) {
+    if (!view) return;
+    sessionId = view.id;
+    var events = view.events || [];
+    for (var i = seenEvents; i < events.length; i++) {
+      var ev = events[i];
+      if (ev.type === "draft") {
+        if (editorChangedSinceSend()) {
+          pendingDraft = view.draft;
+          showPending();
+          appendEvent({
+            type: "assistant",
+            data: { text: "Draft ready, but the editor changed after this turn was sent." },
+          });
+        } else {
+          applyFull(view.draft);
+          appendEvent(ev);
+        }
+      } else if (ev.type === "edit") {
+        applyEdit(ev.data || {});
+        appendEvent(ev);
+      } else {
+        appendEvent(ev);
+      }
+    }
+    seenEvents = events.length;
+    setRunning(view.status === "running");
   }
 
   function startPoll() {
@@ -215,22 +318,10 @@ window.WikiAgent = (function () {
     }
   }
 
-  function draftKey(d) {
-    if (!d) return "";
-    return (d.path || "") + "\n" + (d.title || "") + "\n" + (d.body || "");
-  }
-
-  function maybeApply(d) {
-    if (!d) return;
-    var key = draftKey(d);
-    if (key === appliedKey) return;
-    appliedKey = key;
-    if (hooks && hooks.applyDraft) hooks.applyDraft(d);
-  }
-
   function snapshotPayload(instruction) {
     var snap = hooks && hooks.snapshot ? hooks.snapshot() : {};
     snap.instruction = instruction;
+    lastSentBody = snap.body || "";
     return snap;
   }
 
@@ -238,6 +329,7 @@ window.WikiAgent = (function () {
     var instruction = inputEl.value.trim();
     if (!instruction) return;
     sendBtn.disabled = true;
+    hidePending();
     var url = sessionId
       ? basePath() + "/api/agent/sessions/" + encodeURIComponent(sessionId) + "/messages"
       : basePath() + "/api/agent/sessions";
@@ -270,6 +362,36 @@ window.WikiAgent = (function () {
       });
   }
 
+  function stop() {
+    if (!sessionId) return;
+    stopBtn.disabled = true;
+    fetch(basePath() + "/api/agent/sessions/" + encodeURIComponent(sessionId) + "/cancel", {
+      method: "POST",
+      headers: csrfHeaders(),
+      credentials: "same-origin",
+    })
+      .then(function (r) {
+        return r.json().then(function (body) {
+          return { ok: r.ok, body: body };
+        });
+      })
+      .then(function (res) {
+        if (res.ok) {
+          renderView(res.body);
+          return;
+        }
+        stopBtn.disabled = false;
+        appendEvent({
+          type: "error",
+          data: { text: (res.body && res.body.error) || "could not stop" },
+        });
+      })
+      .catch(function (err) {
+        stopBtn.disabled = false;
+        appendEvent({ type: "error", data: { text: err.message || "could not stop" } });
+      });
+  }
+
   function open(nextHooks) {
     hooks = nextHooks || {};
     ensurePanel();
@@ -292,9 +414,11 @@ window.WikiAgent = (function () {
       }).catch(function () {});
     }
     sessionId = null;
-    appliedKey = "";
+    lastSentBody = "";
+    pendingDraft = null;
     seenEvents = 0;
     if (logEl) logEl.innerHTML = "";
+    hidePending();
     hide();
   }
 

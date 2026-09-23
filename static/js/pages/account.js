@@ -69,8 +69,138 @@ window.WikiPages = window.WikiPages || {};
       '<p><input type="text" id="mcp-remote-cidr-input" placeholder="e.g. 203.0.113.0/24 or 2001:db8::1">' +
       ' <button type="button" id="mcp-remote-cidr-add-btn">Add</button></p>' +
       "<h3>Recent activity</h3>" +
-      '<ul id="mcp-remote-audit-list"><li class="empty">Loading&hellip;</li></ul>'
+      auditListMarkup("mcp-remote-audit-list", "mcp-remote-audit-pager")
     );
+  }
+
+  function renderDraftAuditSection() {
+    return (
+      "<h2>Draft agent</h2>" +
+      "<p>Tool calls from the edit-page Draft panel.</p>" +
+      "<h3>Recent activity</h3>" +
+      auditListMarkup("compose-audit-list", "compose-audit-pager")
+    );
+  }
+
+  var AUDIT_PAGE_SIZE = 8;
+
+  function auditListMarkup(listId, pagerId) {
+    return (
+      '<ul class="audit-log" id="' +
+      listId +
+      '"><li class="empty">Loading&hellip;</li></ul>' +
+      '<p class="audit-pager" id="' +
+      pagerId +
+      '" hidden>' +
+      '<button type="button" class="audit-pager-newer">Newer</button>' +
+      '<span class="audit-pager-status"></span>' +
+      '<button type="button" class="audit-pager-older">Older</button></p>'
+    );
+  }
+
+  function formatAuditAt(at) {
+    var m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(at || "");
+    if (!m) return at || "";
+    return m[1] + " " + m[2] + " UTC";
+  }
+
+  function bindAuditLog(listId, pagerId, entries, emptyMsg) {
+    var list = document.getElementById(listId);
+    var pager = document.getElementById(pagerId);
+    if (!list) return;
+    var page = 0;
+
+    function pageCount() {
+      if (!entries.length) return 1;
+      return Math.ceil(entries.length / AUDIT_PAGE_SIZE);
+    }
+
+    function render() {
+      if (!entries.length) {
+        list.innerHTML = '<li class="empty">' + emptyMsg + "</li>";
+        if (pager) pager.hidden = true;
+        return;
+      }
+      var pages = pageCount();
+      if (page > pages - 1) page = pages - 1;
+      if (page < 0) page = 0;
+      var slice = entries.slice(page * AUDIT_PAGE_SIZE, (page + 1) * AUDIT_PAGE_SIZE);
+      list.innerHTML = "";
+      slice.forEach(function (e) {
+        var li = document.createElement("li");
+        var status = e.success ? "ok" : "FAILED";
+        var path = e.path ? e.path + " " : "";
+        var detail = e.detail ? ": " + e.detail : "";
+        li.textContent =
+          formatAuditAt(e.at) + " — " + e.toolName + " " + path + "(" + status + detail + ")";
+        if (!e.success) li.className = "fail";
+        list.appendChild(li);
+      });
+      if (pager) {
+        pager.hidden = pages <= 1;
+        var statusEl = pager.querySelector(".audit-pager-status");
+        var newer = pager.querySelector(".audit-pager-newer");
+        var older = pager.querySelector(".audit-pager-older");
+        if (statusEl) statusEl.textContent = page + 1 + " / " + pages;
+        if (newer) newer.disabled = page === 0;
+        if (older) older.disabled = page >= pages - 1;
+      }
+    }
+
+    if (pager && pager.getAttribute("data-wired") !== "1") {
+      pager.setAttribute("data-wired", "1");
+      pager.querySelector(".audit-pager-newer").addEventListener("click", function () {
+        page -= 1;
+        render();
+      });
+      pager.querySelector(".audit-pager-older").addEventListener("click", function () {
+        page += 1;
+        render();
+      });
+    }
+    render();
+  }
+
+  function loadAuditLogs() {
+    fetch(basePath() + "/api/admin/mcp-audit-log", { credentials: "same-origin" })
+      .then(function (r) {
+        return r.json();
+      })
+      .then(function (data) {
+        var entries = data.entries || [];
+        var compose = [];
+        var mcp = [];
+        entries.forEach(function (e) {
+          if ((e.toolName || "").indexOf("compose:") === 0) compose.push(e);
+          else mcp.push(e);
+        });
+        bindAuditLog(
+          "mcp-remote-audit-list",
+          "mcp-remote-audit-pager",
+          mcp,
+          "Nothing recorded yet."
+        );
+        bindAuditLog(
+          "compose-audit-list",
+          "compose-audit-pager",
+          compose,
+          "Nothing recorded yet."
+        );
+      })
+      .catch(function () {
+        bindAuditLog(
+          "mcp-remote-audit-list",
+          "mcp-remote-audit-pager",
+          [],
+          "Failed to load."
+        );
+        bindAuditLog(
+          "compose-audit-list",
+          "compose-audit-pager",
+          [],
+          "Failed to load."
+        );
+      });
   }
 
   function wireRemoteMcpSection() {
@@ -223,35 +353,8 @@ window.WikiPages = window.WikiPages || {};
         .catch(showError);
     });
 
-    function loadAuditLog() {
-      var list = document.getElementById("mcp-remote-audit-list");
-      fetch(basePath() + "/api/admin/mcp-audit-log", { credentials: "same-origin" })
-        .then(function (r) {
-          return r.json();
-        })
-        .then(function (data) {
-          var entries = data.entries || [];
-          if (entries.length === 0) {
-            list.innerHTML = '<li class="empty">Nothing recorded yet.</li>';
-            return;
-          }
-          list.innerHTML = "";
-          entries.slice(0, 20).forEach(function (e) {
-            var li = document.createElement("li");
-            var status = e.success ? "ok" : "FAILED";
-            li.textContent =
-              e.at + " — " + e.toolName + " " + e.path + " (" + status + ": " + e.detail + ")";
-            if (!e.success) li.style.color = "#ff5555";
-            list.appendChild(li);
-          });
-        })
-        .catch(function () {
-          list.innerHTML = '<li class="empty">Failed to load.</li>';
-        });
-    }
-
     loadSettings();
-    loadAuditLog();
+    loadAuditLogs();
   }
 
   // Embeddings (semantic search) admin — GET/PUT/POST
@@ -511,7 +614,8 @@ window.WikiPages = window.WikiPages || {};
       '<p><button type="submit">Change password</button></p>' +
       "</form>" +
       renderBackupSection() +
-      renderRemoteMcpSection();
+      renderRemoteMcpSection() +
+      renderDraftAuditSection();
 
     wireBackupSection();
     wireRemoteMcpSection();

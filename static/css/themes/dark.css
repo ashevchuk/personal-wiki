@@ -897,16 +897,35 @@ a.btn:focus {
 
 /* Account page's Remote MCP section (account.js). */
 #mcp-remote-cidr-list,
-#mcp-remote-audit-list {
+.audit-log {
   list-style: none;
   padding: 0;
   margin: 0 0 1rem;
   font-size: 0.85rem;
 }
 #mcp-remote-cidr-list li,
-#mcp-remote-audit-list li {
+.audit-log li {
   padding: 0.25rem 0;
   border-bottom: 1px solid var(--border);
+}
+.audit-log li.fail {
+  color: var(--error);
+}
+.audit-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: -0.25rem 0 1rem;
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+}
+.audit-pager[hidden] {
+  display: none;
+}
+.audit-pager button {
+  font-size: 0.8rem;
+  padding: 0.15rem 0.55rem;
 }
 #mcp-remote-token-reveal {
   margin: 0.5rem 0 1rem;

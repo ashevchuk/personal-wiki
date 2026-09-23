@@ -47,25 +47,40 @@ Read-only vault tools, then one write-shaped tool that does not write:
 
 | Tool | Effect |
 |---|---|
-| `search_documents` | FTS5 search (admin scope: public + private) |
+| `search_documents` | Same search as `/api/search`: FTS5, plus semantic ranking when embeddings are enabled (admin scope: public + private) |
 | `get_document` | One document body, capped per turn |
 | `list_tags` / `list_documents` | Browse |
-| `propose_draft` | Fills path/title/tags/type/body in the editor |
+| `propose_draft` | Replaces the whole editor (new notes / full rewrites) |
+| `append_to_draft` | Appends markdown at the end of the current body |
+| `replace_in_draft` | Replaces one unique span (or the current editor selection) |
 
-`propose_draft` always replaces the **whole** editor. A follow-up like
-"add a paragraph at the end" is supposed to return the complete body with
-that change, not a fragment. The panel keeps the same in-memory session
-across Close/Draft on this edit page; Save or navigating away drops it.
-Follow-ups send a fresh snapshot of whatever is currently in the editor.
+`propose_draft` is the full-document tool. Follow-ups like "add a paragraph"
+or "fix the examples" should use `append_to_draft` / `replace_in_draft` so
+the rest of the editor is left alone. If the WYSIWYG/markdown selection is
+non-empty, the snapshot includes it and `replace_in_draft` may omit `find`.
+
+A full `propose_draft` does **not** auto-apply if the editor changed after
+the turn was sent (you typed while it was Working). The panel asks
+Apply anyway / Keep mine. Surgical `edit` events still apply to whatever
+is currently in the editor.
+
+Stop aborts the in-flight cloud HTTP call (`POST .../cancel`); Close still
+only hides the panel. Save or navigating away drops the session.
+
+The panel keeps the same in-memory session across Close/Draft on this edit
+page; Save or navigating away drops it. Follow-ups send a fresh snapshot
+of whatever is currently in the editor, including the selection.
 
 Every tool call is audit-logged with a `compose:` prefix on
-`mcp_audit_log`, success or failure.
+`mcp_audit_log`, success or failure — the Account page lists those
+separately from Remote MCP activity.
 
 Routes (admin + CSRF on mutating ones; 401/404 as appropriate):
 
 - `POST /api/agent/sessions`
 - `GET /api/agent/sessions/{id}`
 - `POST /api/agent/sessions/{id}/messages`
+- `POST /api/agent/sessions/{id}/cancel`
 - `DELETE /api/agent/sessions/{id}`
 
 `GET /api/session` includes `agentEnabled` (true only when the agent is
@@ -75,8 +90,9 @@ configured *and* the caller is authenticated).
 
 The compiled prompt asks for literal `[[vault/relative/path.md]]` /
 `[[path.md|Label]]`. Models still over-escape punctuation in JSON tool
-arguments (`\[\[path\|Label\]\]`). `propose_draft` strips those escapes
-(several passes — a doubled JSON escape is a real case).
+arguments (`\[\[path\|Label\]\]`). `propose_draft`, `append_to_draft`, and
+`replace_in_draft` strip those escapes (several passes — a doubled JSON
+escape is a real case).
 
 Toast UI's WYSIWYG writer is CommonMark: `[[path|label]]` is not a link,
 so a round-trip re-escapes the brackets (and can smash path+label into one
