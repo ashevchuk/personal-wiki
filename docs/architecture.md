@@ -1744,6 +1744,10 @@ fills the editor; Save is the only disk write. MCP is not in this path.
 Follow-up edits use `append_to_draft` / `replace_in_draft` rather than
 rewriting the whole body. `search_documents` is `FtsSearch::search` (hybrid
 when embeddings are on). Account lists `compose:` rows next to MCP audit.
+Ambiguous instructions are supposed to come back as questions in the Draft
+panel, not as a silent rewrite. The panel stashes the editor selection
+across that focus change (chip + Clear) so a fragment edit still has a
+span after the highlight is gone.
 
 `[llm].provider = "none"` (default) hides the button. `system_prompt` in
 config.toml replaces the compiled prompt when non-empty.

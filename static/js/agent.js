@@ -21,6 +21,8 @@ window.WikiAgent = (function () {
   var stopBtn = null;
   var statusEl = null;
   var pendingEl = null;
+  var selectionEl = null;
+  var selectionTextEl = null;
   var sessionId = null;
   var lastSentBody = "";
   var pendingDraft = null;
@@ -101,8 +103,27 @@ window.WikiAgent = (function () {
     panel.innerHTML =
       '<div class="agent-panel-header">' +
       "<strong>Draft</strong>" +
-      '<button type="button" class="agent-panel-close" aria-label="Close">Close</button>' +
-      "</div>" +
+      '<span class="agent-panel-header-actions">' +
+      '<button type="button" class="agent-panel-help-btn" aria-label="How to use Draft" title="How to use Draft" aria-expanded="false">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M9.1 9a3 3 0 0 1 5.83 1c0 2-3 3-3 4"/>' +
+      '<circle cx="12" cy="17" r="0.85" fill="currentColor" stroke="none"/>' +
+      "</svg></button>" +
+      '<button type="button" class="agent-panel-close" aria-label="Close" title="Close">' +
+      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      '<path d="M18 6 6 18M6 6l12 12"/>' +
+      "</svg></button>" +
+      "</span></div>" +
+      '<div class="agent-help" id="agent-help" hidden>' +
+      "<p>Searches the vault, then fills this editor. <strong>Save</strong> is still the only write to disk.</p>" +
+      "<ul>" +
+      "<li>New note or a full rewrite: describe it and Send (Ctrl/Cmd+Enter).</li>" +
+      "<li>Change a fragment: select it in the editor first. This panel remembers the selection after the editor loses focus — a chip appears; Clear drops it and the highlight in the editor.</li>" +
+      "<li>Follow-ups like \"add a paragraph\" or \"fix that span\" change only that part.</li>" +
+      "<li>If the request is unclear, the agent asks here. Answer in this box; the editor will not change until you do.</li>" +
+      "<li>Stop cancels a run. Close hides the panel; the session stays until Save or you leave the page.</li>" +
+      "<li>If you typed while it was working, a full rewrite asks Apply anyway / Keep mine.</li>" +
+      "</ul></div>" +
       '<div class="agent-panel-log" id="agent-log"></div>' +
       '<p class="agent-status" id="agent-status" hidden></p>' +
       '<div class="agent-panel-pending" id="agent-pending" hidden>' +
@@ -111,6 +132,9 @@ window.WikiAgent = (function () {
       '<button type="button" id="agent-keep">Keep mine</button>' +
       '<button type="button" id="agent-apply-anyway">Apply anyway</button>' +
       "</div></div>" +
+      '<p class="agent-selection" id="agent-selection" hidden>' +
+      '<span class="agent-selection-text"></span>' +
+      '<button type="button" class="agent-selection-clear">Clear</button></p>' +
       "<textarea id=\"agent-input\" rows=\"4\" placeholder=\"Describe the note to draft…\"></textarea>" +
       '<div class="agent-panel-actions">' +
       '<button type="button" id="agent-stop" hidden>Stop</button>' +
@@ -124,14 +148,38 @@ window.WikiAgent = (function () {
     stopBtn = panel.querySelector("#agent-stop");
     statusEl = panel.querySelector("#agent-status");
     pendingEl = panel.querySelector("#agent-pending");
+    selectionEl = panel.querySelector("#agent-selection");
+    selectionTextEl = panel.querySelector(".agent-selection-text");
+    panel.addEventListener(
+      "pointerdown",
+      function (ev) {
+        if (ev.target.closest(".agent-selection-clear")) return;
+        if (hooks && hooks.captureSelection) hooks.captureSelection();
+        refreshSelectionChip();
+      },
+      true
+    );
     panel.querySelector(".agent-panel-close").addEventListener("click", function (ev) {
       ev.stopPropagation();
       hide();
+    });
+    var helpBtn = panel.querySelector(".agent-panel-help-btn");
+    var helpEl = panel.querySelector("#agent-help");
+    helpBtn.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      var open = helpEl.hidden;
+      helpEl.hidden = !open;
+      helpBtn.setAttribute("aria-expanded", open ? "true" : "false");
     });
     sendBtn.addEventListener("click", send);
     stopBtn.addEventListener("click", stop);
     panel.querySelector("#agent-apply-anyway").addEventListener("click", applyPending);
     panel.querySelector("#agent-keep").addEventListener("click", keepMine);
+    panel.querySelector(".agent-selection-clear").addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      if (hooks && hooks.clearSelection) hooks.clearSelection();
+      refreshSelectionChip();
+    });
     inputEl.addEventListener("keydown", function (ev) {
       if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
         ev.preventDefault();
@@ -147,7 +195,7 @@ window.WikiAgent = (function () {
         panel.style.top = r.top + dy + "px";
       },
       function (target) {
-        return target.closest(".agent-panel-close");
+        return target.closest(".agent-panel-close, .agent-panel-help-btn");
       }
     );
     bindPointerDrag(panel.querySelector(".agent-panel-resize"), function (dx, dy) {
@@ -175,10 +223,33 @@ window.WikiAgent = (function () {
     if (pendingEl) pendingEl.hidden = false;
   }
 
+  function selectionPreview(text) {
+    var oneLine = String(text || "").replace(/\s+/g, " ").trim();
+    if (oneLine.length > 72) oneLine = oneLine.slice(0, 71) + "…";
+    return oneLine;
+  }
+
+  function refreshSelectionChip() {
+    if (!selectionEl) return;
+    var text = hooks && hooks.currentSelection ? hooks.currentSelection() : "";
+    if (!text) {
+      selectionEl.hidden = true;
+      return;
+    }
+    selectionEl.hidden = false;
+    selectionTextEl.textContent = "Selection: " + selectionPreview(text);
+  }
+
+  function syncSelection() {
+    if (!panel || panel.hidden) return;
+    refreshSelectionChip();
+  }
+
   function applyFull(d) {
     if (!d) return;
     if (hooks && hooks.applyDraft) hooks.applyDraft(d);
     hidePending();
+    refreshSelectionChip();
   }
 
   function applyPending() {
@@ -205,6 +276,7 @@ window.WikiAgent = (function () {
     if (data.op === "append" && hooks.appendToBody) {
       hooks.appendToBody(data.text || "");
       lastSentBody = currentBody();
+      refreshSelectionChip();
       return;
     }
     if (data.op === "replace" && hooks.replaceInBody) {
@@ -217,6 +289,7 @@ window.WikiAgent = (function () {
         return;
       }
       lastSentBody = currentBody();
+      refreshSelectionChip();
     }
   }
 
@@ -330,6 +403,9 @@ window.WikiAgent = (function () {
     if (!instruction) return;
     sendBtn.disabled = true;
     hidePending();
+    var payload = snapshotPayload(instruction);
+    if (hooks && hooks.clearSelection) hooks.clearSelection();
+    refreshSelectionChip();
     var url = sessionId
       ? basePath() + "/api/agent/sessions/" + encodeURIComponent(sessionId) + "/messages"
       : basePath() + "/api/agent/sessions";
@@ -337,7 +413,7 @@ window.WikiAgent = (function () {
       method: "POST",
       headers: csrfHeaders(),
       credentials: "same-origin",
-      body: JSON.stringify(snapshotPayload(instruction)),
+      body: JSON.stringify(payload),
     })
       .then(function (r) {
         return r.json().then(function (body) {
@@ -395,6 +471,8 @@ window.WikiAgent = (function () {
   function open(nextHooks) {
     hooks = nextHooks || {};
     ensurePanel();
+    if (hooks.captureSelection) hooks.captureSelection();
+    refreshSelectionChip();
     panel.hidden = false;
     inputEl.focus();
   }
@@ -424,5 +502,10 @@ window.WikiAgent = (function () {
 
   window.addEventListener("pagehide", endSession);
 
-  return { open: open, close: hide, endSession: endSession };
+  return {
+    open: open,
+    close: hide,
+    endSession: endSession,
+    syncSelection: syncSelection,
+  };
 })();

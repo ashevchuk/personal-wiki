@@ -58,18 +58,32 @@ Read-only vault tools, then one write-shaped tool that does not write:
 or "fix the examples" should use `append_to_draft` / `replace_in_draft` so
 the rest of the editor is left alone. If the WYSIWYG/markdown selection is
 non-empty, the snapshot includes it and `replace_in_draft` may omit `find`.
+The visible editor highlight goes away when the Draft panel takes focus;
+the panel stashes the last non-empty range (shown as a chip) from a
+pointer-down on Draft / the panel, before that blur. Clear drops the
+chip and collapses the highlight in the editor so focusing the prompt
+does not recapture it; selecting again in the editor restores the chip.
 
 A full `propose_draft` does **not** auto-apply if the editor changed after
 the turn was sent (you typed while it was Working). The panel asks
 Apply anyway / Keep mine. Surgical `edit` events still apply to whatever
 is currently in the editor.
 
+If the instruction is ambiguous, the compiled prompt tells the model to
+ask one to three short questions **in the panel** and not to call
+`propose_draft` / `append_to_draft` / `replace_in_draft` until you
+answer. A text-only reply is a normal assistant event; the editor is
+left alone. Search/get are still allowed first so the questions can be
+specific. A clear request (selection + "fix this", "add a paragraph at
+the end", an explicit rewrite) should not stall.
+
 Stop aborts the in-flight cloud HTTP call (`POST .../cancel`); Close still
 only hides the panel. Save or navigating away drops the session.
 
 The panel keeps the same in-memory session across Close/Draft on this edit
 page; Save or navigating away drops it. Follow-ups send a fresh snapshot
-of whatever is currently in the editor, including the selection.
+of whatever is currently in the editor, including the selection. A
+question-mark control in the panel header toggles this usage summary.
 
 Every tool call is audit-logged with a `compose:` prefix on
 `mcp_audit_log`, success or failure — the Account page lists those

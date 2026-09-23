@@ -38,6 +38,15 @@ const char* kSystemPrompt =
     "line, or it renders as a plain code block instead of a diagram.\n"
     "Reuse tags that already exist when they fit. Default type is \"note\". "
     "Write in the same language as the user's instruction. "
+    "If the instruction is ambiguous — which document or span, what to "
+    "keep versus replace, missing path/title, or two reasonable readings "
+    "— ask one to three short questions in the user's language and stop. "
+    "Do not call propose_draft, append_to_draft, or replace_in_draft "
+    "until the human answers in this panel. Search and get_document are "
+    "fine first, so the questions can be specific. Do not stall on a "
+    "clear request: a non-empty selection plus \"fix this\", \"add a "
+    "paragraph at the end\", or an explicit full rewrite is enough to "
+    "act. "
     "Do not claim you saved anything.";
 
 // Models often over-escape markdown punctuation in JSON tool arguments
@@ -273,7 +282,8 @@ nlohmann::json AgentRuntime::toolSchemas() {
        {{"name", "propose_draft"},
         {"description",
          "Replace the whole editor with this document. Use only for a new "
-         "note or a requested full rewrite. For a local change, use "
+         "note or a requested full rewrite, and only after any needed "
+         "clarifying questions have been answered. For a local change, use "
          "append_to_draft or replace_in_draft instead. Does not save. "
          "Wiki-links in body must be literal [[path.md]] or "
          "[[path.md|Label]], never backslash-escaped."},
@@ -293,7 +303,8 @@ nlohmann::json AgentRuntime::toolSchemas() {
        {{"name", "append_to_draft"},
         {"description",
          "Append markdown to the end of the current editor body. Use this "
-         "for 'add a paragraph' / 'add a section at the end'. Does not save."},
+         "for 'add a paragraph' / 'add a section at the end', once the "
+         "request is clear. Does not save."},
         {"parameters",
          {{"type", "object"},
           {"properties", {{"text", strProp("Markdown to append")}}},
@@ -306,7 +317,7 @@ nlohmann::json AgentRuntime::toolSchemas() {
         {"description",
          "Replace one unique span in the current body. If the editor has a "
          "selection, omit find and that selection is used. find must match "
-         "exactly once. Does not save."},
+         "exactly once. Call only after the request is clear. Does not save."},
         {"parameters",
          {{"type", "object"},
           {"properties",

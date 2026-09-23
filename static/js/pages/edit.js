@@ -802,6 +802,76 @@ window.WikiPages = window.WikiPages || {};
     }
     editor.on("change", scheduleMermaidPreviewRefresh);
     editor.on("changeMode", scheduleMermaidPreviewRefresh);
+
+    // Toast UI drops the visible caret/selection when the Draft panel
+    // takes focus. Remember a non-empty span *before* that blur (mouseup
+    // in the editor, plus pointerdown on Draft/the panel) so Send still
+    // sees what the user highlighted. Clear both the stash and the
+    // editor's own selection, otherwise the next click in the prompt
+    // recaptures it.
+    var lastEditorSelection = "";
+    var ignoreEditorSelection = false;
+    function readEditorSelection() {
+      try {
+        return editor.getSelectedText() || "";
+      } catch (e) {
+        return "";
+      }
+    }
+    function collapseEditorSelection() {
+      try {
+        var range = editor.getSelection();
+        if (range && range[0] != null) {
+          editor.setSelection(range[0], range[0]);
+        }
+      } catch (e) {}
+    }
+    function syncAgentSelectionChip() {
+      if (window.WikiAgent && window.WikiAgent.syncSelection) {
+        window.WikiAgent.syncSelection();
+      }
+    }
+    function rememberSelection(clearIfEmpty) {
+      if (ignoreEditorSelection && !clearIfEmpty) return;
+      var text = readEditorSelection();
+      if (text) {
+        lastEditorSelection = text;
+        ignoreEditorSelection = false;
+        syncAgentSelectionChip();
+      } else if (clearIfEmpty) {
+        lastEditorSelection = "";
+      }
+    }
+    // A user gesture in the editor always wins over Clear's ignore flag:
+    // the next non-empty range is a new selection, not the one we just
+    // collapsed. rAF waits until Toast UI has committed the range
+    // (mouseup can beat ProseMirror's own handler).
+    function acceptEditorSelection() {
+      requestAnimationFrame(function () {
+        var text = readEditorSelection();
+        if (text) {
+          lastEditorSelection = text;
+          ignoreEditorSelection = false;
+          syncAgentSelectionChip();
+          return;
+        }
+        if (ignoreEditorSelection) return;
+        lastEditorSelection = "";
+        syncAgentSelectionChip();
+      });
+    }
+    function selectionForAgent() {
+      return lastEditorSelection
+        ? window.WikiCommon.wikiBodyFromEditor(lastEditorSelection)
+        : "";
+    }
+    function clearRememberedSelection() {
+      collapseEditorSelection();
+      lastEditorSelection = "";
+      ignoreEditorSelection = true;
+    }
+    document.getElementById("editor").addEventListener("mouseup", acceptEditorSelection);
+    document.getElementById("editor").addEventListener("keyup", acceptEditorSelection);
     // Also cover the initial mount: an existing document opened straight
     // into Markdown mode (or with a saved user preference -- editType
     // isn't currently persisted, but this costs nothing to be correct
@@ -838,15 +908,17 @@ window.WikiPages = window.WikiPages || {};
 
     var draftBtn = document.getElementById("f-draft-btn");
     if (draftBtn && window.WikiAgent) {
+      draftBtn.addEventListener(
+        "pointerdown",
+        function () {
+          rememberSelection(false);
+        },
+        true
+      );
       draftBtn.addEventListener("click", function () {
+        rememberSelection(false);
         window.WikiAgent.open({
           snapshot: function () {
-            var rawSelection = "";
-            try {
-              rawSelection = editor.getSelectedText() || "";
-            } catch (e) {
-              rawSelection = "";
-            }
             return {
               path: pathInput.value.trim(),
               title: titleInput.value.trim(),
@@ -860,16 +932,20 @@ window.WikiPages = window.WikiPages || {};
                   return t.length > 0;
                 }),
               body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
-              selection: rawSelection
-                ? window.WikiCommon.wikiBodyFromEditor(rawSelection)
-                : "",
+              selection: selectionForAgent(),
               isNew: isNew,
             };
           },
+          captureSelection: function () {
+            rememberSelection(false);
+          },
+          currentSelection: selectionForAgent,
+          clearSelection: clearRememberedSelection,
           currentBody: function () {
             return window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
           },
           applyDraft: function (draft) {
+            lastEditorSelection = "";
             if (draft.path && isNew && !pathInput.readOnly) {
               pathInput.value = draft.path;
             }
@@ -883,6 +959,7 @@ window.WikiPages = window.WikiPages || {};
             }
           },
           appendToBody: function (text) {
+            lastEditorSelection = "";
             var body = window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown());
             if (body && body.charAt(body.length - 1) !== "\n") body += "\n";
             if (body) body += "\n";
@@ -896,6 +973,7 @@ window.WikiPages = window.WikiPages || {};
             if (idx < 0) return false;
             var next = body.slice(0, idx) + replacement + body.slice(idx + find.length);
             editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(next));
+            lastEditorSelection = "";
             return true;
           },
         });

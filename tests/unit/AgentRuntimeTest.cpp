@@ -219,6 +219,7 @@ TEST_CASE("AgentRuntime: empty system prompt keeps the compiled default",
   waitDone(agent, id);
   REQUIRE(chat.lastSystem.find("propose_draft") != std::string::npos);
   REQUIRE(chat.lastSystem.find("append_to_draft") != std::string::npos);
+  REQUIRE(chat.lastSystem.find("until the human answers") != std::string::npos);
   REQUIRE(chat.lastSystem.find("mermaid") != std::string::npos);
 }
 
@@ -241,6 +242,40 @@ TEST_CASE("AgentRuntime: non-empty system prompt replaces the compiled default",
   const std::string id = agent.start("draft", snap);
   waitDone(agent, id);
   REQUIRE(chat.lastSystem == "CUSTOM PROMPT ONLY");
+}
+
+TEST_CASE("AgentRuntime: a text-only reply is visible and does not fill a draft",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+
+  ScriptedChatClient chat;
+  llm::ChatCompletion ask;
+  ask.content = "Which folder should this note live in?";
+  chat.replies.push_back(ask);
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat);
+  llm::AgentDocumentSnapshot snap;
+  snap.isNew = true;
+  const std::string id = agent.start("write something about pointers", snap);
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  REQUIRE_FALSE(view.draft);
+  bool sawAsk = false;
+  for (const auto& ev : view.events) {
+    if (ev.type == "assistant" &&
+        ev.data.value("text", "").find("Which folder") != std::string::npos) {
+      sawAsk = true;
+    }
+  }
+  REQUIRE(sawAsk);
 }
 
 TEST_CASE("AgentRuntime: append_to_draft extends the snapshot body", "[AgentRuntime]") {
