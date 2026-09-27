@@ -534,7 +534,7 @@ swappable, independent stylesheets, picked from a small icon in the sidebar.
   diffs" would mean understanding two files to know what a given selector
   actually renders as; three complete files mean a fourth theme later is
   "write one new file," never "figure out which of several files a rule
-  lives in." The genuinely theme-SPECIFIC pieces (green's Orbitron import,
+  lives in." The genuinely theme-SPECIFIC pieces (green's Ubuntu Sans Mono import,
   neon glow via `text-shadow`, shouting-caps buttons) simply don't exist
   in `dark.css`/`classic.css` at all, rather than being toggled off by a
   variable.

@@ -12,7 +12,7 @@
    regardless of which SITE theme is active (see pages/edit.js), so that
    fix isn't this file's concern to duplicate three times over. */
 
-@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Ubuntu+Sans+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap');
 
 * {
   box-sizing: border-box;
@@ -36,6 +36,10 @@
      can be tuned independently per theme. */
   --panel-bg-2: #001a00;
   --border: rgba(0, 255, 0, 0.35);
+  /* Focus rings, dialogs, menus (box-shadow) — not body copy. A
+     text-shadow on html/body used to use this too; it smeared long
+     documents into unreadable phosphor bloom. Hover glows on links
+     still set their own text-shadow. */
   --glow: 0 0 6px rgba(0, 255, 0, 0.65);
   /* Link color kept separate from --fg (body text) even though this
      theme sets them identically — dark.css/classic.css don't, and a
@@ -127,8 +131,19 @@ body {
   min-height: 100vh;
   background: var(--bg);
   color: var(--fg);
-  font-family: 'Orbitron', 'Courier New', monospace;
-  text-shadow: var(--glow);
+  font-family: 'Ubuntu Sans Mono', ui-monospace, 'Courier New', monospace;
+}
+
+/* Reverse video — the browser's dark-scheme selection is a dim blue
+   wash that disappears against #00ff00 on black. Inputs/textarea get
+   their own copy: Chromium does not paint `::selection` inside form
+   controls from the unprefixed document rule. */
+::selection,
+input::selection,
+textarea::selection {
+  background: var(--fg);
+  color: var(--bg);
+  text-shadow: none;
 }
 
 a {
@@ -1003,7 +1018,7 @@ a.btn:focus {
 .diff-view {
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: 'Courier New', monospace;
+  font-family: inherit;
   font-size: 0.85rem;
   background: var(--panel-bg-2);
   border: 1px solid var(--border);
@@ -1342,7 +1357,7 @@ pre code[class*="language-"] {
   padding: 0.8rem;
   margin: 0.8rem 0;
   overflow-x: auto;
-  font-family: 'Courier New', monospace;
+  font-family: inherit;
   font-size: 0.9rem;
   line-height: 1.5;
 }
@@ -1437,7 +1452,7 @@ pre code[class*="language-"] {
    — real PDF generation is the browser's own "Save as PDF" print
    destination, not a server-side renderer; see the button's own comment
    for why that's the deliberate choice here). The screen theme (black bg,
-   neon-green glowing text, Orbitron display font) is exactly wrong for a
+   neon-green glowing text, Ubuntu Sans Mono) is exactly wrong for a
    printed page — unreadable in black-and-white, wastes toner/ink trying to
    reproduce a glow that doesn't exist on paper, and a display font meant
    to look like a terminal is a bad fit for body text on a page. This
