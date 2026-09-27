@@ -31,7 +31,13 @@ class Statement {
   Statement& operator=(const Statement&) = delete;
 
   Statement& bind(int index, const std::string& value) {
-    sqlite3_bind_text(stmt_, index, value.c_str(), -1, SQLITE_TRANSIENT);
+    // Explicit byte length, not -1 -- -1 tells SQLite to call strlen() on
+    // the C string, which stops at the first embedded '\0' rather than
+    // value.size(), silently truncating any value containing a null byte
+    // (std::string/std::getline carry embedded nulls through just fine;
+    // only this C-API boundary was dropping them).
+    sqlite3_bind_text(stmt_, index, value.data(), static_cast<int>(value.size()),
+                       SQLITE_TRANSIENT);
     return *this;
   }
 
@@ -57,9 +63,14 @@ class Statement {
   bool step() { return sqlite3_step(stmt_) == SQLITE_ROW; }
 
   std::string columnText(int index) const {
+    // sqlite3_column_bytes() gives the real byte length -- constructing
+    // via the bare `const char*` ctor would call strlen() instead and
+    // truncate at the first embedded '\0', the same class of bug as
+    // bind() above.
     const auto* text =
         reinterpret_cast<const char*>(sqlite3_column_text(stmt_, index));
-    return text ? std::string(text) : std::string();
+    if (!text) return std::string();
+    return std::string(text, static_cast<size_t>(sqlite3_column_bytes(stmt_, index)));
   }
 
   int64_t columnInt64(int index) const {
