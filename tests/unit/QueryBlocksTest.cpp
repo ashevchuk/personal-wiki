@@ -96,6 +96,34 @@ TEST_CASE("QueryBlocks: tag filter requires ALL listed tags (AND, not OR)",
   REQUIRE(result.rows[0].path == "both.md");
 }
 
+TEST_CASE("QueryBlocks: sloppy whitespace around keys/values/commas is tolerated",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("both.md", "public", {"cpp", "cheatsheet"}, "note"));
+  updater.upsertOne(makeEntry("cpp-only.md", "public", {"cpp"}, "note"));
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+
+  // Leading/trailing blank lines, indentation, tabs, extra spaces around
+  // ':' and ',', and CRLF line endings -- none of this is special syntax,
+  // it's just sloppy formatting a human (or a pasted-from-Windows editor)
+  // would produce, and every layer of the parser trims it away.
+  const std::string raw =
+      "\r\n"
+      "   \n"
+      "  tag  :  cpp ,   cheatsheet  \r\n"
+      "\tTYPE:   note\t\r\n"
+      "  \r\n";
+  auto result = qb.parseAndRun(raw, true);
+  REQUIRE(result.ok);
+  REQUIRE(result.rows.size() == 1);
+  REQUIRE(result.rows[0].path == "both.md");
+}
+
 TEST_CASE("QueryBlocks: type filter matches exactly, excludes everything else",
           "[QueryBlocks]") {
   TempDb db;
