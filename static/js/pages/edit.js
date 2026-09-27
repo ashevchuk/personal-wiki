@@ -779,13 +779,26 @@ window.WikiPages = window.WikiPages || {};
       // load the YouTube page URL as a normal <img> and show a broken
       // image icon while editing.
       //
-      // codeBlock: same idea, for ```mermaid blocks -- see
-      // mermaid-editor-preview.js for what it actually renders and its
-      // one real limitation (Markdown-mode Preview panel only, never the
-      // WYSIWYG canvas -- confirmed empirically, not assumed).
+      // codeBlock: same idea, for ```mermaid and ```query blocks -- see
+      // mermaid-editor-preview.js / query-editor-preview.js for what each
+      // actually renders and their shared limitation (Markdown-mode Preview
+      // panel only, never the WYSIWYG canvas -- confirmed empirically, not
+      // assumed). Toast UI only takes ONE function per node type here, so
+      // this dispatches on node.info instead of picking one handler --
+      // each module's own internal "wrong node.info -> context.origin()"
+      // guard stays in place too, harmlessly redundant, so either module
+      // still works fine on its own if used outside this dispatcher.
       customHTMLRenderer: {
         image: window.WikiYouTubeEmbedPreview.customImageRenderer,
-        codeBlock: window.WikiMermaidEditorPreview.customCodeBlockRenderer,
+        codeBlock: function (node, context) {
+          if (node.info === "mermaid") {
+            return window.WikiMermaidEditorPreview.customCodeBlockRenderer(node, context);
+          }
+          if (node.info === "query") {
+            return window.WikiQueryEditorPreview.customCodeBlockRenderer(node, context);
+          }
+          return context.origin();
+        },
       },
     });
 
@@ -807,6 +820,21 @@ window.WikiPages = window.WikiPages || {};
     }
     editor.on("change", scheduleMermaidPreviewRefresh);
     editor.on("changeMode", scheduleMermaidPreviewRefresh);
+
+    // Same idea for ```query blocks, on its own longer debounce -- unlike
+    // mermaid's free local re-render, this fires a real HTTP request to
+    // /api/query (a real SQLite query) per visible block, so re-running it
+    // on every single keystroke the way mermaid's 300ms allows would be
+    // wasteful. See query-editor-preview.js's own comment.
+    var queryPreviewTimer = null;
+    function scheduleQueryPreviewRefresh() {
+      if (queryPreviewTimer) clearTimeout(queryPreviewTimer);
+      queryPreviewTimer = setTimeout(function () {
+        window.WikiQueryEditorPreview.refreshPreview();
+      }, 600);
+    }
+    editor.on("change", scheduleQueryPreviewRefresh);
+    editor.on("changeMode", scheduleQueryPreviewRefresh);
 
     function currentSaveFingerprint() {
       return JSON.stringify({
@@ -1216,14 +1244,16 @@ window.WikiPages = window.WikiPages || {};
     // either way) should show its diagrams immediately, not only after
     // the first edit.
     scheduleMermaidPreviewRefresh();
+    scheduleQueryPreviewRefresh();
     // Also watch for the Write/Preview tab toggle specifically -- a bare
     // tab click fires neither `change` nor `changeMode` (confirmed
-    // empirically), so without this, a diagram typed while on the Write
-    // tab would never actually render once the user switches to Preview.
-    // See mermaid-editor-preview.js's own comment for the real,
+    // empirically), so without this, a diagram or query block typed while
+    // on the Write tab would never actually render once the user switches
+    // to Preview. See mermaid-editor-preview.js's own comment for the real,
     // previously-live bug (flowchart diagrams silently breaking) this
     // also fixes as a side effect.
     window.WikiMermaidEditorPreview.watchPreviewVisibility();
+    window.WikiQueryEditorPreview.watchPreviewVisibility();
     watchCodeBlockLanguageInputs(document.getElementById("editor"));
 
     // Re-fit on viewport resize (window resize, or a mobile browser's

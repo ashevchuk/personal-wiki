@@ -45,6 +45,7 @@ window.WikiQueryBlock = (function () {
   }
 
   function replaceWithMessage(node, className, text) {
+    if (!node.parentNode) return;
     var wrapper = document.createElement("div");
     wrapper.className = className;
     wrapper.textContent = text;
@@ -63,6 +64,14 @@ window.WikiQueryBlock = (function () {
         });
       })
       .then(function (body) {
+        // node.parentNode can already be null here -- query-editor-preview.js
+        // calls renderIn() repeatedly (debounced, on every editor change), and
+        // a slow fetch can resolve after Toast UI has already regenerated the
+        // Preview panel and discarded this exact node in favor of a fresh one.
+        // The one-shot document VIEW page never hits this (renderIn runs once,
+        // right after load, on nodes that stay put), which is why this wasn't
+        // needed before the editor started reusing the same render path.
+        if (!node.parentNode) return;
         var wrapper = document.createElement("div");
         wrapper.className = "query-block";
         wrapper.innerHTML = renderTable(body.rows);
