@@ -93,8 +93,15 @@ window.WikiPages = window.WikiPages || {};
     // depending on how DocumentRoutes/PathGuard happen to answer a
     // trailing-slash or empty path, which was never a case worth
     // exercising over the network just to throw the answer away.
+    // Quick-add entry points (sidebar "+ Bookmark", see folder.js's
+    // newDocument) pass the preset as a query param rather than a path
+    // segment -- the path itself stays exactly what the user types next,
+    // same as a plain "+ New". Only ever applied to a genuinely NEW
+    // document below; an existing document's own saved `type` always wins.
+    var presetType = new URLSearchParams(window.location.search).get("type") || "";
+
     if (!docPath || docPath.endsWith("/")) {
-      buildForm(container, docPath, { isNew: true }, session);
+      buildForm(container, docPath, { isNew: true, type: presetType }, session);
       return;
     }
 
@@ -102,7 +109,7 @@ window.WikiPages = window.WikiPages || {};
       credentials: "same-origin",
     })
       .then(function (resp) {
-        if (resp.status === 404) return { isNew: true };
+        if (resp.status === 404) return { isNew: true, type: presetType };
         if (!resp.ok) throw new Error("HTTP " + resp.status);
         return resp.json().then(function (doc) {
           doc.isNew = false;

@@ -27,6 +27,7 @@
   // GET /api/session of its own for the SAME chrome decision.
   function wireSidebarAuthChrome(session) {
     var newDocBtn = document.getElementById("sidebar-new-doc");
+    var newBookmarkBtn = document.getElementById("sidebar-new-bookmark");
     var accountLink = document.getElementById("sidebar-account");
     var logoutBtn = document.getElementById("sidebar-logout");
     var loginLink = document.getElementById("sidebar-login");
@@ -59,6 +60,14 @@
       newDocBtn.addEventListener("click", function () {
         if (window.WikiPages && window.WikiPages.newDocument) {
           window.WikiPages.newDocument("");
+        }
+      });
+    }
+    if (newBookmarkBtn) {
+      newBookmarkBtn.hidden = false;
+      newBookmarkBtn.addEventListener("click", function () {
+        if (window.WikiPages && window.WikiPages.newDocument) {
+          window.WikiPages.newDocument("", "bookmark");
         }
       });
     }

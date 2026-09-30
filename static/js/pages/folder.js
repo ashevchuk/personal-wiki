@@ -33,8 +33,10 @@ window.WikiPages = window.WikiPages || {};
   // pre-filled with `prefix` — typing the filename is now the SAME
   // form field a rename/inspect of the path would use anyway, not a
   // separate one-shot dialog.
-  window.WikiPages.newDocument = function (prefix) {
-    window.location.href = basePath() + "/edit/" + encodeVaultPath(prefix);
+  window.WikiPages.newDocument = function (prefix, presetType) {
+    var url = basePath() + "/edit/" + encodeVaultPath(prefix);
+    if (presetType) url += "?type=" + encodeURIComponent(presetType);
+    window.location.href = url;
   };
 
   function renderContents(contentsEl, folderPath, docs) {

@@ -266,6 +266,16 @@
         <path d="M12 5v14M5 12h14"/>
       </svg>
     </button>
+    <!-- Quick-add: same "+ New" form (buildForm in edit.js), just with
+         Type pre-filled "bookmark" via a ?type= query param -- no separate
+         modal/UI, a bookmark is a plain document like any other, this only
+         saves retyping the type every time. See folder.js's newDocument
+         and edit.js's renderEdit for the two-line plumbing. -->
+    <button type="button" id="sidebar-new-bookmark" hidden aria-label="New bookmark" title="New bookmark">
+      <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/>
+      </svg>
+    </button>
     <!-- Admin/Log out/Log in are icon-only (aria-label/title carry the
          name text lost from view — a bare glyph means nothing to a
          screen reader on its own, and a sighted visitor gets the same
