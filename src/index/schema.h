@@ -221,4 +221,48 @@ CREATE TABLE agent_chats (
 CREATE INDEX idx_agent_chats_updated ON agent_chats(updated_at DESC);
 )sql";
 
+// Migration 7: GFM task-list items (`- [ ] text` / `- [x] text`),
+// extracted from a document's own body at index time (see
+// util/TodoItems.h) so `todos:` in QueryBlocks can list/filter them
+// vault-wide without re-parsing every document's raw markdown on every
+// query. Mirrors document_links exactly: ON DELETE CASCADE (a deleted
+// document's items disappear with it), delete-then-reinsert the whole set
+// on every upsertOne rather than diffing (same reasoning as
+// replaceLinkRows/replaceTagLinks -- this runs on a single document's own
+// save/rescan, never a hot path). The checkbox lines themselves stay the
+// single source of truth in the markdown; this table is exactly as
+// disposable/rebuildable as the rest of the index.
+inline constexpr const char* kMigration7 = R"sql(
+CREATE TABLE todo_items (
+  id             INTEGER PRIMARY KEY,
+  document_rowid INTEGER NOT NULL REFERENCES documents(rowid_id) ON DELETE CASCADE,
+  line_no        INTEGER NOT NULL,
+  checked        INTEGER NOT NULL,
+  text           TEXT NOT NULL
+);
+
+CREATE INDEX idx_todo_items_document ON todo_items(document_rowid);
+CREATE INDEX idx_todo_items_checked ON todo_items(checked);
+)sql";
+
+// Migration 8: external `[label](https://...)` links extracted from a
+// document's own body (see util/LinkItems.h) -- lets `links: true` in
+// QueryBlocks surface every embedded bookmark-style link across the whole
+// vault (e.g. a hand-curated "C++ tutorials" article listing several
+// sites with a one-line description each), not just documents whose
+// ENTIRE purpose is one link (`type: bookmark`, a plain convention with
+// no schema of its own). Exactly the same disposable/rebuildable,
+// delete-then-reinsert-on-upsert shape as todo_items right above.
+inline constexpr const char* kMigration8 = R"sql(
+CREATE TABLE link_items (
+  id             INTEGER PRIMARY KEY,
+  document_rowid INTEGER NOT NULL REFERENCES documents(rowid_id) ON DELETE CASCADE,
+  line_no        INTEGER NOT NULL,
+  url            TEXT NOT NULL,
+  label          TEXT NOT NULL
+);
+
+CREATE INDEX idx_link_items_document ON link_items(document_rowid);
+)sql";
+
 }  // namespace wikicore::index::schema

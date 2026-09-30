@@ -17,6 +17,10 @@ window.WikiQueryBlock = (function () {
   var escapeHtml = WikiCommon.escapeHtml;
   var encodeVaultPath = WikiCommon.encodeVaultPath;
 
+  function isExternalUrl(path) {
+    return /^https?:\/\//i.test(path);
+  }
+
   function renderTable(rows) {
     if (rows.length === 0) {
       return '<p class="query-empty">No matching documents.</p>';
@@ -27,12 +31,23 @@ window.WikiQueryBlock = (function () {
       "</tr></thead><tbody>";
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
+      // `links: true` rows carry the external URL itself in `path` (see
+      // QueryBlocks.cpp's own comment on that key) -- link straight to
+      // it, not through this app's own /d/{path} document-view route.
+      // rel="noopener noreferrer" since this leaves the site entirely,
+      // same discipline any other outbound link on the page would want.
+      var href = isExternalUrl(row.path)
+        ? escapeHtml(row.path)
+        : basePath() + "/d/" + encodeVaultPath(row.path);
+      var relAttr = isExternalUrl(row.path)
+        ? ' target="_blank" rel="noopener noreferrer"'
+        : "";
       html +=
-        "<tr><td><a href=\"" +
-        basePath() +
-        "/d/" +
-        encodeVaultPath(row.path) +
-        '">' +
+        '<tr><td><a href="' +
+        href +
+        '"' +
+        relAttr +
+        ">" +
         escapeHtml(row.title || row.path) +
         "</a></td><td>" +
         escapeHtml(row.tags || "") +

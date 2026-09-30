@@ -33,6 +33,8 @@ Save the document, view it, and the block becomes a real table: Title / Tags
 | `order` | `asc` or `desc` — defaults to `desc` for `updated`/`created`, `asc` for `title`/`path` | `order: asc` |
 | `limit` | 1–100 (default: 20) | `limit: 10` |
 | `search` | Free text — full-text search, same engine as the main search page | `search: beet soup` |
+| `todos` | `open`, `done`, or `all` — GFM task-list lines (`- [ ] text`), not documents | `todos: open` |
+| `links` | `true` — external `[label](https://...)` links embedded in a document, not documents | `links: true` |
 
 Combine as many as you want — each line is a separate filter, all ANDed
 together. Unrecognized keys, a key repeated on two lines, or a value outside
@@ -72,6 +74,49 @@ sort/order can't be combined with search") instead of a table.
 ````
 ```query
 search: beet soup
+```
+````
+
+## Task lists across the whole vault with `todos:`
+
+`todos:` finds GFM task-list lines (`- [ ] buy milk` / `- [x] pay rent`) —
+each row is one CHECKBOX, not one document, so a single document with three
+open tasks contributes three rows. `tag`, `type`, `folder`, and `limit`
+still filter which DOCUMENT an item has to belong to; `sort`, `order`, and
+`orphans` have no meaning against individual checkbox lines (results are
+always ordered by document path, then the item's own position in it) and
+are a parse error when combined, same discipline as `search:` above.
+
+````
+```query
+todos: open
+```
+````
+
+**Scoped to one project's open tasks:**
+````
+```query
+todos: open
+folder: projects/wiki-app/
+```
+````
+
+## Embedded bookmarks with `links:`
+
+`links:` finds external `[label](https://...)` links embedded ANYWHERE in a
+document's body — one row per link, not per document. This is the third
+way to keep bookmarks in this app, alongside a dedicated `type: bookmark`
+document per link (see the sidebar's "+ Bookmark" quick-add) and a plain
+hand-written list article: write a normal document (say, "C++ Tutorials")
+with a short description next to each link, and `links: true` still
+surfaces every one of them vault-wide, from inside that one article.
+`![alt](url)` image syntax is never counted — only an actual link. The
+table's title column links straight to the external site, not back to the
+document that mentioned it (opens in a new tab).
+
+````
+```query
+links: true
 ```
 ````
 

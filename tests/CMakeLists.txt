@@ -23,6 +23,8 @@ add_executable(unit_tests
   unit/DatabaseRecoverTest.cpp
   unit/VaultWatcherTest.cpp
   unit/WikiLinksTest.cpp
+  unit/TodoItemsTest.cpp
+  unit/LinkItemsTest.cpp
   unit/YouTubeEmbedTest.cpp
   unit/MarkdownRendererTest.cpp
   unit/SnapshotStoreTest.cpp

@@ -77,6 +77,8 @@ add_library(wikicore STATIC
   src/util/MarkdownRenderer.cpp
   src/util/WikiLinks.cpp
   src/util/YouTubeEmbed.cpp
+  src/util/TodoItems.cpp
+  src/util/LinkItems.cpp
   src/embeddings/NullEmbeddingProvider.cpp
   src/embeddings/EmbeddingProviderFactory.cpp
   src/embeddings/EmbeddingChunks.cpp

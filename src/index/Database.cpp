@@ -36,9 +36,10 @@ const char* kSessionPragmas[] = {
 
 // Ordered list of migrations; index 0 is schema_version 1, etc. Add new
 // entries at the end only — never edit or reorder an already-shipped one.
-constexpr std::array<const char*, 6> kMigrations = {schema::kMigration1, schema::kMigration2,
+constexpr std::array<const char*, 8> kMigrations = {schema::kMigration1, schema::kMigration2,
                                                       schema::kMigration3, schema::kMigration4,
-                                                      schema::kMigration5, schema::kMigration6};
+                                                      schema::kMigration5, schema::kMigration6,
+                                                      schema::kMigration7, schema::kMigration8};
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
 // Deliberately NOT `#include <sqlite-vec.h>` here — that header pulls in
@@ -409,6 +410,8 @@ void Database::closeConnection() {
   sqlite3_close(db_);
   db_ = nullptr;
 }
+
+int Database::latestSchemaVersion() { return static_cast<int>(kMigrations.size()); }
 
 int Database::currentSchemaVersion() const {
   // index_meta doesn't exist yet on a brand-new db — that's version 0.

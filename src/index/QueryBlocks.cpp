@@ -52,6 +52,28 @@ std::string escapeLikePattern(const std::string& s) {
   return out;
 }
 
+// Shared by the `todos:` branch and the plain-documents branch below --
+// both filter which DOCUMENTS are in scope by tag the exact same way,
+// only the surrounding SELECT/FROM differ.
+void appendTagFilter(std::vector<std::string>& whereClauses,
+                      std::vector<std::function<void(Statement&, int)>>& binders,
+                      const std::vector<std::string>& tags) {
+  if (tags.empty()) return;
+  std::string inList;
+  for (size_t i = 0; i < tags.size(); ++i) {
+    if (i) inList += ", ";
+    inList += "?";
+  }
+  whereClauses.push_back(
+      "d.rowid_id IN (SELECT dt.document_rowid FROM document_tags dt "
+      "JOIN tags t ON t.id = dt.tag_id WHERE t.name IN (" +
+      inList + ") GROUP BY dt.document_rowid HAVING COUNT(DISTINCT t.id) = " +
+      std::to_string(tags.size()) + ")");
+  for (const auto& tag : tags) {
+    binders.push_back([tag](Statement& s, int idx) { s.bind(idx, tag); });
+  }
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------------
@@ -91,6 +113,30 @@ std::string escapeLikePattern(const std::string& s) {
 //                              combined with `search` -- explicit refusal
 //                              rather than silently ignoring one or the
 //                              other.
+//   todos: open|done|all      -- GFM task-list lines (`- [ ] text` /
+//                              `- [x] text`) across every visible
+//                              document, not the documents themselves --
+//                              one row per checkbox, not per document.
+//                              tag/type/folder/limit still apply as
+//                              filters on which DOCUMENT an item belongs
+//                              to; sort/order/orphans have no meaning
+//                              here (items are always ordered by document
+//                              path, then position in it) and are parse
+//                              errors when combined, same discipline as
+//                              `search` above.
+//   links: true                -- external `[label](https://...)` links
+//                              embedded in a document's own body (an
+//                              `![alt](url)` IMAGE is not a link and never
+//                              matches), one row per link, not per
+//                              document. tag/type/folder/limit still
+//                              filter which document a link belongs to;
+//                              sort/order/orphans are parse errors here,
+//                              same as `todos` above -- and `todos`/
+//                              `links`/`search` are mutually exclusive
+//                              with EACH OTHER too (three different,
+//                              non-per-document row shapes; combining any
+//                              two is a parse error, never one silently
+//                              winning).
 //
 // EVERY key above maps to ONE fixed, hardcoded SQL fragment already
 // written into this file -- there is no code path where any part of a
@@ -115,6 +161,8 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
   int limit = 20;
   bool orphansOnly = false;
   std::string searchText;
+  std::string todosFilter;  // "" (unused), "open", "done", or "all"
+  bool linksOnly = false;
 
   std::set<std::string> seenKeys;
 
@@ -180,6 +228,16 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
     } else if (key == "search") {
       if (value.empty()) return {false, "search: needs a value", {}};
       searchText = value;
+    } else if (key == "todos") {
+      const std::string v = toLower(value);
+      if (v != "open" && v != "done" && v != "all") {
+        return {false, "todos: must be one of open, done, all", {}};
+      }
+      todosFilter = v;
+    } else if (key == "links") {
+      const std::string v = toLower(value);
+      if (v != "true" && v != "false") return {false, "links: must be 'true' or 'false'", {}};
+      linksOnly = (v == "true");
     } else if (key == "limit") {
       try {
         size_t consumed = 0;
@@ -195,7 +253,8 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
     } else {
       return {false,
               "unknown key: " + key +
-                  " (expected one of: tag, type, folder, orphans, sort, order, limit, search)",
+                  " (expected one of: tag, type, folder, orphans, sort, order, limit, search, "
+                  "todos, links)",
               {}};
     }
   }
@@ -214,6 +273,12 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
     }
     if (orphansOnly) {
       return {false, "search: can't be combined with orphans (no relevance concept for a pure backlink filter)", {}};
+    }
+    if (!todosFilter.empty()) {
+      return {false, "search: can't be combined with todos (different row shape, per-checkbox not per-document)", {}};
+    }
+    if (linksOnly) {
+      return {false, "search: can't be combined with links (different row shape, per-link not per-document)", {}};
     }
 
     SearchQuery sq;
@@ -236,6 +301,156 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
       }
       result.rows.push_back(
           QueryResultRow{item.path, item.title, item.visibility, item.updatedAt, tagsFlat});
+    }
+    return result;
+  }
+
+  if (!todosFilter.empty()) {
+    // Same explicit-refusal discipline as `search:` just above: a
+    // per-item result has no defined position for "sort by document
+    // title" (items are already ordered by document path then their own
+    // position in it, not user-choosable), and orphans is a pure
+    // document-to-document backlink concept with nothing to say about a
+    // checkbox line inside one.
+    if (sortExplicit || orderExplicit) {
+      return {false,
+              "todos: results are always ordered by document, then position in it -- "
+              "sort/order can't be combined with todos",
+              {}};
+    }
+    if (orphansOnly) {
+      return {false, "todos: can't be combined with orphans", {}};
+    }
+    if (linksOnly) {
+      return {false, "todos: can't be combined with links (different row shape)", {}};
+    }
+
+    std::vector<std::string> whereClauses = {"(? = 1 OR d.visibility = 'public')"};
+    std::vector<std::function<void(Statement&, int)>> binders = {
+        [includePrivate](Statement& s, int idx) {
+          s.bind(idx, static_cast<int64_t>(includePrivate ? 1 : 0));
+        }};
+
+    if (!type.empty()) {
+      whereClauses.push_back("d.doc_type = ?");
+      binders.push_back([type](Statement& s, int idx) { s.bind(idx, type); });
+    }
+    if (!folder.empty()) {
+      whereClauses.push_back("d.path LIKE ? ESCAPE '\\'");
+      std::string pattern = escapeLikePattern(folder) + "%";
+      binders.push_back([pattern](Statement& s, int idx) { s.bind(idx, pattern); });
+    }
+    appendTagFilter(whereClauses, binders, tags);
+
+    if (todosFilter == "open") {
+      whereClauses.push_back("ti.checked = 0");
+    } else if (todosFilter == "done") {
+      whereClauses.push_back("ti.checked = 1");
+    }
+    // "all" -- no extra clause, both states match.
+
+    // The item's own checkbox state is folded straight into the text
+    // shown as this row's "title" ("[ ] Buy milk" / "[x] Buy milk") --
+    // the exact same GFM syntax the author typed, rather than inventing
+    // a separate status column in the JSON response. QueryResultRow's
+    // shape (path/title/visibility/updatedAt/tagsFlat) stays completely
+    // unchanged, so the SAME frontend table renderer (query-block.js) and
+    // the SAME editor live-preview wiring (query-editor-preview.js)
+    // handle a todos: result with zero code of their own -- "title" here
+    // just happens to be the item's text instead of the document's.
+    std::string sql =
+        "SELECT d.path, "
+        "('[' || CASE WHEN ti.checked = 1 THEN 'x' ELSE ' ' END || '] ' || ti.text), "
+        "d.visibility, d.updated_at, '' "
+        "FROM todo_items ti JOIN documents d ON d.rowid_id = ti.document_rowid WHERE ";
+    for (size_t i = 0; i < whereClauses.size(); ++i) {
+      if (i) sql += " AND ";
+      sql += whereClauses[i];
+    }
+    sql += " ORDER BY d.path ASC, ti.line_no ASC LIMIT ?;";
+    binders.push_back(
+        [limit](Statement& s, int idx) { s.bind(idx, static_cast<int64_t>(limit)); });
+
+    Statement stmt(db_.handle(), sql);
+    for (size_t i = 0; i < binders.size(); ++i) {
+      binders[i](stmt, static_cast<int>(i) + 1);
+    }
+
+    QueryBlockResult result;
+    result.ok = true;
+    while (stmt.step()) {
+      result.rows.push_back(QueryResultRow{stmt.columnText(0), stmt.columnText(1),
+                                            stmt.columnText(2), stmt.columnText(3),
+                                            stmt.columnText(4)});
+    }
+    return result;
+  }
+
+  if (linksOnly) {
+    // Same reasoning as the todos: branch just above, mirrored for
+    // link_items instead: a per-item result has no defined position for
+    // "sort by document title", and orphans is a document-to-document
+    // backlink concept with nothing to say about a link embedded in one.
+    if (sortExplicit || orderExplicit) {
+      return {false,
+              "links: results are always ordered by document, then position in it -- "
+              "sort/order can't be combined with links",
+              {}};
+    }
+    if (orphansOnly) {
+      return {false, "links: can't be combined with orphans", {}};
+    }
+
+    std::vector<std::string> whereClauses = {"(? = 1 OR d.visibility = 'public')"};
+    std::vector<std::function<void(Statement&, int)>> binders = {
+        [includePrivate](Statement& s, int idx) {
+          s.bind(idx, static_cast<int64_t>(includePrivate ? 1 : 0));
+        }};
+
+    if (!type.empty()) {
+      whereClauses.push_back("d.doc_type = ?");
+      binders.push_back([type](Statement& s, int idx) { s.bind(idx, type); });
+    }
+    if (!folder.empty()) {
+      whereClauses.push_back("d.path LIKE ? ESCAPE '\\'");
+      std::string pattern = escapeLikePattern(folder) + "%";
+      binders.push_back([pattern](Statement& s, int idx) { s.bind(idx, pattern); });
+    }
+    appendTagFilter(whereClauses, binders, tags);
+
+    // The row's "path" is the external URL itself, not the owning
+    // document's vault path -- see LinkItems.h's own comment: the whole
+    // point of this key is a clickable list of external sites, so the
+    // useful click target is the site, not the note that happened to
+    // mention it. query-block.js's renderer special-cases an
+    // http(s)-looking "path" to link there directly instead of building
+    // an internal /d/{path} href -- see that file's own comment. "title"
+    // is the link's own label text, exactly what the author wrote inside
+    // "[...]"; visibility/updatedAt still come from the OWNING document,
+    // so the same fail-safe-private gate applies to an embedded link the
+    // same way it applies to the document that contains it.
+    std::string sql =
+        "SELECT li.url, li.label, d.visibility, d.updated_at, '' "
+        "FROM link_items li JOIN documents d ON d.rowid_id = li.document_rowid WHERE ";
+    for (size_t i = 0; i < whereClauses.size(); ++i) {
+      if (i) sql += " AND ";
+      sql += whereClauses[i];
+    }
+    sql += " ORDER BY d.path ASC, li.line_no ASC LIMIT ?;";
+    binders.push_back(
+        [limit](Statement& s, int idx) { s.bind(idx, static_cast<int64_t>(limit)); });
+
+    Statement stmt(db_.handle(), sql);
+    for (size_t i = 0; i < binders.size(); ++i) {
+      binders[i](stmt, static_cast<int>(i) + 1);
+    }
+
+    QueryBlockResult result;
+    result.ok = true;
+    while (stmt.step()) {
+      result.rows.push_back(QueryResultRow{stmt.columnText(0), stmt.columnText(1),
+                                            stmt.columnText(2), stmt.columnText(3),
+                                            stmt.columnText(4)});
     }
     return result;
   }
@@ -264,21 +479,7 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
     binders.push_back([pattern](Statement& s, int idx) { s.bind(idx, pattern); });
   }
 
-  if (!tags.empty()) {
-    std::string inList;
-    for (size_t i = 0; i < tags.size(); ++i) {
-      if (i) inList += ", ";
-      inList += "?";
-    }
-    whereClauses.push_back(
-        "d.rowid_id IN (SELECT dt.document_rowid FROM document_tags dt "
-        "JOIN tags t ON t.id = dt.tag_id WHERE t.name IN (" +
-        inList + ") GROUP BY dt.document_rowid HAVING COUNT(DISTINCT t.id) = " +
-        std::to_string(tags.size()) + ")");
-    for (const auto& tag : tags) {
-      binders.push_back([tag](Statement& s, int idx) { s.bind(idx, tag); });
-    }
-  }
+  appendTagFilter(whereClauses, binders, tags);
 
   if (orphansOnly) {
     // A NOT EXISTS subquery, not a LEFT JOIN + IS NULL -- deliberately.

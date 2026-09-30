@@ -1,6 +1,8 @@
 #include "index/IndexUpdater.h"
 
 #include "index/Statement.h"
+#include "util/LinkItems.h"
+#include "util/TodoItems.h"
 #include "util/WikiLinks.h"
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
@@ -165,6 +167,45 @@ void replaceLinkRows(Database& db, int64_t documentRowId, const std::string& bod
   }
 }
 
+// Mirrors replaceLinkRows exactly, for todo_items instead of
+// document_links -- see that function's own comment and schema.h's
+// migration 7 comment for why delete-then-reinsert is fine here.
+void replaceTodoItems(Database& db, int64_t documentRowId, const std::string& body) {
+  Statement clear(db.handle(), "DELETE FROM todo_items WHERE document_rowid = ?1;");
+  clear.bind(1, documentRowId);
+  clear.run();
+
+  for (const auto& item : wikicore::util::extractTodoItems(body)) {
+    Statement insert(db.handle(),
+                      "INSERT INTO todo_items(document_rowid, line_no, checked, text) "
+                      "VALUES (?1, ?2, ?3, ?4);");
+    insert.bind(1, documentRowId)
+        .bind(2, static_cast<int64_t>(item.lineNo))
+        .bind(3, static_cast<int64_t>(item.checked ? 1 : 0))
+        .bind(4, item.text);
+    insert.run();
+  }
+}
+
+// Mirrors replaceTodoItems exactly, for link_items instead -- see that
+// function's comment and schema.h's migration 8 comment.
+void replaceLinkItems(Database& db, int64_t documentRowId, const std::string& body) {
+  Statement clear(db.handle(), "DELETE FROM link_items WHERE document_rowid = ?1;");
+  clear.bind(1, documentRowId);
+  clear.run();
+
+  for (const auto& item : wikicore::util::extractExternalLinks(body)) {
+    Statement insert(db.handle(),
+                      "INSERT INTO link_items(document_rowid, line_no, url, label) "
+                      "VALUES (?1, ?2, ?3, ?4);");
+    insert.bind(1, documentRowId)
+        .bind(2, static_cast<int64_t>(item.lineNo))
+        .bind(3, item.url)
+        .bind(4, item.label);
+    insert.run();
+  }
+}
+
 void replaceFtsEntry(Database& db, int64_t documentRowId,
                       const DocumentIndexEntry& entry) {
   Statement clear(db.handle(), "DELETE FROM documents_fts WHERE rowid = ?1;");
@@ -250,6 +291,8 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
     replaceTagLinks(db_, rowId, entry.tags);
     replaceFtsEntry(db_, rowId, entry);
     replaceLinkRows(db_, rowId, entry.body);
+    replaceTodoItems(db_, rowId, entry.body);
+    replaceLinkItems(db_, rowId, entry.body);
 
     Statement commit(db_.handle(), "COMMIT;");
     commit.run();

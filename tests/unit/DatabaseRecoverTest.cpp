@@ -174,6 +174,6 @@ TEST_CASE("a file that is not SQLite at all is quarantined and replaced, "
   const auto recovered = db.ensureUsable();
   REQUIRE(recovered.rebuilt);
   REQUIRE_FALSE(recovered.adminRestored);
-  REQUIRE(db.currentSchemaVersion() == 6);
+  REQUIRE(db.currentSchemaVersion() == Database::latestSchemaVersion());
   REQUIRE(countRows(db.handle(), "SELECT COUNT(*) FROM users") == 0);
 }

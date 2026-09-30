@@ -62,6 +62,14 @@ class Database {
 
   int currentSchemaVersion() const;
 
+  // The schema_version a fresh/fully-migrated database ends up at --
+  // literally kMigrations.size() in Database.cpp, exposed so tests (and
+  // anything else that needs to assert "fully migrated") never have to
+  // hardcode a number that goes stale the moment a new migration is
+  // added. See DatabaseRecoverTest.cpp's own history for exactly that
+  // staleness happening in practice.
+  static int latestSchemaVersion();
+
   const std::filesystem::path& path() const noexcept { return path_; }
 
  private:

@@ -255,6 +255,96 @@ TEST_CASE("QueryBlocks: orphans finds documents with zero VISIBLE incoming "
   REQUIRE(!hasPath(adminOrphans.rows, "linked.md"));  // admin sees the private link
 }
 
+TEST_CASE("QueryBlocks: todos lists GFM task-list items, one row per checkbox, "
+          "gated by the OWNING document's visibility",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", {}, "note", "2026-01-01T00:00:00Z",
+                               "- [ ] open in a\n- [x] done in a\n"));
+  updater.upsertOne(makeEntry("b.md", "private", {}, "note", "2026-01-01T00:00:00Z",
+                               "- [ ] open in b (private)\n"));
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+
+  auto anonOpen = qb.parseAndRun("todos: open", false);
+  REQUIRE(anonOpen.ok);
+  REQUIRE(anonOpen.rows.size() == 1);  // b.md's item stays invisible to anon
+  REQUIRE(anonOpen.rows[0].path == "a.md");
+  REQUIRE(anonOpen.rows[0].title == "[ ] open in a");
+
+  auto adminOpen = qb.parseAndRun("todos: open", true);
+  REQUIRE(adminOpen.ok);
+  REQUIRE(adminOpen.rows.size() == 2);
+
+  auto adminDone = qb.parseAndRun("todos: done", true);
+  REQUIRE(adminDone.ok);
+  REQUIRE(adminDone.rows.size() == 1);
+  REQUIRE(adminDone.rows[0].title == "[x] done in a");
+
+  auto adminAll = qb.parseAndRun("todos: all", true);
+  REQUIRE(adminAll.ok);
+  REQUIRE(adminAll.rows.size() == 3);
+}
+
+TEST_CASE("QueryBlocks: todos can't combine with sort/order/orphans", "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+  REQUIRE_FALSE(qb.parseAndRun("todos: open\nsort: title", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("todos: open\norder: asc", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("todos: open\norphans: true", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("todos: not-a-real-state", true).ok);
+}
+
+TEST_CASE("QueryBlocks: links lists embedded external links, one row per link, "
+          "gated by the OWNING document's visibility",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry(
+      "cpp-tutorials.md", "public", {}, "note", "2026-01-01T00:00:00Z",
+      "- [cppreference](https://cppreference.com) -- the classic\n"
+      "- [Learn C++](https://learncpp.com) -- beginner friendly\n"));
+  updater.upsertOne(makeEntry("secret-list.md", "private", {}, "note",
+                               "2026-01-01T00:00:00Z",
+                               "- [hidden](https://example.com/hidden)\n"));
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+
+  auto anon = qb.parseAndRun("links: true", false);
+  REQUIRE(anon.ok);
+  REQUIRE(anon.rows.size() == 2);  // secret-list.md's link stays invisible to anon
+  REQUIRE(anon.rows[0].path == "https://cppreference.com");
+  REQUIRE(anon.rows[0].title == "cppreference");
+
+  auto admin = qb.parseAndRun("links: true", true);
+  REQUIRE(admin.ok);
+  REQUIRE(admin.rows.size() == 3);
+}
+
+TEST_CASE("QueryBlocks: links can't combine with sort/order/orphans/todos/search",
+          "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+  REQUIRE_FALSE(qb.parseAndRun("links: true\nsort: title", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("links: true\norder: asc", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("links: true\norphans: true", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("links: true\ntodos: open", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("links: true\nsearch: foo", true).ok);
+}
+
 TEST_CASE("QueryBlocks: an unknown key is a parse error, not a silently "
           "unfiltered or empty result",
           "[QueryBlocks]") {
