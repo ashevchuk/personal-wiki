@@ -35,6 +35,10 @@ Cookie makeSessionCookie(const std::string& token, bool secure, int maxAgeSecond
   return cookie;
 }
 
+// Same TTL used for both cookies, at login AND on every later re-issue
+// (see /api/session below) — shared so the two can't drift apart.
+constexpr int kSessionMaxAgeSeconds = 60 * 60 * 24 * 14;
+
 // Deliberately NOT HttpOnly — see AuthContext.h's comment on
 // kCsrfCookieName. Same lifetime/scope as the session cookie otherwise.
 Cookie makeCsrfCookie(const std::string& csrfToken, bool secure, int maxAgeSeconds) {
@@ -55,13 +59,36 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
       [agentEnabled](const HttpRequestPtr& req,
          std::function<void(const HttpResponsePtr&)>&& callback) {
         Json::Value body;
-        body["authenticated"] = isAuthenticated(req);
+        const bool authenticated = isAuthenticated(req);
+        body["authenticated"] = authenticated;
         // Draft button in the editor: hidden unless this process actually
         // constructed a ChatClient (llm.provider=cloud and the named env
         // key is present). Always present in the JSON so the client does
         // not have to guess; false is the fail-safe default.
-        body["agentEnabled"] = agentEnabled && isAuthenticated(req);
-        callback(HttpResponse::newHttpJsonResponse(body));
+        body["agentEnabled"] = agentEnabled && authenticated;
+        auto resp = HttpResponse::newHttpJsonResponse(body);
+        // Re-issue the CSRF cookie (same value already on the session
+        // row, AuthFilter already read it into this attribute — no
+        // extra DB hit) on every authenticated hit, not just at login.
+        // It's the one cookie of the pair that's NOT HttpOnly, by
+        // design (the client has to read it to echo it back) — found
+        // live, that same JS-readability makes it the one browser
+        // privacy tooling is more likely to sweep on its own, without
+        // touching the HttpOnly session cookie next to it. The session
+        // surviving alone then reads as "logged in" client-side right
+        // up until the first mutating request's X-CSRF-Token comes back
+        // empty, a confusing 403 with no obvious cause. router.js
+        // already calls this endpoint once per navigation (the SPA
+        // shell's own session bootstrap), so this makes that bootstrap
+        // self-healing: any navigation after whatever swept the cookie
+        // restores it before the user hits Save again.
+        if (authenticated) {
+          const std::string csrfToken =
+              req->attributes()->get<std::string>(kAttrCsrfToken);
+          resp->addCookie(makeCsrfCookie(csrfToken, req->isOnSecureConnection(),
+                                          kSessionMaxAgeSeconds));
+        }
+        callback(resp);
       },
       // isAuthenticated() reads req->attributes() — AuthFilter is what
       // POPULATES that from the session cookie in the first place.
@@ -106,16 +133,15 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
         const NewSession session = AuthServices::sessions().create(
             admin->id, std::string(req->getHeader("User-Agent")), ip);
 
-        constexpr int kMaxAgeSeconds = 60 * 60 * 24 * 14;
         Json::Value body;
         body["ok"] = true;
         auto resp = HttpResponse::newHttpJsonResponse(body);
         resp->addCookie(makeSessionCookie(session.rawToken,
                                            req->isOnSecureConnection(),
-                                           kMaxAgeSeconds));
+                                           kSessionMaxAgeSeconds));
         resp->addCookie(makeCsrfCookie(session.csrfToken,
                                         req->isOnSecureConnection(),
-                                        kMaxAgeSeconds));
+                                        kSessionMaxAgeSeconds));
         callback(resp);
       },
       {Post});
