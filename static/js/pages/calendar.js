@@ -323,6 +323,55 @@ window.WikiPages = window.WikiPages || {};
       label.appendChild(monthDd.element);
       label.appendChild(yearDd.element);
     }
+    // Week/Day views get the same kind of jump control as Month, just a
+    // full day-grid popup instead of two dropdowns -- "pick a month"
+    // doesn't apply when the range itself is a week or a single day, but
+    // "jump to any date" still beats clicking Prev/Next dozens of times.
+    // Reuses WikiDateTimePicker's own calendar widget (date-time-picker.js)
+    // rather than a second implementation of the same 42-cell month grid.
+    function renderJumpLabel() {
+      var range = computeRange(viewMode, anchor);
+      var trigger = document.createElement("button");
+      trigger.type = "button";
+      trigger.className = "calendar-label-select calendar-jump-trigger";
+      trigger.textContent = range.label;
+
+      var popup = document.createElement("div");
+      popup.className = "calendar-jump-popup";
+      popup.hidden = true;
+
+      var widget = WikiDateTimePicker.createCalendarWidget({
+        initialIso: isoFromDate(anchor),
+        onSelect: function (iso) {
+          anchor = dateFromIso(iso);
+          popup.hidden = true;
+          load();
+        },
+      });
+      popup.appendChild(widget.element);
+      popup.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+      });
+
+      trigger.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        if (!popup.hidden) {
+          popup.hidden = true;
+          return;
+        }
+        var rect = trigger.getBoundingClientRect();
+        popup.style.top = rect.bottom + 4 + "px";
+        popup.style.left = rect.left + "px";
+        popup.hidden = false;
+      });
+      document.addEventListener("click", function () {
+        popup.hidden = true;
+      });
+
+      label.innerHTML = "";
+      label.appendChild(trigger);
+      label.appendChild(popup);
+    }
     var viewButtons = {
       month: document.getElementById("cal-view-month"),
       week: document.getElementById("cal-view-week"),
@@ -341,7 +390,7 @@ window.WikiPages = window.WikiPages || {};
       if (viewMode === "month") {
         renderMonthLabel();
       } else {
-        label.textContent = range.label;
+        renderJumpLabel();
       }
       fetch(
         basePath() + "/api/calendar?start=" + range.start + "&end=" + range.end,

@@ -1350,6 +1350,26 @@ pre code[class*="language-"] {
 .calendar-label-select:focus {
   border-color: var(--border);
 }
+/* Week/Day's own "jump to any date" trigger -- same floating-popup
+   recipe as .wiki-dd-popup/.dtp-until-popup (position: fixed, solid
+   --panel-bg-2 so arbitrary page content underneath can't show through,
+   sized explicitly rather than stretching to whatever's available). The
+   trigger itself reuses .calendar-label-select's own look. */
+.calendar-jump-trigger {
+  min-width: 10rem;
+}
+.calendar-jump-popup {
+  position: fixed;
+  z-index: 2;
+  width: 20rem;
+  padding: 0.6rem;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+}
+.calendar-jump-popup[hidden] {
+  display: none;
+}
 
 /* WikiDropdown (dropdown.js) -- the custom replacement for every
    native <select> in this app (Month/Year here, Repeats/Hour/Minute in

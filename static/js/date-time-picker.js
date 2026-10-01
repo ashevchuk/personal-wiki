@@ -567,5 +567,5 @@ window.WikiDateTimePicker = (function () {
     });
   }
 
-  return { open: open, formatSummary: formatSummary };
+  return { open: open, formatSummary: formatSummary, createCalendarWidget: createCalendarWidget };
 })();
