@@ -1513,6 +1513,34 @@ pre code[class*="language-"] {
   color: var(--error);
 }
 
+.calendar-view-toggle {
+  display: inline-flex;
+  gap: 0.3rem;
+  margin-left: auto;
+}
+.calendar-view-toggle button[aria-pressed="true"] {
+  background: var(--panel-bg-2);
+  font-weight: bold;
+}
+.calendar-grid-week .calendar-cell {
+  min-height: 10rem;
+}
+.calendar-day-view {
+  max-width: 32rem;
+}
+.calendar-day-view-heading {
+  font-weight: bold;
+  margin-bottom: 0.6rem;
+}
+.calendar-day-view-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
 /* Print / "Export PDF" (view.js's #doc-print-btn just calls window.print()
    — real PDF generation is the browser's own "Save as PDF" print
    destination, not a server-side renderer; see the button's own comment
