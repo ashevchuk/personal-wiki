@@ -1,7 +1,7 @@
 #include "controllers/AdminRoutes.h"
 
 #include "auth/RequireAdmin.h"
-#include "util/Excerpt.h"
+#include "util/MarkdownRenderer.h"
 #include "util/Time.h"
 #include "vault/BackupService.h"
 #include "vault/FrontMatter.h"
@@ -301,22 +301,38 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
           item["path"] = e.relativePath;
           item["sizeBytes"] = static_cast<Json::Int64>(e.sizeBytes);
           item["deletedAt"] = util::isoTimestampFromUnix(e.deletedAtUnix);
-          // Best-effort title + a short excerpt, so the list itself answers
-          // "what IS this" without restoring it first just to look —
-          // found live: a bare path (especially a UUID-less stub or
-          // something renamed before deletion) often isn't enough to
-          // recognize what's actually in it. A read failure here (a
-          // corrupt/binary file somehow trashed) still lists the row,
-          // just without the extra context — this is a listing, not a
-          // read that gets to fail the whole page over one bad file.
+          // Best-effort title + a short rendered-markdown preview, so the
+          // list itself answers "what IS this" without restoring it first
+          // just to look — found live: a bare path (especially a UUID-less
+          // stub or something renamed before deletion) often isn't enough
+          // to recognize what's actually in it. Rendered, not the raw
+          // excerpt this used to send: a plain-text slice of markdown
+          // shows its own table pipes/heading hashes as noise, and
+          // renderMarkdownToHtml is already the exact function the real
+          // document-view page uses, safe to embed as-is (raw HTML
+          // passthrough is disabled in md4c — see the function's own
+          // comment). A read failure here (a corrupt/binary file somehow
+          // trashed) still lists the row, just without the preview — this
+          // is a listing, not a read that gets to fail the whole page
+          // over one bad file. The body is truncated BEFORE rendering
+          // (not after, which would risk slicing through an HTML tag) —
+          // an unclosed table row or emphasis marker at the cut point
+          // degrades to plain text rather than erroring, the same
+          // fail-safe md4c already guarantees for hand-edited files.
           try {
             const ParsedDocument parsed =
                 parseFrontMatter(vault.readRaw(".trash/" + e.relativePath));
             item["title"] = parsed.frontMatter.title;
-            item["excerpt"] = util::plainTextExcerpt(parsed.body, 160);
+            std::string snippet = parsed.body;
+            if (snippet.size() > 400) snippet.resize(400);
+            try {
+              item["excerptHtml"] = util::renderMarkdownToHtml(snippet);
+            } catch (const std::exception&) {
+              item["excerptHtml"] = "";
+            }
           } catch (const std::exception&) {
             item["title"] = "";
-            item["excerpt"] = "";
+            item["excerptHtml"] = "";
           }
           arr.append(item);
         }

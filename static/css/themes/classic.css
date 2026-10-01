@@ -1365,6 +1365,49 @@ pre code[class*="language-"] {
   border-color: var(--border);
   background: var(--select-bg);
 }
+/* Trash's own hover preview -- position: fixed computed from the
+   hovered cell's own getBoundingClientRect(), same recipe as every
+   other floating popup in this app (WikiDropdown, the date-time
+   picker's Until popup, calendar.js's jump popup). --panel-bg-2, not
+   --panel-bg: solid in every theme, this floats over arbitrary table
+   rows underneath it. Heading/table sizing is scoped down from this
+   app's normal document-view sizing -- a real document's h1 at full
+   size would dominate a popup this small. */
+.trash-preview-popup {
+  position: fixed;
+  z-index: 3;
+  width: 22rem;
+  max-width: calc(100vw - 2rem);
+  max-height: 16rem;
+  overflow-y: auto;
+  padding: 0.6rem 0.8rem;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+  font-size: 0.85rem;
+}
+.trash-preview-popup[hidden] {
+  display: none;
+}
+.trash-preview-popup h1,
+.trash-preview-popup h2,
+.trash-preview-popup h3,
+.trash-preview-popup h4,
+.trash-preview-popup h5,
+.trash-preview-popup h6 {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+.trash-preview-popup p {
+  margin: 0 0 0.5rem;
+}
+.trash-preview-popup table {
+  font-size: 0.85em;
+}
+.trash-preview-popup pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .query-empty {
   color: var(--fg-dim);
   font-style: italic;

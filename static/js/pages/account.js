@@ -89,6 +89,30 @@ window.WikiPages = window.WikiPages || {};
     var items = [];
     var page = 0;
 
+    // A native title-attribute tooltip can't be styled, isn't visible to
+    // this project's own browser-automation tooling, and doesn't
+    // reliably follow the active theme — the exact reasons every other
+    // floating bit of UI in this app (WikiDropdown, the date-time
+    // picker's own popups) already moved off native browser chrome. One
+    // shared popup, repositioned and refilled per row on hover, rather
+    // than one per row — there's only ever one visible at a time.
+    var previewPopup = document.createElement("div");
+    previewPopup.className = "trash-preview-popup";
+    previewPopup.hidden = true;
+    document.body.appendChild(previewPopup);
+
+    function showPreview(cell, html) {
+      if (!html) return;
+      previewPopup.innerHTML = html;
+      var rect = cell.getBoundingClientRect();
+      previewPopup.style.top = rect.bottom + 4 + "px";
+      previewPopup.style.left = rect.left + "px";
+      previewPopup.hidden = false;
+    }
+    function hidePreview() {
+      previewPopup.hidden = true;
+    }
+
     function showError(err) {
       errorEl.textContent = err.message || String(err);
       successEl.textContent = "";
@@ -108,15 +132,18 @@ window.WikiPages = window.WikiPages || {};
       // Title (falls back to the path when the document had none) plus
       // the real path underneath, dim — found live: a bare path alone
       // often isn't enough to recognize what a trashed document actually
-      // was without restoring it first just to look. The body excerpt is
-      // NOT rendered into the row itself -- plainTextExcerpt isn't
-      // markdown-aware (see its own comment in util/Excerpt.h), so raw
-      // table pipes/heading hashes sitting in the row looked like exactly
-      // the kind of noise this was supposed to cut through. A native
-      // title attribute (hover tooltip) surfaces the same text without
-      // permanently occupying row space with it.
+      // was without restoring it first just to look. The rendered-
+      // markdown preview (excerptHtml, AdminRoutes.cpp's own
+      // renderMarkdownToHtml call) stays out of the row itself, shown in
+      // the shared popup on hover instead of permanently occupying row
+      // space with it.
       var docTd = document.createElement("td");
-      if (item.excerpt) docTd.title = item.excerpt;
+      if (item.excerptHtml) {
+        docTd.addEventListener("mouseenter", function () {
+          showPreview(docTd, item.excerptHtml);
+        });
+        docTd.addEventListener("mouseleave", hidePreview);
+      }
       var titleDiv = document.createElement("div");
       titleDiv.className = "trash-title";
       titleDiv.textContent = item.title || item.path;
@@ -190,6 +217,10 @@ window.WikiPages = window.WikiPages || {};
     }
 
     function render() {
+      // A row about to be removed from the DOM isn't guaranteed to fire
+      // its own mouseleave first -- drop any preview still showing
+      // rather than leave it pointing at a row that's gone.
+      hidePreview();
       if (items.length === 0) {
         table.hidden = true;
         pager.hidden = true;
