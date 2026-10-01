@@ -1215,9 +1215,38 @@ pre code[class*="language-"] {
   margin: 0.8rem 0;
   overflow-x: auto;
 }
+/* table-layout: fixed + shared column widths -- auto layout (the
+   default) sizes each table's columns independently off its OWN
+   content, so Title/Tags/Updated drift out of alignment between two
+   separate query blocks on the same page (e.g. a short "demo" tag vs.
+   an empty Tags cell shifts Updated sideways) even though both tables
+   share the exact same column set and sit in the same prose column
+   width. Fixed layout makes every .query-results table divide its
+   width by these same percentages regardless of content, so the same
+   column lines up at the same X position in every block on the page. */
 .query-results {
   width: 100%;
   border-collapse: collapse;
+  table-layout: fixed;
+}
+.query-results th:nth-child(1),
+.query-results td:nth-child(1) {
+  width: 50%;
+}
+.query-results th:nth-child(2),
+.query-results td:nth-child(2) {
+  width: 20%;
+}
+.query-results th:nth-child(3),
+.query-results td:nth-child(3) {
+  width: 30%;
+  text-align: right;
+}
+.query-results th,
+.query-results td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .query-results th,
 .query-results td {

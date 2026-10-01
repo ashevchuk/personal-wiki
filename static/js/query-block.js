@@ -21,6 +21,37 @@ window.WikiQueryBlock = (function () {
     return /^https?:\/\//i.test(path);
   }
 
+  // "3h ago", not the raw "2026-10-01T10:09:37Z" -- these tables exist to
+  // show recency (the `sort: updated` key this same DSL already has), and
+  // a relative label is what that's actually for; the exact timestamp
+  // isn't lost, just demoted to a hover (`title`) for whoever wants it.
+  // Falls back to a bare date once a row is old enough that "14d ago"
+  // stops being more useful than just naming the day.
+  var MINUTE_MS = 60 * 1000;
+  var HOUR_MS = 60 * MINUTE_MS;
+  var DAY_MS = 24 * HOUR_MS;
+  function formatUpdated(iso) {
+    if (!iso) return "";
+    var then = new Date(iso);
+    if (isNaN(then.getTime())) return escapeHtml(iso);
+    var diffMs = Date.now() - then.getTime();
+    var label;
+    if (diffMs < MINUTE_MS) {
+      label = "just now";
+    } else if (diffMs < HOUR_MS) {
+      label = Math.floor(diffMs / MINUTE_MS) + "m ago";
+    } else if (diffMs < DAY_MS) {
+      label = Math.floor(diffMs / HOUR_MS) + "h ago";
+    } else if (diffMs < 30 * DAY_MS) {
+      label = Math.floor(diffMs / DAY_MS) + "d ago";
+    } else {
+      label = iso.slice(0, 10);
+    }
+    return (
+      '<span title="' + escapeHtml(iso) + '">' + escapeHtml(label) + "</span>"
+    );
+  }
+
   function renderTable(rows) {
     if (rows.length === 0) {
       return '<p class="query-empty">No matching documents.</p>';
@@ -52,7 +83,7 @@ window.WikiQueryBlock = (function () {
         "</a></td><td>" +
         escapeHtml(row.tags || "") +
         "</td><td>" +
-        escapeHtml(row.updatedAt || "") +
+        formatUpdated(row.updatedAt) +
         "</td></tr>";
     }
     html += "</tbody></table>";
