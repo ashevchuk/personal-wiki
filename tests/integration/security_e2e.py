@@ -733,24 +733,29 @@ def run_checks(sandbox, vault):
         headers={"X-CSRF-Token": csrf})
     check("create private one-off event -> 201", status == 201, f"got {status}")
 
+    # Calendar is admin-only outright, not fail-safe-private-per-document
+    # like every other read route here (search, nav, query blocks) —
+    # decided live after noticing a PUBLIC document's due date was still
+    # visible to an anonymous caller via /api/calendar: that's the
+    # admin's actual schedule, not just "this one document happens to be
+    # public", so even the public event must not leak to an anonymous
+    # caller. See CalendarRoutes.cpp's own comment on this exception.
     status, _, body = anon.get_json("/api/calendar?start=2026-06-01&end=2026-06-30")
-    anon_paths = [e["path"] for e in body["events"]]
-    check("anon calendar: public recurring event present, private one-off not leaked",
-          "notes/cal-pub.md" in anon_paths and "notes/cal-priv.md" not in anon_paths,
-          f"paths={anon_paths}")
-    # Weekly from 2026-06-01 (a Monday) within June must expand to more
-    # than one occurrence, not just echo the bare due date back once --
-    # this is the one thing a plain visibility-filtered SELECT could never
-    # produce on its own.
-    anon_dates = sorted(e["date"] for e in body["events"] if e["path"] == "notes/cal-pub.md")
-    check("anon calendar: weekly recurrence expands to multiple June occurrences",
-          len(anon_dates) >= 4, f"dates={anon_dates}")
+    check("anon calendar -> 401, not a filtered (even partial) event list",
+          status == 401 and "error" in body, f"status={status} body={body}")
 
     status, _, body = admin.get_json("/api/calendar?start=2026-06-01&end=2026-06-30")
     admin_paths = [e["path"] for e in body["events"]]
     check("admin calendar: sees both the public and the private event",
           "notes/cal-pub.md" in admin_paths and "notes/cal-priv.md" in admin_paths,
           f"paths={admin_paths}")
+    # Weekly from 2026-06-01 (a Monday) within June must expand to more
+    # than one occurrence, not just echo the bare due date back once --
+    # this is the one thing a plain visibility-filtered SELECT could never
+    # produce on its own.
+    admin_dates = sorted(e["date"] for e in body["events"] if e["path"] == "notes/cal-pub.md")
+    check("admin calendar: weekly recurrence expands to multiple June occurrences",
+          len(admin_dates) >= 4, f"dates={admin_dates}")
 
     status, _, body = admin.get_json("/api/calendar?start=2026-06-01")
     check("calendar: missing 'end' -> 400 with an error field, not a silent empty result",

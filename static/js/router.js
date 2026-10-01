@@ -29,6 +29,7 @@
     var newDocBtn = document.getElementById("sidebar-new-doc");
     var newBookmarkBtn = document.getElementById("sidebar-new-bookmark");
     var accountLink = document.getElementById("sidebar-account");
+    var calendarLink = document.getElementById("sidebar-calendar");
     var logoutBtn = document.getElementById("sidebar-logout");
     var loginLink = document.getElementById("sidebar-login");
     var chatBtn = document.getElementById("sidebar-chat-btn");
@@ -43,6 +44,7 @@
     }
 
     if (accountLink) accountLink.hidden = false;
+    if (calendarLink) calendarLink.hidden = false;
 
     if (session.agentEnabled && chatBtn && window.WikiChat) {
       chatBtn.hidden = false;

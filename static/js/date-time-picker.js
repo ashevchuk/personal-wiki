@@ -166,10 +166,54 @@ window.WikiDateTimePicker = (function () {
     var grid = el("div", { class: compact ? "dtp-cal-grid dtp-cal-grid--compact" : "dtp-cal-grid" });
     var container = el("div", { class: compact ? "dtp-calendar dtp-calendar--compact" : "dtp-calendar" }, [header, grid]);
 
+    function renderLabel(year, month) {
+      // Month/Year dropdowns instead of a plain text label, same as
+      // /calendar's own renderMonthLabel -- on both the full-size Due
+      // calendar and the compact Until popup. Compact uses the 3-letter
+      // month names ("Sep") and a tighter trigger class so the popup
+      // (floating, not constrained by the inline form layout) stays
+      // narrow instead of having to fit "September".
+      var monthNames = compact ? MONTH_SHORT : MONTH_NAMES;
+      var monthOptions = monthNames.map(function (name, m) {
+        return { value: m, label: name };
+      });
+      var todayYear = new Date().getFullYear();
+      var minYear = Math.min(todayYear - 10, year);
+      var maxYear = Math.max(todayYear + 10, year);
+      var yearOptions = [];
+      for (var y = minYear; y <= maxYear; y++) {
+        yearOptions.push({ value: y, label: String(y) });
+      }
+      var triggerClass = "calendar-label-select dtp-cal-label-select" +
+        (compact ? " dtp-cal-label-select--compact" : "");
+      var monthDd = WikiDropdown.create({
+        options: monthOptions,
+        value: month,
+        ariaLabel: "Month",
+        triggerClass: triggerClass,
+        onChange: function (v) {
+          anchor = new Date(Number(yearDd.getValue()), Number(v), 1);
+          render();
+        },
+      });
+      var yearDd = WikiDropdown.create({
+        options: yearOptions,
+        value: year,
+        ariaLabel: "Year",
+        triggerClass: triggerClass,
+        onChange: function (v) {
+          anchor = new Date(Number(v), Number(monthDd.getValue()), 1);
+          render();
+        },
+      });
+      label.innerHTML = "";
+      label.appendChild(monthDd.element);
+      label.appendChild(yearDd.element);
+    }
     function render() {
       var year = anchor.getFullYear();
       var month = anchor.getMonth();
-      label.textContent = MONTH_NAMES[month] + " " + year;
+      renderLabel(year, month);
       grid.innerHTML = "";
       DAY_NAMES.forEach(function (d) {
         grid.appendChild(el("div", { class: "dtp-cal-weekday", text: d }));
@@ -253,18 +297,32 @@ window.WikiDateTimePicker = (function () {
         },
       });
 
-      // --- Time row (hour/minute selects + an all-day toggle) ------------
+      // --- Time row (hour/minute dropdowns + an all-day toggle) ----------
       var allDayCheckbox = el("input", { type: "checkbox", id: "dtp-all-day" });
       allDayCheckbox.checked = !selectedTime;
-      var hourSelect = el("select", { class: "dtp-time-select", "aria-label": "Hour" });
-      for (var h = 0; h < 24; h++) hourSelect.appendChild(el("option", { value: pad2(h), text: pad2(h) }));
-      var minuteSelect = el("select", { class: "dtp-time-select", "aria-label": "Minute" });
-      for (var m = 0; m < 60; m++) minuteSelect.appendChild(el("option", { value: pad2(m), text: pad2(m) }));
-      if (selectedTime) {
-        hourSelect.value = selectedTime.slice(0, 2);
-        minuteSelect.value = selectedTime.slice(3, 5);
-      }
-      var timeFields = el("span", { class: "dtp-time-fields" }, [hourSelect, el("span", { text: ":" }), minuteSelect]);
+      var hourOptions = [];
+      for (var h = 0; h < 24; h++) hourOptions.push({ value: pad2(h), label: pad2(h) });
+      var minuteOptions = [];
+      for (var m = 0; m < 60; m++) minuteOptions.push({ value: pad2(m), label: pad2(m) });
+      var hourDd = WikiDropdown.create({
+        options: hourOptions,
+        value: selectedTime ? selectedTime.slice(0, 2) : "00",
+        ariaLabel: "Hour",
+        triggerClass: "dtp-time-select",
+        onChange: function () {
+          updateSummaryPreview();
+        },
+      });
+      var minuteDd = WikiDropdown.create({
+        options: minuteOptions,
+        value: selectedTime ? selectedTime.slice(3, 5) : "00",
+        ariaLabel: "Minute",
+        triggerClass: "dtp-time-select",
+        onChange: function () {
+          updateSummaryPreview();
+        },
+      });
+      var timeFields = el("span", { class: "dtp-time-fields" }, [hourDd.element, el("span", { text: ":" }), minuteDd.element]);
       function syncTimeVisibility() {
         timeFields.hidden = allDayCheckbox.checked;
       }
@@ -277,12 +335,21 @@ window.WikiDateTimePicker = (function () {
       ]);
 
       // --- Repeats constructor --------------------------------------------
-      var freqSelect = el("select", { id: "dtp-freq" });
-      [["", "Does not repeat"], ["daily", "Daily"], ["weekly", "Weekly"],
-       ["monthly", "Monthly"], ["yearly", "Yearly"]].forEach(function (pair) {
-        freqSelect.appendChild(el("option", { value: pair[0], text: pair[1] }));
+      var freqDd = WikiDropdown.create({
+        options: [
+          { value: "", label: "Does not repeat" },
+          { value: "daily", label: "Daily" },
+          { value: "weekly", label: "Weekly" },
+          { value: "monthly", label: "Monthly" },
+          { value: "yearly", label: "Yearly" },
+        ],
+        value: recurState.freq,
+        ariaLabel: "Repeats",
+        onChange: function () {
+          syncRepeatVisibility();
+          updateSummaryPreview();
+        },
       });
-      freqSelect.value = recurState.freq;
 
       var intervalInput = el("input", { type: "number", min: "1", class: "dtp-interval-input" });
       intervalInput.value = String(recurState.interval);
@@ -327,8 +394,31 @@ window.WikiDateTimePicker = (function () {
       // not reach the form-level listener below that closes it on an
       // outside click -- otherwise navigating to the next month would
       // immediately close the very popup just being navigated.
+      //
+      // preventDefault matters here for a second, less obvious reason:
+      // this whole popup lives inside the "Until" radio's own <label>
+      // (see endRow below). Clicking a non-interactive descendant of a
+      // <label> -- a plain <div>, e.g. .dtp-cal-weekday -- makes the
+      // browser synthesize a SEPARATE click directly on the label's
+      // associated control (the radio) as a native default action; that
+      // synthetic click starts its own fresh bubble path from the radio
+      // and reaches the form listener untouched by stopPropagation here,
+      // since it isn't propagation of THIS click at all. preventDefault
+      // cancels that default action. (A dropdown option inside this
+      // popup is the same kind of non-interactive <div> and hits this
+      // exact problem too, but its own click handler stops propagation
+      // before the event ever reaches this listener -- its matching
+      // preventDefault lives in dropdown.js instead. A day cell or the
+      // month-nav arrows, both real <button>s, are exempt: per spec a
+      // label only delegates to its control for non-form-control
+      // descendants.) Found live: picking a month from the Month/Year
+      // dropdowns closed the whole popup instead of just updating it --
+      // invisible before those dropdowns existed because picking a day
+      // already closes the popup on purpose (onSelect below), so the
+      // same stray synthetic click was firing unnoticed.
       untilPopup.addEventListener("click", function (ev) {
         ev.stopPropagation();
+        ev.preventDefault();
       });
       untilTrigger.addEventListener("click", function (ev) {
         ev.stopPropagation();
@@ -379,19 +469,19 @@ window.WikiDateTimePicker = (function () {
       var repeatDetail = el("div", { class: "dtp-repeat-detail" }, [intervalRow, endRow]);
 
       function syncRepeatVisibility() {
-        repeatDetail.hidden = !freqSelect.value;
-        if (freqSelect.value) {
-          var unit = FREQ_LABELS[freqSelect.value];
+        var freq = freqDd.getValue();
+        repeatDetail.hidden = !freq;
+        if (freq) {
+          var unit = FREQ_LABELS[freq];
           var n = parseInt(intervalInput.value, 10) || 1;
           intervalUnitLabel.textContent = " " + unit + (n === 1 ? "" : "s");
         }
       }
-      freqSelect.addEventListener("change", syncRepeatVisibility);
       intervalInput.addEventListener("input", syncRepeatVisibility);
       syncRepeatVisibility();
 
       var repeatSection = el("div", { class: "dtp-repeat" }, [
-        el("label", { class: "dtp-freq-label" }, [el("span", { text: "Repeats " }), freqSelect]),
+        el("label", { class: "dtp-freq-label" }, [el("span", { text: "Repeats " }), freqDd.element]),
         repeatDetail,
       ]);
 
@@ -400,11 +490,11 @@ window.WikiDateTimePicker = (function () {
       function currentState() {
         var due = "";
         if (selectedDate) {
-          due = allDayCheckbox.checked ? selectedDate : selectedDate + "T" + hourSelect.value + ":" + minuteSelect.value;
+          due = allDayCheckbox.checked ? selectedDate : selectedDate + "T" + hourDd.getValue() + ":" + minuteDd.getValue();
         }
         var endMode = endUntil.checked ? "until" : endCount.checked ? "count" : "never";
         var recur = buildRecur({
-          freq: freqSelect.value,
+          freq: freqDd.getValue(),
           interval: parseInt(intervalInput.value, 10) || 1,
           endMode: endMode,
           until: untilIso || "",
@@ -421,7 +511,7 @@ window.WikiDateTimePicker = (function () {
       clearBtn.addEventListener("click", function () {
         selectedDate = null;
         selectedTime = "";
-        freqSelect.value = "";
+        freqDd.setValue("");
         syncRepeatVisibility();
         dueCalendar.setSelected(null);
         updateSummaryPreview();
@@ -459,17 +549,17 @@ window.WikiDateTimePicker = (function () {
       dialog.appendChild(form);
       document.body.appendChild(dialog);
 
-      // One delegated listener on the form, rather than wiring
-      // updateSummaryPreview onto each control individually -- the
-      // per-control approach already missed freqSelect and the three
-      // end-mode radios (Forever/Until/After) the first time around,
-      // caught live: switching Repeats away from a frequency correctly
-      // hid the interval/end-condition controls (syncRepeatVisibility
-      // ran) but the preview line below kept showing the stale
-      // recurrence text. change/input bubble from every control here
-      // (calendar day buttons use click, not change, which is why both
-      // calendar widgets' own click handlers still call onSelect
-      // directly too).
+      // One delegated listener on the form for the remaining native
+      // controls (the all-day checkbox, the end-mode radios, the
+      // interval/count numbers), rather than wiring updateSummaryPreview
+      // onto each individually -- the per-control approach already
+      // missed the three end-mode radios (Forever/Until/After) the
+      // first time around, caught live: switching between them left the
+      // preview line showing stale recurrence text. The three dropdowns
+      // (Repeats, Hour, Minute -- WikiDropdown, not native <select>) and
+      // both calendar widgets dispatch no native change/click bubble a
+      // form-level listener could catch, so each calls
+      // updateSummaryPreview directly from its own onChange/onSelect.
       form.addEventListener("change", updateSummaryPreview);
       form.addEventListener("input", updateSummaryPreview);
       updateSummaryPreview();

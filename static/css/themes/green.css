@@ -608,6 +608,17 @@ label {
   width: auto;
 }
 
+/* color-scheme set explicitly here too, not just on :root -- every
+   native form control's own pop-up (a <select>'s open option list, a
+   date/time picker) is a separate OS-composited layer that doesn't
+   always reliably inherit color-scheme through the DOM the way an
+   ordinary painted property does. Found live on the calendar page's
+   own Month/Year <select>s: closed, themed correctly (this rule's own
+   background/color); opened, the option list came back in the
+   browser's default light colors regardless of :root's color-scheme.
+   Setting it again on the actual control fixes that popup specifically
+   -- the same fix the Due/Time native inputs already needed earlier
+   this session, now applied once here instead of per-control. */
 input,
 textarea,
 select,
@@ -617,6 +628,7 @@ button {
   color: var(--fg);
   border: 1px solid var(--border);
   padding: 0.4rem 0.5rem;
+  color-scheme: dark;
   text-shadow: none;
 }
 input:focus,
@@ -691,12 +703,21 @@ a.btn:focus {
   color: var(--bg);
   text-shadow: none;
 }
+/* --panel-bg-2, not --panel-bg -- the latter is deliberately
+   semi-transparent in this theme (the sidebar's own "glass panel over
+   black" look), which this dialog inherited despite sitting over
+   arbitrary page content rather than a constant background. Invisible
+   for a short confirm/prompt dialog over a calm page, but the
+   date-time-picker dialog (date-time-picker.js, reuses this class)
+   sits directly over the edit page's own toolbar row, and its icons
+   visibly bled through the dialog's own background there -- found live
+   taking a screenshot of it. --panel-bg-2 is solid in every theme. */
 .wiki-dialog {
   width: min(32rem, calc(100vw - 2.5rem));
   margin: auto;
   padding: 1.2rem 1.25rem 1.1rem;
   border: 1px solid var(--border);
-  background: var(--panel-bg);
+  background: var(--panel-bg-2);
   color: var(--fg);
   box-shadow: var(--glow);
 }
@@ -1488,6 +1509,79 @@ pre code[class*="language-"] {
   min-width: 10rem;
   text-align: center;
 }
+/* Month/Year dropdowns swapped in for the plain text label, Month view
+   only (see renderMonthLabel's own comment in calendar.js). Small,
+   borderless-looking selects that read as part of the label rather
+   than a form control -- the generic input/select/button rule already
+   gives every <select> a visible border+background site-wide, which
+   looked exactly like an accidentally-left-in form field sitting in
+   the middle of a toolbar until overridden here. */
+/* color-scheme: dark explicitly on the element, not left to inherit
+   from :root -- the same fix already needed for the Due/Time native
+   inputs earlier this session. Inheritance alone didn't reliably reach
+   this control's own native dropdown POPUP (a separate OS-composited
+   layer, like a <select>'s open option list), which rendered with the
+   browser's default light colors regardless of :root's own
+   color-scheme: dark. Redeclaring it here is what actually themes that
+   popup. */
+.calendar-label-select {
+  font-weight: bold;
+  font-family: inherit;
+  font-size: 1rem;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg);
+  padding: 0.1rem 0.2rem;
+  color-scheme: dark;
+}
+.calendar-label-select:hover,
+.calendar-label-select:focus {
+  border-color: var(--border);
+}
+
+/* WikiDropdown (dropdown.js) -- the custom replacement for every
+   native <select> in this app (Month/Year here, Repeats/Hour/Minute in
+   the date-time picker). A native <select>'s open option list is a
+   separate OS-composited layer that doesn't reliably pick up
+   color-scheme regardless of CSS (see the generic input/select rule's
+   own comment above), and this app's own browser-automation tooling
+   can't see into it at all to verify it. This is ordinary DOM instead
+   -- a button plus a position:fixed list this stylesheet fully owns,
+   same approach as the Due-date picker's own Until popup. */
+.wiki-dd {
+  display: inline-block;
+}
+.wiki-dd-trigger {
+  font-family: inherit;
+  cursor: pointer;
+}
+.wiki-dd-popup {
+  position: fixed;
+  z-index: 2;
+  min-width: 6rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+}
+.wiki-dd-popup[hidden] {
+  display: none;
+}
+.wiki-dd-option {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.wiki-dd-option:hover {
+  background: var(--panel-bg);
+}
+.wiki-dd-option-selected,
+.wiki-dd-option-selected:hover {
+  background: var(--fg);
+  color: var(--bg);
+}
 .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -1513,8 +1607,24 @@ pre code[class*="language-"] {
   gap: 0.2rem;
   overflow: hidden;
 }
-.calendar-cell-empty {
-  background: var(--panel-bg);
+/* Leading/trailing filler days (adjacent month's real numbers, dimmed,
+   never a link) -- see renderMonthGrid's own comment in calendar.js for
+   why every month always emits 42 cells regardless of its real week
+   count. */
+/* A solid --panel-bg-2, not a semi-transparent --panel-bg + opacity --
+   that combination was found live to look visibly wrong: --border in
+   green.css is itself a bright semi-transparent green
+   (rgba(0,255,0,0.35)), used as .calendar-grid's own background to
+   paint the 1px gap lines between cells. Stacking panel-bg's own
+   transparency AND this rule's own opacity on top of that let the
+   bright grid-gap color show straight through, turning "a dim filler
+   cell" into "the brightest cell on the page." A solid background
+   plus a merely dim (not also transparent) text color avoids any
+   compositing with whatever's underneath. */
+.calendar-cell-pad {
+  background: var(--panel-bg-2);
+  color: var(--fg-dim);
+  font-size: 0.8rem;
 }
 .calendar-cell-today {
   box-shadow: inset 0 0 0 2px var(--link);

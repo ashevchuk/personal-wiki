@@ -109,8 +109,15 @@
   font-size: 0.95rem;
   width: 12rem;
 }
+/* 25rem = 12rem + 1rem gap + 12rem -- the trigger's own row has only one
+   field, unlike Path/Type and Title/Tags above it, so an arbitrary width
+   (18rem, picked once for "fits the longest summary text" and never
+   revisited) left its right edge floating in the middle of nowhere
+   instead of lining up with either column. Matching the two stacked
+   fields' combined span makes this row read as "one wide field under a
+   two-field grid" instead of a random-width leftover. */
 .dtp-trigger {
-  width: 18rem;
+  width: 25rem;
   text-align: left;
 }
 .visibility-toggle {
@@ -708,6 +715,18 @@ body.chat-sidebar-resizing * {
   text-align: center;
   font-size: 0.85rem;
 }
+/* .calendar-label-select is sized for /calendar's own full-size header
+   (font-size: 1rem) -- this modal's header is smaller, so the Month/Year
+   triggers here get their own, tighter sizing on top of that shared
+   base (border/background/color-scheme stay inherited from it). */
+.dtp-cal-label-select {
+  font-size: 0.85rem;
+  padding: 0.05rem 0.15rem;
+}
+.dtp-cal-label-select--compact {
+  font-size: 0.75rem;
+  padding: 0.05rem 0.1rem;
+}
 .dtp-cal-nav {
   padding: 0.1rem 0.4rem;
 }
@@ -773,8 +792,11 @@ body.chat-sidebar-resizing * {
   color: var(--bg);
   border-color: var(--fg);
 }
+/* Widened from 11rem now that the header holds two dropdown triggers
+   ("Sep" + "2026") instead of plain text -- a floating popup, not
+   constrained by the inline form layout it used to share a row with. */
 .dtp-calendar--compact {
-  width: 11rem;
+  width: 13rem;
 }
 .dtp-time-row {
   display: flex;

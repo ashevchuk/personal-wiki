@@ -76,9 +76,17 @@ page is a possible follow-up, not built yet.
 
 ## Visibility
 
-Fail-safe-private, same as everything else: a private document's due dates
-(recurring or not) never appear in `/api/calendar` for an anonymous caller,
-even if the request's date range would otherwise include them.
+Admin-only outright — not fail-safe-private-per-document like every other
+list in this app (search, nav, query blocks), where a public document stays
+visible to anonymous callers and only private ones are held back. The
+calendar is the admin's actual schedule: a public document's due date going
+through `/api/calendar` would still reveal when things on it happen, not
+just that the document itself is public. `GET /api/calendar` returns `401`
+for an unauthenticated caller outright — not a filtered or partial event
+list — and the `/calendar` page itself bounces an anonymous visitor to
+`/login` rather than rendering an empty toolbar. The sidebar's Calendar icon
+is hidden until `GET /api/session` confirms an authenticated caller, same
+as the Account link.
 
 ## `GET /api/calendar`
 

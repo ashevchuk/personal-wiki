@@ -96,6 +96,13 @@ window.WikiPages = window.WikiPages || {};
     return html;
   }
 
+  // Always 6 full weeks (42 cells) -- a 4-week February next to a
+  // 6-week October otherwise resizes this whole page by two row-heights
+  // on every Prev/Next click (found live, the same fixed-height fix
+  // already applied to the Due-date picker's own calendar widget in
+  // date-time-picker.js). Leading/trailing filler cells show the
+  // adjacent month's real day numbers, dimmed -- purely visual, never
+  // a link -- rather than blank boxes, matching that same widget.
   function renderMonthGrid(anchor, eventsByDate) {
     var year = anchor.getFullYear();
     var month = anchor.getMonth();
@@ -107,8 +114,12 @@ window.WikiPages = window.WikiPages || {};
     for (var i = 0; i < DAY_NAMES.length; i++) {
       html += '<div class="calendar-weekday">' + DAY_NAMES[i] + "</div>";
     }
-    for (var blank = 0; blank < firstWeekday; blank++) {
-      html += '<div class="calendar-cell calendar-cell-empty"></div>';
+    var prevMonthDays = daysInMonth(year, month - 1);
+    for (var lead = firstWeekday; lead > 0; lead--) {
+      html +=
+        '<div class="calendar-cell calendar-cell-pad">' +
+        (prevMonthDays - lead + 1) +
+        "</div>";
     }
     for (var day = 1; day <= totalDays; day++) {
       var date = isoDate(year, month, day);
@@ -123,10 +134,9 @@ window.WikiPages = window.WikiPages || {};
         renderEventLinks(events) +
         "</div>";
     }
-    var totalCells = firstWeekday + totalDays;
-    var trailing = (7 - (totalCells % 7)) % 7;
-    for (var t = 0; t < trailing; t++) {
-      html += '<div class="calendar-cell calendar-cell-empty"></div>';
+    var trailing = 42 - (firstWeekday + totalDays);
+    for (var t = 1; t <= trailing; t++) {
+      html += '<div class="calendar-cell calendar-cell-pad">' + t + "</div>";
     }
     html += "</div>";
     return html;
@@ -235,6 +245,17 @@ window.WikiPages = window.WikiPages || {};
   window.WikiPages.renderCalendar = function (container, session) {
     document.getElementById("page-title").textContent = "Calendar — wiki";
 
+    // Same gate every admin-only page module uses (see account.js) — a
+    // direct hit on /calendar while logged out bounces to /login rather
+    // than rendering a toolbar whose first fetch would just 401.
+    // GET /api/calendar itself also hard-gates this server-side
+    // (CalendarRoutes.cpp) — this is belt-and-suspenders for a page
+    // that would otherwise flash empty before that fetch even returns.
+    if (!session.authenticated) {
+      window.location.href = basePath() + "/login";
+      return;
+    }
+
     var anchor = new Date();
     var viewMode = "month"; // "month" | "week" | "day"
 
@@ -255,6 +276,53 @@ window.WikiPages = window.WikiPages || {};
 
     var label = document.getElementById("cal-label");
     var body = document.getElementById("cal-body");
+
+    // Month/Year dropdowns instead of a plain text label -- only in
+    // Month view, where "jump to a specific month" is one change event
+    // instead of many Prev/Next clicks; Week/Day keep the plain label
+    // (their own range text, e.g. a date span or a weekday+date, isn't
+    // a single month to pick from a dropdown). Year range is just
+    // "today ± 10" plus the current anchor's own year if it's ever
+    // navigated outside that window (Today always re-centers it).
+    function renderMonthLabel() {
+      var curYear = anchor.getFullYear();
+      var curMonth = anchor.getMonth();
+      var monthOptions = MONTH_NAMES.map(function (name, m) {
+        return { value: m, label: name };
+      });
+      var todayYear = new Date().getFullYear();
+      var minYear = Math.min(todayYear - 10, curYear);
+      var maxYear = Math.max(todayYear + 10, curYear);
+      var yearOptions = [];
+      for (var y = minYear; y <= maxYear; y++) {
+        yearOptions.push({ value: y, label: String(y) });
+      }
+      function jump(nextMonth, nextYear) {
+        anchor = new Date(nextYear, nextMonth, 1);
+        load();
+      }
+      var monthDd = WikiDropdown.create({
+        options: monthOptions,
+        value: curMonth,
+        ariaLabel: "Month",
+        triggerClass: "calendar-label-select",
+        onChange: function (v) {
+          jump(Number(v), Number(yearDd.getValue()));
+        },
+      });
+      var yearDd = WikiDropdown.create({
+        options: yearOptions,
+        value: curYear,
+        ariaLabel: "Year",
+        triggerClass: "calendar-label-select",
+        onChange: function (v) {
+          jump(Number(monthDd.getValue()), Number(v));
+        },
+      });
+      label.innerHTML = "";
+      label.appendChild(monthDd.element);
+      label.appendChild(yearDd.element);
+    }
     var viewButtons = {
       month: document.getElementById("cal-view-month"),
       week: document.getElementById("cal-view-week"),
@@ -270,7 +338,11 @@ window.WikiPages = window.WikiPages || {};
     function load() {
       updateViewButtons();
       var range = computeRange(viewMode, anchor);
-      label.textContent = range.label;
+      if (viewMode === "month") {
+        renderMonthLabel();
+      } else {
+        label.textContent = range.label;
+      }
       fetch(
         basePath() + "/api/calendar?start=" + range.start + "&end=" + range.end,
         { credentials: "same-origin" }
