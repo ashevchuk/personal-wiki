@@ -45,6 +45,22 @@ window.WikiPages = window.WikiPages || {};
   // in the Web UI showed what had accumulated there, let alone undid one
   // or actually freed the disk space. GET/POST/DELETE /api/admin/trash*
   // (AdminRoutes.h has the full shapes).
+  var TRASH_PAGE_SIZE = 8;
+
+  // Same currentColor-stroke-SVG treatment as every icon in shell.html's
+  // sidebar (nav-icon) — these aren't a new icon system, just the two
+  // extra glyphs this page needed, drawn the same way.
+  var ICON_RESTORE =
+    '<svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
+    'aria-hidden="true"><path d="M3 4v6h6"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L3 10"/></svg>';
+  var ICON_PURGE =
+    '<svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" ' +
+    'aria-hidden="true"><path d="M3 6h18"/>' +
+    '<path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>' +
+    '<path d="M10 11v6M14 11v6"/></svg>';
+
   function renderTrashSection() {
     return (
       "<h2>Trash</h2>" +
@@ -53,9 +69,13 @@ window.WikiPages = window.WikiPages || {};
       '<p id="trash-error" style="color:#ff5555"></p>' +
       '<p id="trash-success" style="color:#50fa7b"></p>' +
       '<table class="trash-table" id="trash-table" hidden>' +
-      "<thead><tr><th>Path</th><th>Deleted</th><th>Actions</th></tr></thead>" +
+      "<thead><tr><th>Document</th><th>Deleted</th><th>Actions</th></tr></thead>" +
       "<tbody></tbody></table>" +
-      '<p id="trash-empty">Loading&hellip;</p>'
+      '<p id="trash-empty">Loading&hellip;</p>' +
+      '<p class="audit-pager" id="trash-pager" hidden>' +
+      '<button type="button" class="audit-pager-newer">Newer</button>' +
+      '<span class="audit-pager-status"></span>' +
+      '<button type="button" class="audit-pager-older">Older</button></p>'
     );
   }
 
@@ -65,6 +85,9 @@ window.WikiPages = window.WikiPages || {};
     var emptyEl = document.getElementById("trash-empty");
     var errorEl = document.getElementById("trash-error");
     var successEl = document.getElementById("trash-success");
+    var pager = document.getElementById("trash-pager");
+    var items = [];
+    var page = 0;
 
     function showError(err) {
       errorEl.textContent = err.message || String(err);
@@ -75,6 +98,137 @@ window.WikiPages = window.WikiPages || {};
       errorEl.textContent = "";
     }
 
+    function pageCount() {
+      return items.length ? Math.ceil(items.length / TRASH_PAGE_SIZE) : 1;
+    }
+
+    function renderRow(item) {
+      var tr = document.createElement("tr");
+
+      // Title (falls back to the path when the document had none) plus
+      // the real path and a short body excerpt underneath, both dim —
+      // found live: a bare path alone often isn't enough to recognize
+      // what a trashed document actually was without restoring it just
+      // to look. All three come straight from the GET response, already
+      // read server-side (AdminRoutes.cpp), no per-row fetch needed.
+      var docTd = document.createElement("td");
+      var titleDiv = document.createElement("div");
+      titleDiv.className = "trash-title";
+      titleDiv.textContent = item.title || item.path;
+      var pathDiv = document.createElement("div");
+      pathDiv.className = "trash-path";
+      pathDiv.textContent = item.path;
+      docTd.appendChild(titleDiv);
+      docTd.appendChild(pathDiv);
+      if (item.excerpt) {
+        var excerptDiv = document.createElement("div");
+        excerptDiv.className = "trash-excerpt";
+        excerptDiv.textContent = item.excerpt;
+        docTd.appendChild(excerptDiv);
+      }
+
+      var deletedTd = document.createElement("td");
+      deletedTd.textContent = formatAuditAt(item.deletedAt);
+
+      var actionsTd = document.createElement("td");
+      var restoreBtn = document.createElement("button");
+      restoreBtn.type = "button";
+      restoreBtn.className = "icon-btn";
+      restoreBtn.innerHTML = ICON_RESTORE;
+      restoreBtn.setAttribute("aria-label", "Restore");
+      restoreBtn.title = "Restore";
+      restoreBtn.addEventListener("click", function () {
+        fetch(basePath() + "/api/admin/trash/restore", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-CSRF-Token": getCookie("wiki_csrf_token"),
+          },
+          credentials: "same-origin",
+          body: JSON.stringify({ path: item.path }),
+        })
+          .then(function (resp) {
+            if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+            showSuccess('Restored "' + item.path + '".');
+            load();
+          })
+          .catch(showError);
+      });
+
+      var purgeBtn = document.createElement("button");
+      purgeBtn.type = "button";
+      purgeBtn.className = "icon-btn";
+      purgeBtn.innerHTML = ICON_PURGE;
+      purgeBtn.setAttribute("aria-label", "Delete permanently");
+      purgeBtn.title = "Delete permanently";
+      purgeBtn.addEventListener("click", function () {
+        WikiDialog.confirm(
+          'Permanently delete "' + item.path + '"? This cannot be undone -- ' +
+            "there is no second trash.",
+          { danger: true, okLabel: "Delete permanently" }
+        ).then(function (ok) {
+          if (!ok) return;
+          fetch(basePath() + "/api/admin/trash?path=" + encodeURIComponent(item.path), {
+            method: "DELETE",
+            headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+            credentials: "same-origin",
+          })
+            .then(function (resp) {
+              if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+              showSuccess('Permanently deleted "' + item.path + '".');
+              load();
+            })
+            .catch(showError);
+        });
+      });
+
+      actionsTd.appendChild(restoreBtn);
+      actionsTd.appendChild(purgeBtn);
+      tr.appendChild(docTd);
+      tr.appendChild(deletedTd);
+      tr.appendChild(actionsTd);
+      return tr;
+    }
+
+    function render() {
+      if (items.length === 0) {
+        table.hidden = true;
+        pager.hidden = true;
+        emptyEl.hidden = false;
+        emptyEl.textContent = "Trash is empty.";
+        return;
+      }
+      emptyEl.hidden = true;
+      table.hidden = false;
+
+      var pages = pageCount();
+      if (page > pages - 1) page = pages - 1;
+      if (page < 0) page = 0;
+      var slice = items.slice(page * TRASH_PAGE_SIZE, (page + 1) * TRASH_PAGE_SIZE);
+
+      tbody.innerHTML = "";
+      slice.forEach(function (item) {
+        tbody.appendChild(renderRow(item));
+      });
+
+      pager.hidden = pages <= 1;
+      pager.querySelector(".audit-pager-status").textContent = page + 1 + " / " + pages;
+      pager.querySelector(".audit-pager-newer").disabled = page === 0;
+      pager.querySelector(".audit-pager-older").disabled = page >= pages - 1;
+    }
+
+    if (pager.getAttribute("data-wired") !== "1") {
+      pager.setAttribute("data-wired", "1");
+      pager.querySelector(".audit-pager-newer").addEventListener("click", function () {
+        page -= 1;
+        render();
+      });
+      pager.querySelector(".audit-pager-older").addEventListener("click", function () {
+        page += 1;
+        render();
+      });
+    }
+
     function load() {
       fetch(basePath() + "/api/admin/trash", { credentials: "same-origin" })
         .then(function (resp) {
@@ -82,79 +236,8 @@ window.WikiPages = window.WikiPages || {};
           return resp.json();
         })
         .then(function (data) {
-          var items = data.items || [];
-          if (items.length === 0) {
-            table.hidden = true;
-            emptyEl.hidden = false;
-            emptyEl.textContent = "Trash is empty.";
-            return;
-          }
-          emptyEl.hidden = true;
-          table.hidden = false;
-          tbody.innerHTML = "";
-          items.forEach(function (item) {
-            var tr = document.createElement("tr");
-            var pathTd = document.createElement("td");
-            pathTd.textContent = item.path;
-            var deletedTd = document.createElement("td");
-            deletedTd.textContent = formatAuditAt(item.deletedAt);
-            var actionsTd = document.createElement("td");
-
-            var restoreBtn = document.createElement("button");
-            restoreBtn.type = "button";
-            restoreBtn.textContent = "Restore";
-            restoreBtn.addEventListener("click", function () {
-              fetch(basePath() + "/api/admin/trash/restore", {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "X-CSRF-Token": getCookie("wiki_csrf_token"),
-                },
-                credentials: "same-origin",
-                body: JSON.stringify({ path: item.path }),
-              })
-                .then(function (resp) {
-                  if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
-                  showSuccess('Restored "' + item.path + '".');
-                  load();
-                })
-                .catch(showError);
-            });
-
-            var purgeBtn = document.createElement("button");
-            purgeBtn.type = "button";
-            purgeBtn.textContent = "Delete permanently";
-            purgeBtn.addEventListener("click", function () {
-              WikiDialog.confirm(
-                'Permanently delete "' + item.path + '"? This cannot be undone -- ' +
-                  "there is no second trash.",
-                { danger: true, okLabel: "Delete permanently" }
-              ).then(function (ok) {
-                if (!ok) return;
-                fetch(
-                  basePath() + "/api/admin/trash?path=" + encodeURIComponent(item.path),
-                  {
-                    method: "DELETE",
-                    headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
-                    credentials: "same-origin",
-                  }
-                )
-                  .then(function (resp) {
-                    if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
-                    showSuccess('Permanently deleted "' + item.path + '".');
-                    load();
-                  })
-                  .catch(showError);
-              });
-            });
-
-            actionsTd.appendChild(restoreBtn);
-            actionsTd.appendChild(purgeBtn);
-            tr.appendChild(pathTd);
-            tr.appendChild(deletedTd);
-            tr.appendChild(actionsTd);
-            tbody.appendChild(tr);
-          });
+          items = data.items || [];
+          render();
         })
         .catch(showError);
     }

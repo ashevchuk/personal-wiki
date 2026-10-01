@@ -1,8 +1,10 @@
 #include "controllers/AdminRoutes.h"
 
 #include "auth/RequireAdmin.h"
+#include "util/Excerpt.h"
 #include "util/Time.h"
 #include "vault/BackupService.h"
+#include "vault/FrontMatter.h"
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
 #include "index/EmbeddingIndexer.h"
@@ -299,6 +301,23 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
           item["path"] = e.relativePath;
           item["sizeBytes"] = static_cast<Json::Int64>(e.sizeBytes);
           item["deletedAt"] = util::isoTimestampFromUnix(e.deletedAtUnix);
+          // Best-effort title + a short excerpt, so the list itself answers
+          // "what IS this" without restoring it first just to look —
+          // found live: a bare path (especially a UUID-less stub or
+          // something renamed before deletion) often isn't enough to
+          // recognize what's actually in it. A read failure here (a
+          // corrupt/binary file somehow trashed) still lists the row,
+          // just without the extra context — this is a listing, not a
+          // read that gets to fail the whole page over one bad file.
+          try {
+            const ParsedDocument parsed =
+                parseFrontMatter(vault.readRaw(".trash/" + e.relativePath));
+            item["title"] = parsed.frontMatter.title;
+            item["excerpt"] = util::plainTextExcerpt(parsed.body, 160);
+          } catch (const std::exception&) {
+            item["title"] = "";
+            item["excerpt"] = "";
+          }
           arr.append(item);
         }
         Json::Value body;

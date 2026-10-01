@@ -1302,6 +1302,38 @@ pre code[class*="language-"] {
 .trash-table td:last-child button {
   margin-right: 0.4rem;
 }
+.trash-title {
+  color: var(--fg-bright);
+}
+.trash-path {
+  color: var(--fg-dim);
+  font-size: 0.8em;
+  font-family: monospace;
+  word-break: break-all;
+}
+.trash-excerpt {
+  color: var(--fg-dim);
+  font-size: 0.85em;
+  font-style: italic;
+  margin-top: 0.15rem;
+}
+/* De-styled from the generic input/select/button rule's own visible
+   border+background (see .calendar-label-select's own comment on that
+   same rule) -- a plain glyph-only control reads as an icon button only
+   when it doesn't ALSO look like a boxy form control sitting in a table
+   cell. */
+.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 0.2rem 0.3rem;
+  cursor: pointer;
+  color: var(--fg);
+}
+.icon-btn:hover,
+.icon-btn:focus {
+  border-color: var(--border);
+  background: var(--select-bg);
+}
 .query-empty {
   color: var(--fg-dim);
   font-style: italic;
