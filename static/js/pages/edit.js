@@ -494,7 +494,9 @@ window.WikiPages = window.WikiPages || {};
       '<option value="custom">Custom…</option>' +
       "</select>" +
       "</label>" +
-      '<label id="f-recur-custom-wrap" hidden>Custom rule ' +
+      "</div>" +
+      '<div class="field-row" id="f-recur-custom-wrap" hidden>' +
+      '<label>Custom rule ' +
       '<input type="text" id="f-recur-custom" placeholder="e.g. weekly;interval=2;until=2027-01-01"></label>' +
       "</div>" +
       "</div>" +

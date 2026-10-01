@@ -107,6 +107,25 @@
 .field-row label[hidden] {
   display: none;
 }
+/* Same author-vs-UA specificity trap as the rule above, now for a whole
+   row instead of one label: `.field-row { display: flex }` is an author
+   rule, so it beats the UA `[hidden] { display: none }` even when hidden
+   wins on raw specificity -- author origin always outranks the UA
+   stylesheet for non-!important declarations. #f-recur-custom-wrap is a
+   `.field-row` itself (its own row, not squeezed into the Due/Time/
+   Repeats one -- that let `flex-wrap` shove it onto a second line with
+   no column alignment to anything whenever the attachments panel left
+   too little width), so it needs the same explicit override. */
+.field-row[hidden] {
+  display: none;
+}
+/* Its own row, nothing beside it to share width with -- wide enough to
+   actually read the placeholder example instead of the shared 12rem
+   every other text field gets. */
+#f-recur-custom {
+  width: 100%;
+  max-width: 28rem;
+}
 /* An explicit, shared width -- not relying on every input TYPE's own
    native default size to coincidentally match. They don't: a bare
    <input type="date">/<select> renders narrower than a same-markup
