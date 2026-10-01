@@ -717,6 +717,45 @@ def run_checks(sandbox, vault):
     check("anon graph/matches with empty q is an empty list, not every document",
           empty_match == [], f"paths={empty_match}")
 
+    # --- 6d. /api/calendar (due/recur, CalendarQueries) -------------------
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/cal-pub.md", "title": "Cal Pub", "tags": [],
+         "visibility": "public", "type": "note", "body": "public event",
+         "due": "2026-06-01", "recur": "weekly"},
+        headers={"X-CSRF-Token": csrf})
+    check("create public recurring event -> 201", status == 201, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/documents",
+        {"path": "notes/cal-priv.md", "title": "Cal Priv", "tags": [],
+         "visibility": "private", "type": "note", "body": "private event",
+         "due": "2026-06-02", "recur": ""},
+        headers={"X-CSRF-Token": csrf})
+    check("create private one-off event -> 201", status == 201, f"got {status}")
+
+    status, _, body = anon.get_json("/api/calendar?start=2026-06-01&end=2026-06-30")
+    anon_paths = [e["path"] for e in body["events"]]
+    check("anon calendar: public recurring event present, private one-off not leaked",
+          "notes/cal-pub.md" in anon_paths and "notes/cal-priv.md" not in anon_paths,
+          f"paths={anon_paths}")
+    # Weekly from 2026-06-01 (a Monday) within June must expand to more
+    # than one occurrence, not just echo the bare due date back once --
+    # this is the one thing a plain visibility-filtered SELECT could never
+    # produce on its own.
+    anon_dates = sorted(e["date"] for e in body["events"] if e["path"] == "notes/cal-pub.md")
+    check("anon calendar: weekly recurrence expands to multiple June occurrences",
+          len(anon_dates) >= 4, f"dates={anon_dates}")
+
+    status, _, body = admin.get_json("/api/calendar?start=2026-06-01&end=2026-06-30")
+    admin_paths = [e["path"] for e in body["events"]]
+    check("admin calendar: sees both the public and the private event",
+          "notes/cal-pub.md" in admin_paths and "notes/cal-priv.md" in admin_paths,
+          f"paths={admin_paths}")
+
+    status, _, body = admin.get_json("/api/calendar?start=2026-06-01")
+    check("calendar: missing 'end' -> 400 with an error field, not a silent empty result",
+          status == 400 and "error" in body, f"status={status} body={body}")
+
     # --- 7. Attachments: visibility follows the OWNING document --------
     # No extension policy on upload anymore (see AttachmentService) — an
     # extension that would have been rejected before (.exe) now succeeds;
