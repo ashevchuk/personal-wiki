@@ -2,6 +2,7 @@
 
 #include "index/Statement.h"
 
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <functional>
@@ -23,6 +24,39 @@ std::optional<chr::year_month_day> parseIsoDate(const std::string& s) {
                                  chr::day{static_cast<unsigned>(d)}};
   if (!ymd.ok()) return std::nullopt;
   return ymd;
+}
+
+// `due` is "YYYY-MM-DD" (all-day) or "YYYY-MM-DDTHH:MM" (a specific time) --
+// splits off the date part (the only part date arithmetic ever touches)
+// from an optional time part, which just rides along unchanged on every
+// occurrence of a recurring series. No time component is NOT an error,
+// it's the normal all-day case.
+struct DateTimeParts {
+  std::string date;
+  std::string time;
+};
+
+DateTimeParts splitDateAndTime(const std::string& dueAt) {
+  const size_t t = dueAt.find('T');
+  if (t == std::string::npos) return {dueAt, ""};
+  return {dueAt.substr(0, t), dueAt.substr(t + 1)};
+}
+
+// Accepts exactly "HH:MM", 24h, zero-padded -- what <input type="time">
+// always produces. Anything else (hand-edited front matter with a typo)
+// is treated as "no time" rather than displayed as garbage -- same
+// fail-safe-skip precedent as a malformed `due` date itself.
+std::string validateTime(const std::string& t) {
+  if (t.size() != 5 || t[2] != ':' || !std::isdigit(static_cast<unsigned char>(t[0])) ||
+      !std::isdigit(static_cast<unsigned char>(t[1])) ||
+      !std::isdigit(static_cast<unsigned char>(t[3])) ||
+      !std::isdigit(static_cast<unsigned char>(t[4]))) {
+    return "";
+  }
+  const int hh = (t[0] - '0') * 10 + (t[1] - '0');
+  const int mm = (t[3] - '0') * 10 + (t[4] - '0');
+  if (hh > 23 || mm > 59) return "";
+  return t;
 }
 
 std::string formatIsoDate(chr::year_month_day ymd) {
@@ -169,9 +203,18 @@ std::vector<CalendarEvent> CalendarQueries::eventsBetween(const std::string& sta
   const auto end = parseIsoDate(endDate);
   if (!start || !end || *end < *start) return {};
 
+  // substr(d.due_at, 1, 10), not a plain due_at BETWEEN -- due_at can now
+  // carry a trailing "THH:MM", and a bare string comparison would make a
+  // TIMED event on the range's own last day ("2026-10-31T23:00") sort as
+  // GREATER than the bare date boundary ("2026-10-31") and get wrongly
+  // excluded (a longer string that starts with a shorter one sorts after
+  // it). Comparing just the first 10 characters sidesteps that entirely.
+  // Still only a coarse candidate filter either way -- every row is
+  // re-checked precisely in C++ below.
   std::vector<std::string> whereClauses = {
       "(? = 1 OR d.visibility = 'public')", "d.due_at != ''",
-      "(d.due_at BETWEEN ? AND ? OR (d.recur != '' AND d.due_at <= ?))"};
+      "((d.recur = '' AND substr(d.due_at, 1, 10) BETWEEN ? AND ?) OR "
+      "(d.recur != '' AND substr(d.due_at, 1, 10) <= ?))"};
   std::vector<std::function<void(Statement&, int)>> binders = {
       [includePrivate](Statement& s, int idx) {
         s.bind(idx, static_cast<int64_t>(includePrivate ? 1 : 0));
@@ -208,12 +251,18 @@ std::vector<CalendarEvent> CalendarQueries::eventsBetween(const std::string& sta
     const std::string dueAt = stmt.columnText(3);
     const std::string recur = stmt.columnText(4);
 
-    const auto due = parseIsoDate(dueAt);
+    const auto parts = splitDateAndTime(dueAt);
+    const auto due = parseIsoDate(parts.date);
     if (!due) continue;  // malformed `due` on this one row -- skip it, not the whole calendar
+    const std::string time = validateTime(parts.time);
 
     if (recur.empty()) {
-      // Already confirmed BETWEEN start/end by the SQL itself.
-      events.push_back(CalendarEvent{path, title, visibility, dueAt});
+      // Re-checked precisely here rather than trusting the SQL candidate
+      // filter outright -- see that filter's own comment on why a plain
+      // string BETWEEN isn't safe once a time component exists.
+      if (*due >= *start && *due <= *end) {
+        events.push_back(CalendarEvent{path, title, visibility, parts.date, time});
+      }
       continue;
     }
 
@@ -221,12 +270,9 @@ std::vector<CalendarEvent> CalendarQueries::eventsBetween(const std::string& sta
     if (!rule) {
       // Unrecognized recur text (a typo, most likely) -- fall back to
       // treating this document as a one-off on its own `due` date rather
-      // than losing the event entirely. The SQL candidate filter above
-      // only guaranteed due_at <= endDate for a recur-bearing row (it
-      // doesn't know yet whether recur will turn out to be garbage), so
-      // the lower bound still needs checking here.
+      // than losing the event entirely.
       if (*due >= *start && *due <= *end) {
-        events.push_back(CalendarEvent{path, title, visibility, dueAt});
+        events.push_back(CalendarEvent{path, title, visibility, parts.date, time});
       }
       continue;
     }
@@ -245,7 +291,7 @@ std::vector<CalendarEvent> CalendarQueries::eventsBetween(const std::string& sta
       if (untilBound && date > *untilBound) break;
       if (date > *end) break;  // series only moves forward -- nothing later will be in range either
       if (date >= *start) {
-        events.push_back(CalendarEvent{path, title, visibility, formatIsoDate(date)});
+        events.push_back(CalendarEvent{path, title, visibility, formatIsoDate(date), time});
       }
     }
   }

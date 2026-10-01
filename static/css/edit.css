@@ -98,9 +98,36 @@
   line-height: 1.2;
   gap: 0.2rem;
 }
-.field-row input[type="text"] {
+/* `.field-row label`'s own `display: flex` above (a class + element
+   selector) is MORE specific than the browser's built-in `[hidden] {
+   display: none }` UA rule (a bare attribute selector) -- without this,
+   the Custom-rule field marked `hidden` while "Repeats" isn't set to
+   "Custom…" would render fully visible anyway, [hidden] attribute or
+   not. Found live writing this exact field. */
+.field-row label[hidden] {
+  display: none;
+}
+/* An explicit, shared width -- not relying on every input TYPE's own
+   native default size to coincidentally match. They don't: a bare
+   <input type="date">/<select> renders narrower than a same-markup
+   <input type="text"> with no width set (each browser's own native
+   "size" default differs per control type), which is exactly why Due/
+   Repeats previously looked visually off against Path/Title/Type/Tags
+   directly above them despite using the "same" CSS -- there wasn't a
+   shared width at all, just four text inputs happening to default to
+   the same native size. Time gets its own narrower width (it's a
+   "HH:MM", not a path or a title). */
+.field-row input[type="text"],
+.field-row input[type="date"],
+.field-row select {
   padding: 0.35rem;
   font-size: 0.95rem;
+  width: 12rem;
+}
+.field-row input[type="time"] {
+  padding: 0.35rem;
+  font-size: 0.95rem;
+  width: 7rem;
 }
 .visibility-toggle {
   flex-direction: row !important;

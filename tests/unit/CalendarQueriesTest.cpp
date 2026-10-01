@@ -50,6 +50,13 @@ bool hasDate(const std::vector<CalendarEvent>& events, const std::string& path,
   });
 }
 
+bool hasDateTime(const std::vector<CalendarEvent>& events, const std::string& path,
+                  const std::string& date, const std::string& time) {
+  return std::any_of(events.begin(), events.end(), [&](const CalendarEvent& e) {
+    return e.path == path && e.date == date && e.time == time;
+  });
+}
+
 }  // namespace
 
 // --- parseRecurrenceRule (pure logic, no DB) --------------------------
@@ -246,6 +253,72 @@ TEST_CASE("CalendarQueries: interval=2 skips every other period", "[CalendarQuer
   REQUIRE(hasDate(events, "biweekly.md", "2026-03-16"));
   REQUIRE_FALSE(hasDate(events, "biweekly.md", "2026-03-23"));
   REQUIRE(hasDate(events, "biweekly.md", "2026-03-30"));
+}
+
+TEST_CASE("CalendarQueries: a due date with a time carries that time through, "
+          "an all-day due date has no time",
+          "[CalendarQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("timed.md", "public", "2026-03-15T16:00"));
+  updater.upsertOne(makeEntry("allday.md", "public", "2026-03-15"));
+
+  CalendarQueries cal(database);
+  const auto events = cal.eventsBetween("2026-03-01", "2026-03-31", true);
+  REQUIRE(hasDateTime(events, "timed.md", "2026-03-15", "16:00"));
+  REQUIRE(hasDateTime(events, "allday.md", "2026-03-15", ""));
+}
+
+TEST_CASE("CalendarQueries: a recurring series keeps the same time on every "
+          "occurrence, only the date moves",
+          "[CalendarQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("standup.md", "public", "2026-03-02T09:30", "weekly"));
+
+  CalendarQueries cal(database);
+  const auto events = cal.eventsBetween("2026-03-01", "2026-03-31", true);
+  REQUIRE(hasDateTime(events, "standup.md", "2026-03-02", "09:30"));
+  REQUIRE(hasDateTime(events, "standup.md", "2026-03-09", "09:30"));
+  REQUIRE(hasDateTime(events, "standup.md", "2026-03-16", "09:30"));
+}
+
+TEST_CASE("CalendarQueries: a timed event on the LAST day of the range is not "
+          "dropped by the SQL-level date prefilter",
+          "[CalendarQueries]") {
+  // A real, previously-live bug: comparing the full "due_at" TEXT column
+  // (date+time) against a bare end-date boundary via plain BETWEEN made a
+  // timed event on the range's own last day sort as "greater than" that
+  // boundary (a longer string that starts with a shorter one sorts after
+  // it) and get wrongly excluded. Pinned here so it can't silently come
+  // back if the SQL ever gets rewritten.
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("late.md", "public", "2026-03-31T23:45"));
+
+  CalendarQueries cal(database);
+  REQUIRE(hasDateTime(cal.eventsBetween("2026-03-01", "2026-03-31", true), "late.md",
+                       "2026-03-31", "23:45"));
+}
+
+TEST_CASE("CalendarQueries: a malformed time suffix degrades to all-day instead "
+          "of showing garbage",
+          "[CalendarQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("bad-time.md", "public", "2026-03-15T25:99"));
+
+  CalendarQueries cal(database);
+  REQUIRE(hasDateTime(cal.eventsBetween("2026-03-01", "2026-03-31", true), "bad-time.md",
+                       "2026-03-15", ""));
 }
 
 TEST_CASE("CalendarQueries: an unparseable recur string falls back to the single "

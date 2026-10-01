@@ -63,23 +63,34 @@ window.WikiPages = window.WikiPages || {};
     return isoFromDate(new Date());
   }
 
+  // All-day events (time === "") sort first -- an empty string compares
+  // less than any "HH:MM" one -- then ascending by time.
   function eventsFor(eventsByDate, iso) {
-    return eventsByDate[iso] || [];
+    var events = (eventsByDate[iso] || []).slice();
+    events.sort(function (a, b) {
+      return (a.time || "").localeCompare(b.time || "");
+    });
+    return events;
+  }
+
+  function eventLabel(ev) {
+    return ev.time ? ev.time + " " + ev.title : ev.title;
   }
 
   function renderEventLinks(events) {
     var html = "";
     for (var i = 0; i < events.length; i++) {
       var ev = events[i];
+      var label = eventLabel(ev);
       html +=
         '<a class="calendar-event" href="' +
         basePath() +
         "/d/" +
         encodeVaultPath(ev.path) +
         '" title="' +
-        escapeHtml(ev.title) +
+        escapeHtml(label) +
         '">' +
-        escapeHtml(ev.title) +
+        escapeHtml(label) +
         "</a>";
     }
     return html;
@@ -146,23 +157,51 @@ window.WikiPages = window.WikiPages || {};
     return html;
   }
 
-  function renderDayList(anchor, eventsByDate) {
+  // An hour-by-hour day planner (00:00-23:00), the way any real calendar
+  // app's day view works -- a flat list loses exactly the thing a day
+  // view is for: seeing at a glance where the gaps are. All-day events
+  // (no due TIME, just a date) get their own section above the grid
+  // instead of a fake "00:00" slot -- they aren't scheduled at any
+  // particular hour, placing them in the grid would be a made-up fact.
+  function renderDayView(anchor, eventsByDate) {
     var date = isoFromDate(anchor);
     var events = eventsFor(eventsByDate, date);
     var heading = DAY_NAMES_LONG[mondayFirstWeekday(anchor)] + ", " + date;
 
+    var allDay = [];
+    var byHour = {};
+    for (var i = 0; i < events.length; i++) {
+      var ev = events[i];
+      if (!ev.time) {
+        allDay.push(ev);
+        continue;
+      }
+      var hour = Number(ev.time.slice(0, 2));
+      if (!byHour[hour]) byHour[hour] = [];
+      byHour[hour].push(ev);
+    }
+
     var html = '<div class="calendar-day-view">';
     html += '<div class="calendar-day-view-heading">' + escapeHtml(heading) + "</div>";
-    if (events.length === 0) {
-      html += '<p class="query-empty">Nothing scheduled.</p>';
-    } else {
-      html += '<ul class="calendar-day-view-list">';
-      for (var i = 0; i < events.length; i++) {
-        html += "<li>" + renderEventLinks([events[i]]) + "</li>";
-      }
-      html += "</ul>";
+    if (allDay.length > 0) {
+      html +=
+        '<div class="calendar-allday"><div class="calendar-allday-label">All day</div>' +
+        renderEventLinks(allDay) +
+        "</div>";
     }
-    html += "</div>";
+    html += '<div class="calendar-hour-grid">';
+    for (var h = 0; h < 24; h++) {
+      html +=
+        '<div class="calendar-hour-row">' +
+        '<div class="calendar-hour-label">' +
+        pad2(h) +
+        ":00</div>" +
+        '<div class="calendar-hour-events">' +
+        renderEventLinks(byHour[h] || []) +
+        "</div>" +
+        "</div>";
+    }
+    html += "</div></div>";
     return html;
   }
 
@@ -249,7 +288,7 @@ window.WikiPages = window.WikiPages || {};
             byDate[ev.date].push(ev);
           }
           if (viewMode === "day") {
-            body.innerHTML = renderDayList(anchor, byDate);
+            body.innerHTML = renderDayView(anchor, byDate);
           } else if (viewMode === "week") {
             body.innerHTML = renderWeekGrid(anchor, byDate);
           } else {

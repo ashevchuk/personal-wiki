@@ -1318,19 +1318,52 @@ pre code[class*="language-"] {
   min-height: 10rem;
 }
 .calendar-day-view {
-  max-width: 32rem;
+  max-width: 36rem;
 }
 .calendar-day-view-heading {
   font-weight: bold;
   margin-bottom: 0.6rem;
 }
-.calendar-day-view-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.calendar-allday {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+.calendar-allday-label {
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.calendar-hour-grid {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+}
+.calendar-hour-row {
+  display: flex;
+  gap: 0.6rem;
+  min-height: 2rem;
+  border-top: 1px solid var(--border);
+  padding: 0.2rem 0;
+}
+.calendar-hour-row:last-child {
+  border-bottom: 1px solid var(--border);
+}
+.calendar-hour-label {
+  flex: 0 0 3.5rem;
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+}
+.calendar-hour-events {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
 }
 
 /* Print / "Export PDF" — identical across all three themes, deliberately:

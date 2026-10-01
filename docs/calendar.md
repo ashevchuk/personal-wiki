@@ -8,16 +8,24 @@ document with `due` set, same as a bookmark is just a document with
 
 ## Setting a due date
 
-The edit form has two extra fields, right under Title/Tags:
+The edit form has three extra fields, right under Title/Tags:
 
 - **Due** — a plain date picker. Clear it to remove the document from the
   calendar entirely.
-- **Repeats** — the recurrence rule (see below). Meaningless without a due
+- **Time** — optional. Leave it blank for an all-day event; set it for a
+  specific time (`16:00 Meeting with Google`, not just "sometime on the
+  5th"). Front matter stores this as part of `due` itself
+  (`due: 2026-10-05T16:00`), not a separate field — a bare `due:
+  2026-10-05` with no `T` is the all-day case, same as every document
+  saved before this field existed.
+- **Repeats** — a dropdown for the four common frequencies, plus
+  "Custom…" for the full `;interval=`/`;until=`/`;count=` syntax (see
+  below) when the dropdown alone isn't enough. Meaningless without a due
   date set; a repeat rule with no due date is just inert, not an error.
 
-Both round-trip through front matter as plain text (`due: 2026-03-02`,
-`recur: weekly`) — hand-editing the file directly works the same as using
-the form.
+All of this round-trips through front matter as plain text (`due:
+2026-10-05T16:00`, `recur: weekly`) — hand-editing the file directly works
+the same as using the form.
 
 ## Recurrence rules
 
@@ -47,6 +55,15 @@ handles it, not a skipped occurrence. A `recur` value that doesn't parse
 (a typo) degrades to treating the document as a one-off on its own `due`
 date, rather than losing the event from the calendar entirely.
 
+## Day view
+
+`/calendar`'s Day view is an hour-by-hour planner (00:00–23:00), not a
+flat list — a timed event (`due` with a `T...` time) lands in its own
+hour's row; an all-day event (no time) gets its own section above the
+grid instead of a made-up "00:00" slot. Month and Week views show the
+same events as compact chips, time-prefixed when there is one
+(`16:00 Meeting with Google`), sorted all-day-first then by time.
+
 ## Multiple calendars
 
 There's no separate "calendar" entity to create — "multiple calendars" is
@@ -74,9 +91,11 @@ GET /api/calendar?start=2026-03-01&end=2026-03-31&folder=work/&tag=standup
 recurring series anchored before `start` still expand into it correctly —
 the expansion isn't limited to occurrences generated after the document's
 own `due` date happens to fall in range. Returns
-`{"events": [{"path", "title", "visibility", "date"}, ...]}`, one entry per
-occurrence (a weekly event spanning the window appears once per week, not
-once per document).
+`{"events": [{"path", "title", "visibility", "date", "time"}, ...]}`, one
+entry per occurrence (a weekly event spanning the window appears once per
+week, not once per document). `time` is `"HH:MM"` for a timed event, `""`
+for an all-day one — on a recurring series it's the same clock time on
+every occurrence, only `date` moves.
 
 ## MCP
 

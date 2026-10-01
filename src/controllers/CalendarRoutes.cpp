@@ -68,6 +68,7 @@ void registerCalendarRoutes(HttpAppFramework& app, CalendarQueries& calendar) {
           item["title"] = e.title;
           item["visibility"] = e.visibility;
           item["date"] = e.date;
+          item["time"] = e.time;
           arr.append(item);
         }
         body["events"] = arr;

@@ -483,7 +483,19 @@ window.WikiPages = window.WikiPages || {};
       "</div>" +
       '<div class="field-row">' +
       '<label>Due <input type="date" id="f-due"></label>' +
-      '<label>Repeats <input type="text" id="f-recur" placeholder="e.g. weekly or monthly;interval=2"></label>' +
+      '<label>Time <input type="time" id="f-due-time"></label>' +
+      '<label>Repeats' +
+      '<select id="f-recur-freq">' +
+      '<option value="">Does not repeat</option>' +
+      '<option value="daily">Daily</option>' +
+      '<option value="weekly">Weekly</option>' +
+      '<option value="monthly">Monthly</option>' +
+      '<option value="yearly">Yearly</option>' +
+      '<option value="custom">Custom…</option>' +
+      "</select>" +
+      "</label>" +
+      '<label id="f-recur-custom-wrap" hidden>Custom rule ' +
+      '<input type="text" id="f-recur-custom" placeholder="e.g. weekly;interval=2;until=2027-01-01"></label>' +
       "</div>" +
       "</div>" +
       '<div class="edit-attachments-slot" hidden>' +
@@ -520,15 +532,75 @@ window.WikiPages = window.WikiPages || {};
     var typeInput = document.getElementById("f-type");
     var visibilityInput = document.getElementById("f-visibility");
     var dueInput = document.getElementById("f-due");
-    var recurInput = document.getElementById("f-recur");
+    var dueTimeInput = document.getElementById("f-due-time");
+    var recurFreqSelect = document.getElementById("f-recur-freq");
+    var recurCustomWrap = document.getElementById("f-recur-custom-wrap");
+    var recurCustomInput = document.getElementById("f-recur-custom");
+
+    // Due: a bare "YYYY-MM-DD" (all-day) or "YYYY-MM-DDTHH:MM" (a specific
+    // time) -- <input type="date"> and <input type="time"> can't represent
+    // that combined value directly, so this splits/joins across the two
+    // fields. No time typed -> no "T" in the saved value -> all-day, same
+    // as every document saved before this field existed.
+    function setDueFields(due) {
+      if (!due) {
+        dueInput.value = "";
+        dueTimeInput.value = "";
+        return;
+      }
+      var t = due.indexOf("T");
+      if (t === -1) {
+        dueInput.value = due;
+        dueTimeInput.value = "";
+      } else {
+        dueInput.value = due.slice(0, t);
+        dueTimeInput.value = due.slice(t + 1);
+      }
+    }
+    function currentDueValue() {
+      var d = dueInput.value.trim();
+      if (!d) return ""; // a time with no date is meaningless -- drop it
+      var t = dueTimeInput.value.trim();
+      return t ? d + "T" + t : d;
+    }
+
+    // Repeats: a dropdown for the four bare frequencies (the overwhelming
+    // common case) plus "Custom…", which reveals a plain text field for
+    // the full ;interval=/;until=/;count= DSL (see CalendarQueries.h's own
+    // grammar comment) -- the dropdown never tries to build modifiers
+    // itself, it only recognizes a bare frequency on load.
+    var RECUR_BARE_FREQUENCIES = ["daily", "weekly", "monthly", "yearly"];
+    function setRecurFields(recur) {
+      if (recur && RECUR_BARE_FREQUENCIES.indexOf(recur) !== -1) {
+        recurFreqSelect.value = recur;
+        recurCustomInput.value = "";
+        recurCustomWrap.hidden = true;
+      } else if (recur) {
+        recurFreqSelect.value = "custom";
+        recurCustomInput.value = recur;
+        recurCustomWrap.hidden = false;
+      } else {
+        recurFreqSelect.value = "";
+        recurCustomInput.value = "";
+        recurCustomWrap.hidden = true;
+      }
+    }
+    function currentRecurValue() {
+      return recurFreqSelect.value === "custom"
+        ? recurCustomInput.value.trim()
+        : recurFreqSelect.value;
+    }
+    recurFreqSelect.addEventListener("change", function () {
+      recurCustomWrap.hidden = recurFreqSelect.value !== "custom";
+    });
 
     pathInput.value = isNew ? docPath : data.path;
     pathInput.readOnly = !isNew;
     titleInput.value = data.title || "";
     tagsInput.value = (data.tags || []).join(", ");
     typeInput.value = data.type || "";
-    dueInput.value = data.due || "";
-    recurInput.value = data.recur || "";
+    setDueFields(data.due || "");
+    setRecurFields(data.recur || "");
     visibilityInput.checked = data.visibility === "public";
 
     createTypeahead(typeInput, "/api/nav/types", "type", "single");
@@ -858,8 +930,8 @@ window.WikiPages = window.WikiPages || {};
         path: pathInput.value.trim(),
         title: titleInput.value.trim(),
         type: typeInput.value.trim(),
-        due: dueInput.value.trim(),
-        recur: recurInput.value.trim(),
+        due: currentDueValue(),
+        recur: currentRecurValue(),
         tags: tagsInput.value
           .split(",")
           .map(function (t) {
@@ -1304,8 +1376,8 @@ window.WikiPages = window.WikiPages || {};
               path: pathInput.value.trim(),
               title: titleInput.value.trim(),
               type: typeInput.value.trim(),
-              due: dueInput.value.trim(),
-              recur: recurInput.value.trim(),
+              due: currentDueValue(),
+              recur: currentRecurValue(),
               tags: tagsInput.value
                 .split(",")
                 .map(function (t) {
@@ -1338,8 +1410,8 @@ window.WikiPages = window.WikiPages || {};
               path: pathInput.value,
               title: titleInput.value,
               type: typeInput.value,
-              due: dueInput.value,
-              recur: recurInput.value,
+              due: currentDueValue(),
+              recur: currentRecurValue(),
               tags: tagsInput.value,
               body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
             };
@@ -1351,8 +1423,8 @@ window.WikiPages = window.WikiPages || {};
             }
             titleInput.value = state.title || "";
             typeInput.value = state.type || "";
-            dueInput.value = state.due || "";
-            recurInput.value = state.recur || "";
+            setDueFields(state.due || "");
+            setRecurFields(state.recur || "");
             tagsInput.value = state.tags || "";
             editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(state.body || ""));
             lastEditorSelection = "";
@@ -1464,8 +1536,8 @@ window.WikiPages = window.WikiPages || {};
             return t.length > 0;
           }),
         type: typeInput.value.trim(),
-        due: dueInput.value.trim(),
-        recur: recurInput.value.trim(),
+        due: currentDueValue(),
+        recur: currentRecurValue(),
         visibility: visibilityInput.checked ? "public" : "private",
         body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
       };
@@ -1590,8 +1662,8 @@ window.WikiPages = window.WikiPages || {};
           var f = parsed.fields;
           if (f.title !== undefined) titleInput.value = f.title;
           if (f.type !== undefined) typeInput.value = f.type;
-          if (f.due !== undefined) dueInput.value = f.due;
-          if (f.recur !== undefined) recurInput.value = f.recur;
+          if (f.due !== undefined) setDueFields(f.due);
+          if (f.recur !== undefined) setRecurFields(f.recur);
           if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
           if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");
           editor.setMarkdown(parsed.body);

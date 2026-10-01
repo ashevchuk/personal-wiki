@@ -15,6 +15,9 @@ struct CalendarEvent {
   std::string date;  // ISO8601 YYYY-MM-DD -- the concrete occurrence date,
                       // not necessarily the document's own `due` (a
                       // recurring series' Nth occurrence lands here)
+  std::string time;  // "HH:MM" (24h), or "" for an all-day event. Carried
+                      // through unchanged across every occurrence of a
+                      // recurring series -- only the date part moves.
 };
 
 // Recurrence rule grammar, same whitelisted-DSL-not-raw-anything
