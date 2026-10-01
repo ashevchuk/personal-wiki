@@ -1784,7 +1784,12 @@ tools; audit prefix `chat:`. Each send includes the open wiki page
 (`view`) so "this document" / "this folder" can call `get_current_view`
 then `get_document` / `list_documents`. `run_query_block` executes a
 query-block fence's DSL (`QueryBlocks::parseAndRun`, same as
-`GET /api/query`). `list_document_history` / `diff_document_history`
+`GET /api/query`); `get_calendar_events` wraps `CalendarQueries::eventsBetween`
+(same as `/calendar` / `GET /api/calendar`), recurring series already
+expanded into per-day occurrences. Both are also exposed as MCP tools
+(`run_query`/`get_calendar_events`, stdio and remote HTTP — see
+`docs/mcp.md`), wrapping the same two engines rather than a third
+reimplementation. `list_document_history` / `diff_document_history`
 read `document_snapshots` (snapshot body vs current, same as the
 History page). Chat history is SQLite
 `agent_chats` (salvaged on index rebuild); the floating panel has a

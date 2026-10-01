@@ -184,10 +184,10 @@ itself, no server round-trip. Add it to `claude_desktop_config.json`:
 }
 ```
 
-Four read tools are always available (`search_documents`, `get_document`, `list_tags`,
-`list_documents`); `create_document`/`update_document` exist behind `[mcp].write_access`
-in `config.toml` (off by default), and every write — success or failure — lands in an
-audit log. Want Claude to reach the same tools over the network instead of a local
+Six read tools are always available (`search_documents`, `get_document`, `list_tags`,
+`list_documents`, `run_query`, `get_calendar_events`); `create_document`/`update_document`
+exist behind `[mcp].write_access` in `config.toml` (off by default), and every write —
+success or failure — lands in an audit log. Want Claude to reach the same tools over the network instead of a local
 spawn? Turn on **Remote MCP** in the admin panel — bearer token, optional CIDR
 allowlist, its own rate limiter, independent write-access toggle. Full protocol
 details, tool schemas, and the remote-transport security model:
