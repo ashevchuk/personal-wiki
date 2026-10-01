@@ -130,6 +130,10 @@
         pages.renderAccount(content, session);
         return;
       }
+      if (path === "/calendar" || path === "/calendar/") {
+        pages.renderCalendar(content, session);
+        return;
+      }
       // location.pathname is already percent-decoded by the browser, so
       // these slices are plain vault-relative paths already — no further
       // decoding needed at any of these three call sites.

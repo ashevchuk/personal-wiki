@@ -35,6 +35,8 @@ struct DocumentInput {
   std::string visibility;  // "public" | "private"; anything else -> private
   std::string type;
   std::string body;
+  std::string due;    // ISO8601 date, or empty -- see FrontMatter.h
+  std::string recur;  // CalendarQueries' own DSL, or empty
 };
 
 struct DocumentRecord {

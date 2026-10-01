@@ -161,6 +161,10 @@ Json::Value buildToolsList(bool writeEnabled) {
       props["type"] = stringParam("Document type, e.g. \"note\"");
       props["visibility"] = stringParam("\"public\" or \"private\" (default private)");
       props["tags"] = stringArrayParam("Tags for this document");
+      props["due"] = stringParam("ISO8601 date (YYYY-MM-DD) for the calendar, or omit for none");
+      props["recur"] =
+          stringParam("Recurrence rule for the calendar (see docs/calendar.md), or omit for a "
+                      "one-off");
       tools.append(toolSchema(
           "create_document",
           "Create a new document in the wiki. Fails if a document already "
@@ -176,6 +180,10 @@ Json::Value buildToolsList(bool writeEnabled) {
       props["type"] = stringParam("New document type (omit to keep current)");
       props["visibility"] = stringParam("New \"public\"/\"private\" (omit to keep current)");
       props["tags"] = stringArrayParam("New tag list (omit to keep current)");
+      props["due"] =
+          stringParam("New ISO8601 due date, or \"\" to clear it (omit to keep current)");
+      props["recur"] =
+          stringParam("New recurrence rule, or \"\" to clear it (omit to keep current)");
       tools.append(toolSchema(
           "update_document",
           "Update an existing document. Any field left out keeps its current "
@@ -391,6 +399,8 @@ Json::Value handleCreateDocument(DocumentService& documents, McpAuditLog& auditL
   input.title = args.get("title", "").asString();
   input.body = args.get("body", "").asString();
   input.type = args.get("type", "").asString();
+  input.due = args.get("due", "").asString();
+  input.recur = args.get("recur", "").asString();
   input.visibility = args.get("visibility", "private").asString();
   if (args.isMember("tags") && args["tags"].isArray()) {
     for (const auto& t : args["tags"]) {
@@ -440,6 +450,8 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
     input.title = args.get("title", existing.frontMatter.title).asString();
     input.body = args.get("body", existing.body).asString();
     input.type = args.get("type", existing.frontMatter.type).asString();
+    input.due = args.get("due", existing.frontMatter.due).asString();
+    input.recur = args.get("recur", existing.frontMatter.recur).asString();
     input.visibility = args.get("visibility", existing.frontMatter.visibility).asString();
     input.tags = existing.frontMatter.tags;
     if (args.isMember("tags") && args["tags"].isArray()) {

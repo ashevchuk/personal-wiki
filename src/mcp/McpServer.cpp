@@ -247,6 +247,8 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
     input.title = params.value("title", std::string());
     input.body = params.value("body", std::string());
     input.type = params.value("type", std::string());
+    input.due = params.value("due", std::string());
+    input.recur = params.value("recur", std::string());
     // Fail-safe-private applies here exactly as it does to a
     // human-authored save through the HTTP API — an LLM omitting
     // "visibility" (or getting the exact string wrong) must not
@@ -299,6 +301,8 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
       input.title = params.value("title", existing.frontMatter.title);
       input.body = params.value("body", existing.body);
       input.type = params.value("type", existing.frontMatter.type);
+      input.due = params.value("due", existing.frontMatter.due);
+      input.recur = params.value("recur", existing.frontMatter.recur);
       input.visibility = params.value("visibility", existing.frontMatter.visibility);
       input.tags = existing.frontMatter.tags;
       if (params.contains("tags") && params["tags"].is_array()) {
@@ -493,6 +497,12 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
             .with_string_param("type", "Document type, e.g. \"note\"", false)
             .with_string_param("visibility", "\"public\" or \"private\" (default private)", false)
             .with_array_param("tags", "Tags for this document", "string", false)
+            .with_string_param("due", "ISO8601 date (YYYY-MM-DD) for the calendar, or omit for none",
+                                false)
+            .with_string_param("recur",
+                                "Recurrence rule for the calendar (see docs/calendar.md), or omit "
+                                "for a one-off",
+                                false)
             .build();
     srv.register_tool(createDocumentTool,
                        makeCreateDocumentHandler(documents, auditLog, lazyProvider));
@@ -510,6 +520,12 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
             .with_string_param("visibility",
                                 "New \"public\"/\"private\" (omit to keep current)", false)
             .with_array_param("tags", "New tag list (omit to keep current)", "string", false)
+            .with_string_param("due",
+                                "New ISO8601 due date, or \"\" to clear it (omit to keep current)",
+                                false)
+            .with_string_param("recur",
+                                "New recurrence rule, or \"\" to clear it (omit to keep current)",
+                                false)
             .build();
     srv.register_tool(updateDocumentTool,
                        makeUpdateDocumentHandler(documents, auditLog, lazyProvider));

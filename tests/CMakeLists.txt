@@ -18,6 +18,7 @@ add_executable(unit_tests
   unit/FtsSearchTest.cpp
   unit/NavQueriesTest.cpp
   unit/GraphQueriesTest.cpp
+  unit/CalendarQueriesTest.cpp
   unit/QueryBlocksTest.cpp
   unit/IndexBuilderTest.cpp
   unit/DatabaseRecoverTest.cpp

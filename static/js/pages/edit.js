@@ -35,10 +35,11 @@ window.WikiPages = window.WikiPages || {};
   // A small, deliberately flat parser for exactly the shape
   // FrontMatter::serializeFrontMatter (src/vault/FrontMatter.cpp) writes
   // on disk -- NOT a general YAML parser. Only pulls out title/type/
-  // visibility/tags, the fields this form actually has inputs for; id/
-  // created/updated are read back from the file too but intentionally
-  // ignored here, same as the save path already never sends them --
-  // the server owns those. Returns { fields: {...}, body: "..." };
+  // visibility/tags/due/recur, the fields this form actually has inputs
+  // for; id/created/updated are read back from the file too but
+  // intentionally ignored here, same as the save path already never
+  // sends them -- the server owns those. Returns { fields: {...}, body:
+  // "..." };
   // `fields` only contains keys actually found, so a caller can tell
   // "not present in the file" apart from "present but empty" and leave
   // the corresponding form input alone in the former case. A file with
@@ -57,7 +58,8 @@ window.WikiPages = window.WikiPages || {};
       if (colon === -1) return;
       var key = line.slice(0, colon).trim();
       var value = line.slice(colon + 1).trim();
-      if (key === "title" || key === "type" || key === "visibility") {
+      if (key === "title" || key === "type" || key === "visibility" || key === "due" ||
+          key === "recur") {
         fields[key] = unquoteYaml(value);
       } else if (key === "tags") {
         // Flow-sequence form only ("tags: [a, b]") -- the only shape
@@ -479,6 +481,10 @@ window.WikiPages = window.WikiPages || {};
       '<label>Tags <input type="text" id="f-tags" placeholder="comma, separated"></label>' +
       '<label class="visibility-toggle"><input type="checkbox" id="f-visibility"> Public</label>' +
       "</div>" +
+      '<div class="field-row">' +
+      '<label>Due <input type="date" id="f-due"></label>' +
+      '<label>Repeats <input type="text" id="f-recur" placeholder="e.g. weekly or monthly;interval=2"></label>' +
+      "</div>" +
       "</div>" +
       '<div class="edit-attachments-slot" hidden>' +
       '<div id="edit-attachments" class="edit-attachments" hidden></div>' +
@@ -513,12 +519,16 @@ window.WikiPages = window.WikiPages || {};
     var tagsInput = document.getElementById("f-tags");
     var typeInput = document.getElementById("f-type");
     var visibilityInput = document.getElementById("f-visibility");
+    var dueInput = document.getElementById("f-due");
+    var recurInput = document.getElementById("f-recur");
 
     pathInput.value = isNew ? docPath : data.path;
     pathInput.readOnly = !isNew;
     titleInput.value = data.title || "";
     tagsInput.value = (data.tags || []).join(", ");
     typeInput.value = data.type || "";
+    dueInput.value = data.due || "";
+    recurInput.value = data.recur || "";
     visibilityInput.checked = data.visibility === "public";
 
     createTypeahead(typeInput, "/api/nav/types", "type", "single");
@@ -848,6 +858,8 @@ window.WikiPages = window.WikiPages || {};
         path: pathInput.value.trim(),
         title: titleInput.value.trim(),
         type: typeInput.value.trim(),
+        due: dueInput.value.trim(),
+        recur: recurInput.value.trim(),
         tags: tagsInput.value
           .split(",")
           .map(function (t) {
@@ -1292,6 +1304,8 @@ window.WikiPages = window.WikiPages || {};
               path: pathInput.value.trim(),
               title: titleInput.value.trim(),
               type: typeInput.value.trim(),
+              due: dueInput.value.trim(),
+              recur: recurInput.value.trim(),
               tags: tagsInput.value
                 .split(",")
                 .map(function (t) {
@@ -1324,6 +1338,8 @@ window.WikiPages = window.WikiPages || {};
               path: pathInput.value,
               title: titleInput.value,
               type: typeInput.value,
+              due: dueInput.value,
+              recur: recurInput.value,
               tags: tagsInput.value,
               body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
             };
@@ -1335,6 +1351,8 @@ window.WikiPages = window.WikiPages || {};
             }
             titleInput.value = state.title || "";
             typeInput.value = state.type || "";
+            dueInput.value = state.due || "";
+            recurInput.value = state.recur || "";
             tagsInput.value = state.tags || "";
             editor.setMarkdown(window.WikiCommon.wikiBodyToEditor(state.body || ""));
             lastEditorSelection = "";
@@ -1446,6 +1464,8 @@ window.WikiPages = window.WikiPages || {};
             return t.length > 0;
           }),
         type: typeInput.value.trim(),
+        due: dueInput.value.trim(),
+        recur: recurInput.value.trim(),
         visibility: visibilityInput.checked ? "public" : "private",
         body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
       };
@@ -1570,6 +1590,8 @@ window.WikiPages = window.WikiPages || {};
           var f = parsed.fields;
           if (f.title !== undefined) titleInput.value = f.title;
           if (f.type !== undefined) typeInput.value = f.type;
+          if (f.due !== undefined) dueInput.value = f.due;
+          if (f.recur !== undefined) recurInput.value = f.recur;
           if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
           if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");
           editor.setMarkdown(parsed.body);

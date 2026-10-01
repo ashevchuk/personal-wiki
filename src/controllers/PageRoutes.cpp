@@ -134,6 +134,7 @@ void registerPageRoutes(HttpAppFramework& app, const wikicore::config::AppConfig
   registerShellRoutePrefix(app, "^/edit/(.*)$");
   registerShellRoutePrefix(app, "^/history/(.*)$");
   registerShellRoute(app, "/account");
+  registerShellRoute(app, "/calendar");
 }
 
 }  // namespace wikicore::controllers

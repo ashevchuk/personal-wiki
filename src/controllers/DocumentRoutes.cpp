@@ -86,6 +86,8 @@ DocumentInput parseDocumentInput(const Json::Value& json) {
   input.type = json.get("type", "").asString();
   input.visibility = json.get("visibility", "private").asString();
   input.body = json.get("body", "").asString();
+  input.due = json.get("due", "").asString();
+  input.recur = json.get("recur", "").asString();
   if (json.isMember("tags") && json["tags"].isArray()) {
     for (const auto& tag : json["tags"]) {
       if (tag.isString()) input.tags.push_back(tag.asString());
@@ -184,6 +186,8 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         body["tags"] = tagsToJson(fm.tags);
         body["type"] = fm.type;
         body["visibility"] = fm.visibility;
+        body["due"] = fm.due;
+        body["recur"] = fm.recur;
         body["body"] = parsed.body;
         // [[wiki-links]] rewritten to plain markdown links BEFORE md4c
         // ever sees the body — md4c has no idea this syntax exists (see

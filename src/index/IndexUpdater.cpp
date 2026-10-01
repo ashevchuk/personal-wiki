@@ -255,8 +255,9 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
       Statement update(db_.handle(),
                         "UPDATE documents SET uuid=?1, title=?2, doc_type=?3, "
                         "visibility=?4, created_at=?5, updated_at=?6, "
-                        "file_mtime=?7, file_size=?8, excerpt=?9 "
-                        "WHERE rowid_id = ?10;");
+                        "file_mtime=?7, file_size=?8, excerpt=?9, due_at=?10, "
+                        "recur=?11 "
+                        "WHERE rowid_id = ?12;");
       update.bind(1, entry.uuid)
           .bind(2, entry.title)
           .bind(3, entry.docType)
@@ -266,14 +267,17 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
           .bind(7, entry.fileMtime)
           .bind(8, entry.fileSize)
           .bind(9, entry.excerpt)
-          .bind(10, rowId);
+          .bind(10, entry.dueAt)
+          .bind(11, entry.recur)
+          .bind(12, rowId);
       update.run();
     } else {
       Statement insert(
           db_.handle(),
           "INSERT INTO documents(uuid, path, title, doc_type, visibility, "
-          "created_at, updated_at, file_mtime, file_size, excerpt) "
-          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10);");
+          "created_at, updated_at, file_mtime, file_size, excerpt, due_at, "
+          "recur) "
+          "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12);");
       insert.bind(1, entry.uuid)
           .bind(2, entry.path)
           .bind(3, entry.title)
@@ -283,7 +287,9 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
           .bind(7, entry.updatedAt)
           .bind(8, entry.fileMtime)
           .bind(9, entry.fileSize)
-          .bind(10, entry.excerpt);
+          .bind(10, entry.excerpt)
+          .bind(11, entry.dueAt)
+          .bind(12, entry.recur);
       insert.run();
       rowId = insert.lastInsertRowId();
     }

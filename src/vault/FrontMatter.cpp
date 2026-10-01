@@ -97,6 +97,8 @@ ParsedDocument parseFrontMatter(std::string_view rawContent) {
   fm.type = readScalarOr(doc["type"], "");
   fm.created = readScalarOr(doc["created"], "");
   fm.updated = readScalarOr(doc["updated"], "");
+  fm.due = readScalarOr(doc["due"], "");
+  fm.recur = readScalarOr(doc["recur"], "");
 
   // The one field where "parsed successfully but not what we expect"
   // must still collapse to the safe default, not pass through verbatim.
@@ -123,6 +125,8 @@ std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body)
   out << YAML::Key << "type" << YAML::Value << fm.type;
   out << YAML::Key << "created" << YAML::Value << fm.created;
   out << YAML::Key << "updated" << YAML::Value << fm.updated;
+  out << YAML::Key << "due" << YAML::Value << fm.due;
+  out << YAML::Key << "recur" << YAML::Value << fm.recur;
   out << YAML::EndMap;
 
   return "---\n" + std::string(out.c_str()) + "\n---\n" + body;

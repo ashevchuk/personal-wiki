@@ -66,6 +66,7 @@ add_library(wikicore STATIC
   src/index/AgentChatStore.cpp
   src/index/GraphQueries.cpp
   src/index/NavQueries.cpp
+  src/index/CalendarQueries.cpp
   src/index/QueryBlocks.cpp
   src/index/SnapshotStore.cpp
   src/index/VaultWatcher.cpp
@@ -138,6 +139,7 @@ add_executable(wiki-server
   src/controllers/VersionRoutes.cpp
   src/controllers/QueryRoutes.cpp
   src/controllers/GraphRoutes.cpp
+  src/controllers/CalendarRoutes.cpp
   src/controllers/AgentRoutes.cpp
   src/llm/CloudChatClient.cpp
 )

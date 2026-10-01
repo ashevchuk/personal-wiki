@@ -265,4 +265,22 @@ CREATE TABLE link_items (
 CREATE INDEX idx_link_items_document ON link_items(document_rowid);
 )sql";
 
+// Migration 9: calendar fields on `documents` itself, not a derived
+// table like todo_items/link_items -- a document has at most ONE due
+// date/recurrence rule (unlike checkboxes or links, which a document can
+// have many of), so this is a plain column pair, same shape as
+// `doc_type`. due_at is a bare ISO8601 date (empty = no date); recur is
+// CalendarQueries' own small whitelisted DSL text (empty = one-off, or
+// meaningless without due_at set). Both NOT NULL DEFAULT '' so every
+// pre-existing row (and every full rescan of a document with no `due`/
+// `recur` in its front matter) gets the same "no date" value `due_at =
+// ''` already means, never NULL doing double duty for two different
+// things the way document_embedding_state.h's own comment warns against.
+inline constexpr const char* kMigration9 = R"sql(
+ALTER TABLE documents ADD COLUMN due_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE documents ADD COLUMN recur TEXT NOT NULL DEFAULT '';
+
+CREATE INDEX idx_documents_due_at ON documents(due_at) WHERE due_at != '';
+)sql";
+
 }  // namespace wikicore::index::schema

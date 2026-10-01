@@ -103,6 +103,8 @@ DocumentRecord DocumentService::create(const std::string& relativePathIn,
   fm.tags = input.tags;
   fm.visibility = normalizeVisibility(input.visibility);
   fm.type = input.type;
+  fm.due = input.due;
+  fm.recur = input.recur;
   fm.created = now;
   fm.updated = now;
 
@@ -138,6 +140,8 @@ DocumentRecord DocumentService::update(const std::string& relativePath,
   fm.tags = input.tags;
   fm.visibility = normalizeVisibility(input.visibility);
   fm.type = input.type;
+  fm.due = input.due;
+  fm.recur = input.recur;
   fm.created = existing.frontMatter.created.empty() ? now : existing.frontMatter.created;
   fm.updated = now;
 
@@ -210,6 +214,8 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
     entry.visibility = rec.frontMatter.visibility;
     entry.createdAt = rec.frontMatter.created;
     entry.updatedAt = rec.frontMatter.updated;
+    entry.dueAt = rec.frontMatter.due;
+    entry.recur = rec.frontMatter.recur;
     entry.tags = rec.frontMatter.tags;
     entry.body = rewritten;
     entry.excerpt = util::plainTextExcerpt(rewritten);
@@ -248,6 +254,8 @@ DocumentRecord DocumentService::writeAndIndex(const std::string& relativePath,
   entry.visibility = fm.visibility;
   entry.createdAt = fm.created;
   entry.updatedAt = fm.updated;
+  entry.dueAt = fm.due;
+  entry.recur = fm.recur;
   entry.fileMtime = stat.mtimeUnix;
   entry.fileSize = stat.size;
   entry.excerpt = util::plainTextExcerpt(input.body);

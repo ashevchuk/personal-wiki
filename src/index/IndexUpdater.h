@@ -25,6 +25,8 @@ struct DocumentIndexEntry {
   std::string visibility;  // "public" | "private"
   std::string createdAt;
   std::string updatedAt;
+  std::string dueAt;  // ISO8601 date, or "" -- see FrontMatter.h's `due`
+  std::string recur;  // CalendarQueries' own DSL, or "" -- see FrontMatter.h
   int64_t fileMtime = 0;
   int64_t fileSize = 0;
   std::string excerpt;

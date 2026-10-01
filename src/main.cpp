@@ -23,6 +23,7 @@
 #include "controllers/PageRoutes.h"
 #include "controllers/QueryRoutes.h"
 #include "controllers/GraphRoutes.h"
+#include "controllers/CalendarRoutes.h"
 #include "controllers/SearchRoutes.h"
 #include "controllers/RemoteMcpRoutes.h"
 #include "controllers/VersionRoutes.h"
@@ -35,6 +36,7 @@
 #include "index/NavQueries.h"
 #include "index/QueryBlocks.h"
 #include "index/GraphQueries.h"
+#include "index/CalendarQueries.h"
 #include "index/AgentChatStore.h"
 #include "index/McpAuditLog.h"
 #include "index/SnapshotStore.h"
@@ -250,6 +252,7 @@ int main(int argc, char** argv) {
   wikicore::index::NavQueries navQueries(db);
   wikicore::index::QueryBlocks queryBlocks(db, ftsSearch);
   wikicore::index::GraphQueries graphQueries(db);
+  wikicore::index::CalendarQueries calendarQueries(db);
   // Read-only from wiki-server's side — write_access is a wiki-mcp-only
   // concept (see McpServer.cpp); this exists here purely to back the
   // admin-facing GET /api/admin/mcp-audit-log route, reading rows a
@@ -547,6 +550,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerQueryRoutes(drogon::app(), queryBlocks);
   wikicore::controllers::registerGraphRoutes(drogon::app(), graphQueries, ftsSearch,
                                               vault);
+  wikicore::controllers::registerCalendarRoutes(drogon::app(), calendarQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog,
                                               remoteMcpConfig, cfg.vaultPath, db,
                                               embeddingProvider.get(), rescanProgress);

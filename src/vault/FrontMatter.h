@@ -17,6 +17,18 @@ struct FrontMatter {
   std::string type;
   std::string created;
   std::string updated;
+  // Calendar fields -- both plain, unvalidated strings at this layer,
+  // same convention as `type`: free text on write, parsed (and silently
+  // skipped if unparseable, never a hard error) only at calendar-query
+  // time. `due` is a bare ISO8601 date (YYYY-MM-DD); a document with no
+  // date leaves this empty and simply never appears in a calendar/agenda
+  // result. `recur` is CalendarQueries' own small whitelisted DSL (see
+  // that file), meaningless without `due` set -- a `recur` with no `due`
+  // is inert, not an error, same "fields don't cross-validate each
+  // other" precedent as `visibility`/`type` already not depending on one
+  // another.
+  std::string due;
+  std::string recur;
 };
 
 struct ParsedDocument {

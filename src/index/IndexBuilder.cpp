@@ -51,6 +51,8 @@ bool IndexBuilder::reindexOneFile(const std::string& relativePath) {
   idxEntry.visibility = fm.visibility;
   idxEntry.createdAt = fm.created;
   idxEntry.updatedAt = fm.updated;
+  idxEntry.dueAt = fm.due;
+  idxEntry.recur = fm.recur;
   idxEntry.tags = fm.tags;
   idxEntry.body = parsed.body;
   idxEntry.excerpt = util::plainTextExcerpt(parsed.body);
