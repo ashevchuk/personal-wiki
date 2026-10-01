@@ -2,6 +2,9 @@
 
 #include "util/Uuid.h"
 
+#include <sys/stat.h>
+
+#include <algorithm>
 #include <chrono>
 #include <fstream>
 #include <sstream>
@@ -201,6 +204,66 @@ void VaultRepository::removeFile(std::string_view relativePath) const {
   const fs::path fullPath = guard_.resolve(relativePath);
   std::error_code ec;
   fs::remove(fullPath, ec);
+}
+
+std::vector<VaultRepository::TrashEntry> VaultRepository::listTrash() const {
+  std::vector<TrashEntry> out;
+  const fs::path trashRoot = guard_.resolve(".trash");
+  std::error_code dirEc;
+  if (!fs::is_directory(trashRoot, dirEc)) return out;
+
+  auto it = fs::recursive_directory_iterator(
+      trashRoot, fs::directory_options::skip_permission_denied);
+  const auto end = fs::recursive_directory_iterator();
+  std::error_code ec;
+  for (; it != end; it.increment(ec)) {
+    if (ec) break;
+    const fs::directory_entry& entry = *it;
+    if (!entry.is_regular_file() || entry.path().extension() != ".md") continue;
+
+    TrashEntry te;
+    te.relativePath = fs::relative(entry.path(), trashRoot).generic_string();
+
+    struct stat st {};
+    if (::stat(entry.path().c_str(), &st) == 0) {
+      te.sizeBytes = static_cast<int64_t>(st.st_size);
+      te.deletedAtUnix = static_cast<int64_t>(st.st_ctime);
+    }
+    out.push_back(std::move(te));
+  }
+
+  // Most recently trashed first -- the common "I just deleted the wrong
+  // thing" recovery case shouldn't require scrolling.
+  std::sort(out.begin(), out.end(), [](const TrashEntry& a, const TrashEntry& b) {
+    return a.deletedAtUnix > b.deletedAtUnix;
+  });
+  return out;
+}
+
+void VaultRepository::purgeFromTrash(std::string_view relativePath) const {
+  const fs::path trashRel = fs::path(".trash") / fs::path(relativePath);
+  const fs::path full = guard_.resolve(trashRel.generic_string());
+  if (!fs::exists(full)) {
+    throw fs::filesystem_error(
+        "document not found in trash", full,
+        std::make_error_code(std::errc::no_such_file_or_directory));
+  }
+
+  std::error_code ec;
+  fs::remove(full, ec);
+  if (ec) {
+    throw fs::filesystem_error("failed to permanently delete", full, ec);
+  }
+
+  const fs::path assets = full.parent_path() / (full.stem().string() + ".assets");
+  if (fs::exists(assets)) {
+    std::error_code assetsEc;
+    fs::remove_all(assets, assetsEc);
+    if (assetsEc) {
+      throw fs::filesystem_error(
+          "deleted document but failed to delete its assets folder", assets, assetsEc);
+    }
+  }
 }
 
 }  // namespace wikicore::vault

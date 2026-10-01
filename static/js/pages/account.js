@@ -40,6 +40,128 @@ window.WikiPages = window.WikiPages || {};
     });
   }
 
+  // Trash — soft-delete (document.js's own Delete button) moves a
+  // document under .trash/ instead of removing it, but until now nothing
+  // in the Web UI showed what had accumulated there, let alone undid one
+  // or actually freed the disk space. GET/POST/DELETE /api/admin/trash*
+  // (AdminRoutes.h has the full shapes).
+  function renderTrashSection() {
+    return (
+      "<h2>Trash</h2>" +
+      "<p>Documents removed via Delete go here, not straight to disk — " +
+      "nothing purges them on its own.</p>" +
+      '<p id="trash-error" style="color:#ff5555"></p>' +
+      '<p id="trash-success" style="color:#50fa7b"></p>' +
+      '<table class="trash-table" id="trash-table" hidden>' +
+      "<thead><tr><th>Path</th><th>Deleted</th><th>Actions</th></tr></thead>" +
+      "<tbody></tbody></table>" +
+      '<p id="trash-empty">Loading&hellip;</p>'
+    );
+  }
+
+  function wireTrashSection(container) {
+    var table = document.getElementById("trash-table");
+    var tbody = table.querySelector("tbody");
+    var emptyEl = document.getElementById("trash-empty");
+    var errorEl = document.getElementById("trash-error");
+    var successEl = document.getElementById("trash-success");
+
+    function showError(err) {
+      errorEl.textContent = err.message || String(err);
+      successEl.textContent = "";
+    }
+    function showSuccess(msg) {
+      successEl.textContent = msg;
+      errorEl.textContent = "";
+    }
+
+    function load() {
+      fetch(basePath() + "/api/admin/trash", { credentials: "same-origin" })
+        .then(function (resp) {
+          if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+          return resp.json();
+        })
+        .then(function (data) {
+          var items = data.items || [];
+          if (items.length === 0) {
+            table.hidden = true;
+            emptyEl.hidden = false;
+            emptyEl.textContent = "Trash is empty.";
+            return;
+          }
+          emptyEl.hidden = true;
+          table.hidden = false;
+          tbody.innerHTML = "";
+          items.forEach(function (item) {
+            var tr = document.createElement("tr");
+            var pathTd = document.createElement("td");
+            pathTd.textContent = item.path;
+            var deletedTd = document.createElement("td");
+            deletedTd.textContent = formatAuditAt(item.deletedAt);
+            var actionsTd = document.createElement("td");
+
+            var restoreBtn = document.createElement("button");
+            restoreBtn.type = "button";
+            restoreBtn.textContent = "Restore";
+            restoreBtn.addEventListener("click", function () {
+              fetch(basePath() + "/api/admin/trash/restore", {
+                method: "POST",
+                headers: {
+                  "Content-Type": "application/json",
+                  "X-CSRF-Token": getCookie("wiki_csrf_token"),
+                },
+                credentials: "same-origin",
+                body: JSON.stringify({ path: item.path }),
+              })
+                .then(function (resp) {
+                  if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+                  showSuccess('Restored "' + item.path + '".');
+                  load();
+                })
+                .catch(showError);
+            });
+
+            var purgeBtn = document.createElement("button");
+            purgeBtn.type = "button";
+            purgeBtn.textContent = "Delete permanently";
+            purgeBtn.addEventListener("click", function () {
+              WikiDialog.confirm(
+                'Permanently delete "' + item.path + '"? This cannot be undone -- ' +
+                  "there is no second trash.",
+                { danger: true, okLabel: "Delete permanently" }
+              ).then(function (ok) {
+                if (!ok) return;
+                fetch(
+                  basePath() + "/api/admin/trash?path=" + encodeURIComponent(item.path),
+                  {
+                    method: "DELETE",
+                    headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+                    credentials: "same-origin",
+                  }
+                )
+                  .then(function (resp) {
+                    if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+                    showSuccess('Permanently deleted "' + item.path + '".');
+                    load();
+                  })
+                  .catch(showError);
+              });
+            });
+
+            actionsTd.appendChild(restoreBtn);
+            actionsTd.appendChild(purgeBtn);
+            tr.appendChild(pathTd);
+            tr.appendChild(deletedTd);
+            tr.appendChild(actionsTd);
+            tbody.appendChild(tr);
+          });
+        })
+        .catch(showError);
+    }
+
+    load();
+  }
+
   function renderRemoteMcpSection() {
     return (
       "<h2>Remote MCP</h2>" +
@@ -638,11 +760,13 @@ window.WikiPages = window.WikiPages || {};
       '<p><button type="submit">Change password</button></p>' +
       "</form>" +
       renderBackupSection() +
+      renderTrashSection() +
       renderRemoteMcpSection() +
       renderDraftAuditSection() +
       renderChatAuditSection();
 
     wireBackupSection();
+    wireTrashSection(container);
     wireRemoteMcpSection();
     wireReindexStatusSection(container);
     wireEmbeddingsSection(container);

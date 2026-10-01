@@ -552,7 +552,7 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerGraphRoutes(drogon::app(), graphQueries, ftsSearch,
                                               vault);
   wikicore::controllers::registerCalendarRoutes(drogon::app(), calendarQueries);
-  wikicore::controllers::registerAdminRoutes(drogon::app(), indexBuilder, mcpAuditLog,
+  wikicore::controllers::registerAdminRoutes(drogon::app(), vault, indexBuilder, mcpAuditLog,
                                               remoteMcpConfig, cfg.vaultPath, db,
                                               embeddingProvider.get(), rescanProgress);
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);

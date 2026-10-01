@@ -1310,6 +1310,35 @@ pre code[class*="language-"] {
   font-size: 0.8rem;
   letter-spacing: 0.03em;
 }
+/* A simple admin table (the Account page's Trash list) -- unlike
+   .query-results, this never shares a page with another table that
+   needs its columns to line up, and its Actions cell holds two real
+   buttons rather than a text value to truncate, so neither
+   table-layout: fixed nor nowrap/ellipsis apply here. */
+.trash-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 0.6rem;
+}
+.trash-table th,
+.trash-table td {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.trash-table th {
+  color: var(--fg-dim);
+  font-weight: normal;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.03em;
+}
+.trash-table td:first-child {
+  word-break: break-all;
+}
+.trash-table td:last-child button {
+  margin-right: 0.4rem;
+}
 .query-empty {
   color: var(--fg-dim);
   font-style: italic;

@@ -5,6 +5,7 @@
 #include "index/Database.h"
 #include "index/IndexBuilder.h"
 #include "index/McpAuditLog.h"
+#include "vault/VaultRepository.h"
 
 #include <drogon/HttpAppFramework.h>
 
@@ -103,7 +104,31 @@ namespace wikicore::controllers {
 //        provider that's still down shows up honestly rather than as a
 //        false "fixed". Logged as ONE "admin:reembed-all" summary entry
 //        (not one per document), success = stillFailing == 0.
-void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::index::IndexBuilder& indexBuilder,
+//
+// Trash — soft-delete (DocumentService::softDelete) moves a document
+// under .trash/ instead of actually removing it, but nothing used to let
+// an admin see what had piled up there, undo one, or free the disk
+// space. All three are admin only:
+//   GET    /api/admin/trash
+//     -> {items: [{path, sizeBytes, deletedAt}]} — every *.md file under
+//        .trash/, newest-deleted first. `path` is what it would restore
+//        TO (the ".trash/" prefix stripped). `deletedAt` is the
+//        filesystem ctime of the move into .trash (VaultRepository::
+//        listTrash's own comment explains why ctime, not mtime).
+//   POST   /api/admin/trash/restore   body: {path}
+//     -> moves ".trash/{path}" back to {path} (and its ".assets/" folder,
+//        if any) and re-adds it to the index (IndexBuilder::
+//        reindexOneFile, same primitive VaultWatcher uses for a file
+//        that reappears on disk). 409 if a document already exists at
+//        that path now (never silently overwrites), 404 if nothing's
+//        there in the trash. Logged as "admin:trash-restore".
+//   DELETE /api/admin/trash?path=...
+//     -> permanently deletes ".trash/{path}" (and its assets folder) —
+//        unrecoverable, there is no second trash. Query param, not a
+//        body, same reasoning as the CIDR-removal route above. Logged as
+//        "admin:trash-purge".
+void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::vault::VaultRepository& vault,
+                          wikicore::index::IndexBuilder& indexBuilder,
                           wikicore::index::McpAuditLog& mcpAuditLog,
                           wikicore::auth::McpRemoteConfig& mcpRemoteConfig,
                           const std::string& vaultPath, wikicore::index::Database& db,

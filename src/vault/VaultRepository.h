@@ -48,6 +48,30 @@ class VaultRepository {
   // filesystem_error if the source doesn't exist.
   void moveToTrash(std::string_view relativePath) const;
 
+  struct TrashEntry {
+    std::string relativePath;  // the path it would restore to (no ".trash/" prefix)
+    int64_t sizeBytes = 0;
+    // Best-effort "when" -- the inode's ctime (status-change time), which
+    // moveToTrash's own rename() updates even though it doesn't touch the
+    // file's content. std::filesystem has no portable ctime accessor
+    // (only last_write_time, i.e. mtime, which reflects the document's
+    // last EDIT, not when it was deleted) -- this project is Linux-only
+    // (see docs/deployment.md), so a raw ::stat() for st_ctime is the
+    // honest value instead of mislabeling mtime as "deleted at".
+    int64_t deletedAtUnix = 0;
+  };
+  // Every *.md file under .trash/, recursively (dotdirs skipped the same
+  // way IndexBuilder::fullRescan skips them elsewhere) -- a trashed
+  // document's own co-located ".assets/" folder is not listed separately,
+  // same as it isn't a standalone row in the real vault's own listings.
+  [[nodiscard]] std::vector<TrashEntry> listTrash() const;
+
+  // Permanently removes the document (and its ".assets/" folder, if any)
+  // at ".trash/<relativePath>" -- unlike removeFile, this recurses, since
+  // an assets folder is a directory with content, not an empty one.
+  // Throws filesystem_error if it doesn't exist in the trash.
+  void purgeFromTrash(std::string_view relativePath) const;
+
   // Renames/moves the document at `oldRelativePath` to `newRelativePath`
   // (creating parent directories as needed) and, if present, its
   // co-located "<stem>.assets/" folder to the matching new stem. PathGuard

@@ -26,4 +26,8 @@ std::string isoTimestampAfter(long seconds) {
   return formatIso8601(std::time(nullptr) + seconds);
 }
 
+std::string isoTimestampFromUnix(int64_t unixTime) {
+  return formatIso8601(static_cast<std::time_t>(unixTime));
+}
+
 }  // namespace wikicore::util

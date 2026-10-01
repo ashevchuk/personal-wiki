@@ -211,6 +211,40 @@ TEST_CASE("DocumentService softDelete moves the file (and assets folder) to "
   REQUIRE_THROWS_AS(svc.softDelete("notes/a.md"), vault::DocumentNotFoundError);
 }
 
+TEST_CASE("VaultRepository::listTrash finds a soft-deleted document, "
+          "purgeFromTrash removes it (and its assets folder) for good",
+          "[VaultRepository]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  REQUIRE(repo.listTrash().empty());
+
+  vault::DocumentInput input;
+  input.body = "x";
+  svc.create("notes/a.md", input);
+  fs::create_directories(env.vaultRoot() / "notes/a.assets");
+  std::ofstream(env.vaultRoot() / "notes/a.assets/img.png") << "fake";
+  svc.softDelete("notes/a.md");
+
+  const auto trashed = repo.listTrash();
+  REQUIRE(trashed.size() == 1);
+  REQUIRE(trashed[0].relativePath == "notes/a.md");
+  REQUIRE(trashed[0].sizeBytes > 0);
+  // The assets folder itself is not a separate row -- same as it isn't
+  // one in any real vault listing either.
+
+  repo.purgeFromTrash("notes/a.md");
+  REQUIRE(repo.listTrash().empty());
+  REQUIRE_FALSE(fs::exists(env.vaultRoot() / ".trash/notes/a.md"));
+  REQUIRE_FALSE(fs::exists(env.vaultRoot() / ".trash/notes/a.assets"));
+  REQUIRE_THROWS_AS(repo.purgeFromTrash("notes/a.md"), fs::filesystem_error);
+}
+
 TEST_CASE("DocumentService create appends .md when the caller omitted it",
           "[DocumentService]") {
   TempEnv env;

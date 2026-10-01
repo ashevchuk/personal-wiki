@@ -23,6 +23,14 @@ namespace wikicore::controllers {
 
 namespace {
 
+HttpResponsePtr jsonError(HttpStatusCode status, const std::string& message) {
+  Json::Value body;
+  body["error"] = message;
+  auto resp = HttpResponse::newHttpJsonResponse(body);
+  resp->setStatusCode(status);
+  return resp;
+}
+
 Json::Value remoteConfigToJson(const McpRemoteConfig& cfg) {
   const RemoteMcpSettings settings = cfg.get();
   Json::Value body;
@@ -73,9 +81,10 @@ std::string backupFilename() {
 
 }  // namespace
 
-void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
-                          McpAuditLog& mcpAuditLog, McpRemoteConfig& mcpRemoteConfig,
-                          const std::string& vaultPath, [[maybe_unused]] Database& db,
+void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
+                          IndexBuilder& indexBuilder, McpAuditLog& mcpAuditLog,
+                          McpRemoteConfig& mcpRemoteConfig, const std::string& vaultPath,
+                          [[maybe_unused]] Database& db,
                           [[maybe_unused]] EmbeddingProvider* embeddingProvider,
                           RescanProgress& rescanProgress) {
   app.registerHandler(
@@ -268,6 +277,122 @@ void registerAdminRoutes(HttpAppFramework& app, IndexBuilder& indexBuilder,
         callback(resp);
       },
       {Get, "wikicore::auth::AuthFilter"});
+
+  // --- Trash: list/restore/purge what soft-delete (DocumentService::
+  // softDelete, DocumentRoutes.cpp) has moved under .trash/ -- a real gap
+  // found live: soft-delete existed, but nothing in the Web UI ever let
+  // an admin see what had accumulated there, undo one, or actually free
+  // the disk space. .trash/ itself has no retention of its own (by
+  // design — an admin decides what's actually gone, this app never
+  // guesses), so this is the only way any of it ever leaves the vault.
+  app.registerHandler(
+      "/api/admin/trash",
+      [&vault](const HttpRequestPtr& req,
+               std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        Json::Value arr(Json::arrayValue);
+        for (const auto& e : vault.listTrash()) {
+          Json::Value item;
+          item["path"] = e.relativePath;
+          item["sizeBytes"] = static_cast<Json::Int64>(e.sizeBytes);
+          item["deletedAt"] = util::isoTimestampFromUnix(e.deletedAtUnix);
+          arr.append(item);
+        }
+        Json::Value body;
+        body["items"] = arr;
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
+  app.registerHandler(
+      "/api/admin/trash/restore",
+      [&vault, &indexBuilder, &mcpAuditLog](
+          const HttpRequestPtr& req,
+          std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("path") || !(*json)["path"].isString() ||
+            (*json)["path"].asString().empty()) {
+          Json::Value err;
+          err["error"] = "expected {\"path\": \"...\"}";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+        const std::string path = (*json)["path"].asString();
+        try {
+          // A document could have been re-created at this same path
+          // since it was trashed — restoring would silently clobber it,
+          // so this checks first rather than letting rename() overwrite
+          // (same guard DocumentService::rename already applies for an
+          // ordinary move/rename).
+          if (vault.exists(path)) {
+            mcpAuditLog.record("admin:trash-restore", path, false,
+                                "a document already exists at that path");
+            Json::Value err;
+            err["error"] = "a document already exists at that path";
+            auto resp = HttpResponse::newHttpJsonResponse(err);
+            resp->setStatusCode(k409Conflict);
+            callback(resp);
+            return;
+          }
+          vault.renameDocument(".trash/" + path, path);
+          // Pulls it back into the FTS/tags index exactly the way
+          // VaultWatcher does for a file that reappears on disk — a
+          // restore is that same situation, just triggered from the Web
+          // UI instead of an external edit.
+          indexBuilder.reindexOneFile(path);
+          mcpAuditLog.record("admin:trash-restore", path, true, "restored");
+          Json::Value body;
+          body["ok"] = true;
+          callback(HttpResponse::newHttpJsonResponse(body));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          mcpAuditLog.record("admin:trash-restore", path, false,
+                              "not found in trash");
+          callback(jsonError(k404NotFound, "not found in trash"));
+        }
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/admin/trash",
+      [&vault, &mcpAuditLog](const HttpRequestPtr& req,
+                              std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        // Query param, not a body — a DELETE body is stripped by some
+        // proxies/clients along the way, same reasoning as the CIDR
+        // removal route above.
+        const std::string path = req->getParameter("path");
+        if (path.empty()) {
+          callback(jsonError(k400BadRequest, "expected ?path=..."));
+          return;
+        }
+        try {
+          vault.purgeFromTrash(path);
+          mcpAuditLog.record("admin:trash-purge", path, true, "permanently deleted");
+          Json::Value body;
+          body["ok"] = true;
+          callback(HttpResponse::newHttpJsonResponse(body));
+        } catch (const PathTraversalError&) {
+          callback(jsonError(k400BadRequest, "invalid path"));
+        } catch (const std::filesystem::filesystem_error&) {
+          mcpAuditLog.record("admin:trash-purge", path, false, "not found in trash");
+          callback(jsonError(k404NotFound, "not found in trash"));
+        }
+      },
+      {Delete, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
   app.registerHandler(
