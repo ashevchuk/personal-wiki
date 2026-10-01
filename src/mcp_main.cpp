@@ -18,11 +18,13 @@
 
 #include "config/AppConfig.h"
 #include "core/wikicore.h"
+#include "index/CalendarQueries.h"
 #include "index/Database.h"
 #include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
+#include "index/QueryBlocks.h"
 #include "index/SnapshotStore.h"
 #include "mcp/McpServer.h"
 #include "vault/AttachmentService.h"
@@ -63,6 +65,8 @@ int main() {
   wikicore::index::FtsSearch search(db);
   wikicore::index::NavQueries nav(db);
   wikicore::index::McpAuditLog auditLog(db);
+  wikicore::index::QueryBlocks queryBlocks(db, search);
+  wikicore::index::CalendarQueries calendarQueries(db);
 
   // "admin" (the AppConfig default) sees public+private; only an exact
   // "public" restricts it — this is the opposite direction from the HTTP
@@ -72,8 +76,8 @@ int main() {
   const bool includePrivate = cfg.mcpScope != "public";
 
   wikicore::mcp::runServer("personal-wiki", wikicore::versionString(), search, nav,
-                            indexUpdater, documents, attachments, auditLog, includePrivate,
-                            cfg.mcpWriteAccess, cfg);
+                            indexUpdater, documents, attachments, auditLog, queryBlocks,
+                            calendarQueries, includePrivate, cfg.mcpWriteAccess, cfg);
 
   return 0;
 }

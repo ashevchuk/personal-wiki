@@ -1,3 +1,4 @@
+#include "index/CalendarQueries.h"
 #include "index/Database.h"
 #include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
@@ -1046,6 +1047,78 @@ TEST_CASE("AgentRuntime: run_query_block surfaces a DSL typo, not an empty list"
   waitDone(agent, id);
   REQUIRE(chat.lastTool.find("error:") != std::string::npos);
   REQUIRE(chat.lastTool.find("[]") == std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: get_calendar_events expands a recurring series in range",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput standup;
+  standup.title = "Standup";
+  standup.visibility = "private";
+  standup.due = "2026-01-05";
+  standup.recur = "weekly";
+  documents.create("standup.md", standup);
+  vault::DocumentInput oneOff;
+  oneOff.title = "One-off";
+  oneOff.visibility = "private";
+  oneOff.due = "2026-06-01";
+  documents.create("far-away.md", oneOff);
+
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::QueryBlocks qb(db, search);
+  index::CalendarQueries calendar(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall(
+      "get_calendar_events", R"({"start":"2026-01-01","end":"2026-01-31"})"));
+  llm::ChatCompletion done;
+  done.content = "ok";
+  chat.replies.push_back(done);
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "", "",
+                          nullptr, &qb, &snapshots, &calendar);
+  const std::string id = agent.startChat("what's on in january?");
+  const auto view = waitDone(agent, id);
+  REQUIRE(view.status == "done");
+  // Weekly from Jan 5 inside a Jan 1-31 window -> 4 occurrences (5, 12, 19, 26).
+  REQUIRE(chat.lastTool.find("2026-01-05") != std::string::npos);
+  REQUIRE(chat.lastTool.find("2026-01-26") != std::string::npos);
+  REQUIRE(chat.lastTool.find("far-away.md") == std::string::npos);
+}
+
+TEST_CASE("AgentRuntime: get_calendar_events requires start and end",
+          "[AgentRuntime]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService documents(repo, indexUpdater, snapshots);
+  index::FtsSearch search(db);
+  index::NavQueries nav(db);
+  index::QueryBlocks qb(db, search);
+  index::CalendarQueries calendar(db);
+
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("get_calendar_events", R"({"start":"2026-01-01"})"));
+  llm::ChatCompletion done;
+  done.content = "ok";
+  chat.replies.push_back(done);
+
+  llm::AgentRuntime agent(search, documents, nav, indexUpdater, nullptr, &chat, "", "",
+                          nullptr, &qb, &snapshots, &calendar);
+  const std::string id = agent.startChat("what's due?");
+  waitDone(agent, id);
+  REQUIRE(chat.lastTool.find("error:") != std::string::npos);
 }
 
 TEST_CASE("AgentRuntime: list and diff document history against current",

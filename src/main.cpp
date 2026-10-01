@@ -287,7 +287,8 @@ int main(int argc, char** argv) {
   wikicore::llm::AgentRuntime agentRuntime(ftsSearch, documentService, navQueries,
                                             indexUpdater, &mcpAuditLog, chatClient.get(),
                                             cfg.llmSystemPrompt, cfg.llmChatSystemPrompt,
-                                            &agentChatStore, &queryBlocks, &snapshotStore);
+                                            &agentChatStore, &queryBlocks, &snapshotStore,
+                                            &calendarQueries);
 
   // The db is a disposable cache, never assumed correct on faith — rescan
   // unconditionally at every startup so the index reflects whatever's
@@ -560,7 +561,8 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerRemoteMcpRoutes(drogon::app(), remoteMcpConfig,
                                                   remoteMcpRateLimiter, ftsSearch, navQueries,
                                                   indexUpdater, documentService, attachmentService,
-                                                  mcpUploadStaging, mcpAuditLog);
+                                                  mcpUploadStaging, mcpAuditLog, queryBlocks,
+                                                  calendarQueries);
   wikicore::controllers::registerAgentRoutes(drogon::app(), agentRuntime);
 
   drogon::app()

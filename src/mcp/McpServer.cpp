@@ -226,6 +226,73 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
   };
 }
 
+// Same whitelisted DSL as GET /api/query and the Draft/Chat agent's own
+// run_query_block tool (AgentRuntime.cpp) — one `key: value` grammar,
+// one implementation (QueryBlocks::parseAndRun), exposed identically
+// across every caller instead of three parallel reimplementations.
+::mcp::tool_handler makeRunQueryHandler(index::QueryBlocks& queryBlocks,
+                                         bool includePrivate) {
+  return [&queryBlocks, includePrivate](const ::mcp::json& params,
+                                         const std::string&) -> ::mcp::json {
+    if (!params.contains("query") || !params["query"].is_string()) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+                                  "missing 'query'");
+    }
+    const auto result =
+        queryBlocks.parseAndRun(params["query"].get<std::string>(), includePrivate);
+    if (!result.ok) {
+      // Same discipline as a typo'd query-block in a document: a parse
+      // error must surface as an actual tool error, never as "ran fine,
+      // zero rows" — see QueryBlocks.h's own comment on why.
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, result.error);
+    }
+    ::mcp::json arr = ::mcp::json::array();
+    for (const auto& row : result.rows) {
+      arr.push_back(::mcp::json{{"path", row.path},
+                                 {"title", row.title},
+                                 {"visibility", row.visibility},
+                                 {"updatedAt", row.updatedAt},
+                                 {"tags", row.tagsFlat}});
+    }
+    return textContent(arr.dump(2));
+  };
+}
+
+// Same engine as /calendar and GET /api/calendar (CalendarQueries.cpp) —
+// recurring series already expanded into concrete per-day occurrences,
+// one row per occurrence.
+::mcp::tool_handler makeGetCalendarEventsHandler(index::CalendarQueries& calendarQueries,
+                                                  bool includePrivate) {
+  return [&calendarQueries, includePrivate](const ::mcp::json& params,
+                                             const std::string&) -> ::mcp::json {
+    if (!params.contains("start") || !params["start"].is_string() ||
+        !params.contains("end") || !params["end"].is_string()) {
+      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+                                  "missing 'start' or 'end'");
+    }
+    const std::string folder =
+        params.contains("folder") && params["folder"].is_string()
+            ? params["folder"].get<std::string>()
+            : "";
+    std::vector<std::string> tags;
+    if (params.contains("tags") && params["tags"].is_array()) {
+      tags = params["tags"].get<std::vector<std::string>>();
+    }
+    const auto events = calendarQueries.eventsBetween(
+        params["start"].get<std::string>(), params["end"].get<std::string>(),
+        includePrivate, folder, tags);
+    ::mcp::json arr = ::mcp::json::array();
+    for (const auto& ev : events) {
+      arr.push_back(::mcp::json{{"path", ev.path},
+                                 {"title", ev.title},
+                                 {"visibility", ev.visibility},
+                                 {"date", ev.date},
+                                 {"time", ev.time}});
+    }
+    return textContent(arr.dump(2));
+  };
+}
+
 // A path an LLM client hands us is exactly as untrusted as one from an
 // anonymous HTTP request — DocumentService/VaultRepository already
 // reject traversal (PathTraversalError), this just makes sure the
@@ -426,6 +493,7 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                index::FtsSearch& search, index::NavQueries& nav,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
                vault::AttachmentService& attachments, index::McpAuditLog& auditLog,
+               index::QueryBlocks& queryBlocks, index::CalendarQueries& calendarQueries,
                bool includePrivate, bool writeAccess, const config::AppConfig& cfg) {
   LazyEmbeddingProvider lazyProvider(indexUpdater, cfg);
 
@@ -479,6 +547,35 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
           .build();
   srv.register_tool(listDocumentsTool,
                      makeListDocumentsHandler(search, includePrivate));
+
+  ::mcp::tool runQueryTool =
+      ::mcp::tool_builder("run_query")
+          .with_description(
+              "Execute a wiki ```query fenced block (the live table the "
+              "human sees on a page). Pass the block BODY only — the "
+              "key: value lines (type, tag, folder, search, sort, order, "
+              "limit, orphans, todos, links), not the surrounding ``` "
+              "fences. Same whitelisted DSL as GET /api/query and the "
+              "Draft/Chat agent's run_query_block; never raw SQL.")
+          .with_string_param("query", "Query-block body, one key: value per line", true)
+          .build();
+  srv.register_tool(runQueryTool, makeRunQueryHandler(queryBlocks, includePrivate));
+
+  ::mcp::tool getCalendarEventsTool =
+      ::mcp::tool_builder("get_calendar_events")
+          .with_description(
+              "Calendar events (documents with a due date, same engine as "
+              "/calendar and GET /api/calendar) in a date range, inclusive. "
+              "Recurring series are already expanded into concrete per-day "
+              "occurrences — one row per occurrence, not one per document.")
+          .with_string_param("start", "Start date, inclusive, YYYY-MM-DD", true)
+          .with_string_param("end", "End date, inclusive, YYYY-MM-DD", true)
+          .with_string_param("folder", "Restrict to a path prefix, e.g. \"notes/\"", false)
+          .with_array_param("tags", "Restrict to documents having all of these tags",
+                             "string", false)
+          .build();
+  srv.register_tool(getCalendarEventsTool,
+                     makeGetCalendarEventsHandler(calendarQueries, includePrivate));
 
   // Absent from tools/list entirely when writeAccess is false — not
   // registered-but-erroring. An MCP client asking "what can you do"

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "index/AgentChatStore.h"
+#include "index/CalendarQueries.h"
 #include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
@@ -83,7 +84,8 @@ class AgentRuntime {
                std::string systemPrompt = {}, std::string chatSystemPrompt = {},
                index::AgentChatStore* chats = nullptr,
                index::QueryBlocks* queryBlocks = nullptr,
-               index::SnapshotStore* snapshots = nullptr);
+               index::SnapshotStore* snapshots = nullptr,
+               index::CalendarQueries* calendarQueries = nullptr);
   ~AgentRuntime();
 
   AgentRuntime(const AgentRuntime&) = delete;
@@ -143,6 +145,7 @@ class AgentRuntime {
   index::AgentChatStore* chatStore_ = nullptr;
   index::QueryBlocks* queryBlocks_ = nullptr;
   index::SnapshotStore* snapshots_ = nullptr;
+  index::CalendarQueries* calendarQueries_ = nullptr;
   std::string systemPrompt_;
   std::string chatSystemPrompt_;
 

@@ -546,7 +546,8 @@ AgentRuntime::AgentRuntime(index::FtsSearch& search, vault::DocumentService& doc
                            index::McpAuditLog* auditLog, ChatClient* chat,
                            std::string systemPrompt, std::string chatSystemPrompt,
                            index::AgentChatStore* chats, index::QueryBlocks* queryBlocks,
-                           index::SnapshotStore* snapshots)
+                           index::SnapshotStore* snapshots,
+                           index::CalendarQueries* calendarQueries)
     : search_(search),
       documents_(documents),
       nav_(nav),
@@ -556,6 +557,7 @@ AgentRuntime::AgentRuntime(index::FtsSearch& search, vault::DocumentService& doc
       chatStore_(chats),
       queryBlocks_(queryBlocks),
       snapshots_(snapshots),
+      calendarQueries_(calendarQueries),
       systemPrompt_(resolveSystemPrompt(std::move(systemPrompt))),
       chatSystemPrompt_(resolveChatSystemPrompt(std::move(chatSystemPrompt))) {}
 
@@ -649,15 +651,39 @@ nlohmann::json AgentRuntime::toolSchemas(const std::string& kind) {
          "Execute a wiki ```query fenced block (the live table the "
          "human sees on a page). Pass the block BODY only — the "
          "key: value lines (type, tag, folder, search, sort, order, "
-         "limit, orphans), not the surrounding ``` fences. Same "
-         "whitelisted DSL as GET /api/query; never raw SQL. Use this "
-         "when get_document shows a query block and you need the "
-         "matching documents, not the DSL itself."},
+         "limit, orphans, todos, links), not the surrounding ``` fences. "
+         "Same whitelisted DSL as GET /api/query; never raw SQL. Use "
+         "this any time the human asks about open tasks/todos across the "
+         "vault (`todos: open`), embedded bookmarks/links (`links: "
+         "true`), or anything else the DSL can filter — not only when "
+         "get_document happens to show an existing query block. For "
+         "calendar due dates, use get_calendar_events instead — this "
+         "tool's `todos`/`links`/`type`/etc. keys have no date filter."},
         {"parameters",
          {{"type", "object"},
           {"properties",
            {{"query", strProp("Query-block body, one key: value per line")}}},
           {"required", nlohmann::json::array({"query"})}}}}},
+  });
+  tools.push_back({
+      {"type", "function"},
+      {"function",
+       {{"name", "get_calendar_events"},
+        {"description",
+         "Calendar events (documents with a due date, same engine as "
+         "/calendar and GET /api/calendar) in a date range, inclusive. "
+         "Recurring series are already expanded into concrete per-day "
+         "occurrences — one row per occurrence, not one per document. "
+         "Use this for 'what's due today/this week', not run_query_block "
+         "(which has no date filter)."},
+        {"parameters",
+         {{"type", "object"},
+          {"properties",
+           {{"start", strProp("Start date, inclusive, YYYY-MM-DD")},
+            {"end", strProp("End date, inclusive, YYYY-MM-DD")},
+            {"folder", strProp("Restrict to a path prefix, e.g. notes/")},
+            {"tags", arrStr("Restrict to documents having all of these tags")}}},
+          {"required", nlohmann::json::array({"start", "end"})}}}}},
   });
   tools.push_back({
       {"type", "function"},
@@ -1416,6 +1442,46 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
                                  {"count", static_cast<int>(result.rows.size())}}});
     }
     audit(name, "", true, raw.substr(0, 80));
+    return arr.dump(2);
+  }
+
+  if (name == "get_calendar_events") {
+    if (!calendarQueries_) throw std::runtime_error("calendar not available");
+    // Same throttle as run_query_block — both are repeatable SQL-backed
+    // lookups a confused model could otherwise loop on within one turn.
+    if (session.queryBlockCount >= kMaxQueryBlocks) {
+      throw std::runtime_error("get_calendar_events limit reached for this turn");
+    }
+    if (!args.contains("start") || !args["start"].is_string() ||
+        !args.contains("end") || !args["end"].is_string()) {
+      throw std::runtime_error("get_calendar_events requires start and end");
+    }
+    const std::string start = args["start"].get<std::string>();
+    const std::string end = args["end"].get<std::string>();
+    const std::string folder =
+        args.contains("folder") && args["folder"].is_string() ? args["folder"].get<std::string>() : "";
+    std::vector<std::string> tags;
+    if (args.contains("tags") && args["tags"].is_array()) {
+      tags = args["tags"].get<std::vector<std::string>>();
+    }
+    session.queryBlockCount++;
+    const auto events = calendarQueries_->eventsBetween(start, end, /*includePrivate=*/true,
+                                                         folder, tags);
+    nlohmann::json arr = nlohmann::json::array();
+    for (const auto& ev : events) {
+      arr.push_back(nlohmann::json{{"path", ev.path},
+                                   {"title", ev.title},
+                                   {"visibility", ev.visibility},
+                                   {"date", ev.date},
+                                   {"time", ev.time}});
+    }
+    {
+      std::lock_guard<std::mutex> lock(mu_);
+      appendEventLocked(session, AgentEvent{
+          "tool", nlohmann::json{{"name", name},
+                                 {"count", static_cast<int>(events.size())}}});
+    }
+    audit(name, folder, true, start + ".." + end);
     return arr.dump(2);
   }
 

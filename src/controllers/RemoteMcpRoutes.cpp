@@ -2,6 +2,8 @@
 
 #include "auth/ClientIp.h"
 #include "core/wikicore.h"
+#include "index/CalendarQueries.h"
+#include "index/QueryBlocks.h"
 #include "util/Base64.h"
 #include "vault/AttachToDocument.h"
 #include "vault/McpUploadStaging.h"
@@ -146,6 +148,32 @@ Json::Value buildToolsList(bool writeEnabled) {
         "Browse/list documents (no search text) with optional tag/type/folder "
         "filters and pagination.",
         props, {}));
+  }
+  {
+    Json::Value props;
+    props["query"] = stringParam("Query-block body, one key: value per line");
+    tools.append(toolSchema(
+        "run_query",
+        "Execute a wiki ```query fenced block (the live table the human "
+        "sees on a page). Pass the block BODY only — the key: value lines "
+        "(type, tag, folder, search, sort, order, limit, orphans, todos, "
+        "links), not the surrounding ``` fences. Same whitelisted DSL as "
+        "GET /api/query; never raw SQL.",
+        props, {"query"}));
+  }
+  {
+    Json::Value props;
+    props["start"] = stringParam("Start date, inclusive, YYYY-MM-DD");
+    props["end"] = stringParam("End date, inclusive, YYYY-MM-DD");
+    props["folder"] = stringParam("Restrict to a path prefix, e.g. \"notes/\"");
+    props["tags"] = stringArrayParam("Restrict to documents having all of these tags");
+    tools.append(toolSchema(
+        "get_calendar_events",
+        "Calendar events (documents with a due date, same engine as "
+        "/calendar and GET /api/calendar) in a date range, inclusive. "
+        "Recurring series are already expanded into concrete per-day "
+        "occurrences — one row per occurrence, not one per document.",
+        props, {"start", "end"}));
   }
 
   // Absent from the list entirely when write access is off -- not
@@ -383,6 +411,68 @@ Json::Value handleListDocuments(FtsSearch& search, const Json::Value& args) {
   return toolTextResult(Json::writeString(writer, arr));
 }
 
+// Same whitelisted DSL as GET /api/query, the stdio server's run_query
+// (McpServer.cpp), and the Draft/Chat agent's run_query_block
+// (AgentRuntime.cpp) -- one implementation, QueryBlocks::parseAndRun,
+// exposed identically everywhere instead of reimplemented per transport.
+Json::Value handleRunQuery(QueryBlocks& queryBlocks, const Json::Value& args) {
+  if (!args.isMember("query") || !args["query"].isString()) {
+    return toolTextResult("missing 'query'", true);
+  }
+  const auto result = queryBlocks.parseAndRun(args["query"].asString(), kIncludePrivate);
+  if (!result.ok) {
+    // A parse error (typo'd key) must surface as an actual tool error,
+    // never as "ran fine, zero rows" -- same rule QueryBlocks.h documents.
+    return toolTextResult(result.error, true);
+  }
+  Json::Value arr(Json::arrayValue);
+  for (const auto& row : result.rows) {
+    Json::Value j;
+    j["path"] = row.path;
+    j["title"] = row.title;
+    j["visibility"] = row.visibility;
+    j["updatedAt"] = row.updatedAt;
+    j["tags"] = row.tagsFlat;
+    arr.append(j);
+  }
+  Json::StreamWriterBuilder writer;
+  writer["indentation"] = "  ";
+  return toolTextResult(Json::writeString(writer, arr));
+}
+
+// Same engine as /calendar and GET /api/calendar (CalendarQueries.cpp) --
+// recurring series already expanded into concrete per-day occurrences.
+Json::Value handleGetCalendarEvents(CalendarQueries& calendarQueries, const Json::Value& args) {
+  if (!args.isMember("start") || !args["start"].isString() || !args.isMember("end") ||
+      !args["end"].isString()) {
+    return toolTextResult("missing 'start' or 'end'", true);
+  }
+  const std::string folder =
+      args.isMember("folder") && args["folder"].isString() ? args["folder"].asString() : "";
+  std::vector<std::string> tags;
+  if (args.isMember("tags") && args["tags"].isArray()) {
+    for (const auto& t : args["tags"]) {
+      if (t.isString()) tags.push_back(t.asString());
+    }
+  }
+  const auto events = calendarQueries.eventsBetween(args["start"].asString(),
+                                                     args["end"].asString(), kIncludePrivate,
+                                                     folder, tags);
+  Json::Value arr(Json::arrayValue);
+  for (const auto& ev : events) {
+    Json::Value j;
+    j["path"] = ev.path;
+    j["title"] = ev.title;
+    j["visibility"] = ev.visibility;
+    j["date"] = ev.date;
+    j["time"] = ev.time;
+    arr.append(j);
+  }
+  Json::StreamWriterBuilder writer;
+  writer["indentation"] = "  ";
+  return toolTextResult(Json::writeString(writer, arr));
+}
+
 // `source` is "remote:" -- prefixed distinctly from the stdio server's
 // plain "create_document"/"update_document"/"attach_file" tool_name values in the SAME
 // mcp_audit_log table, so an admin reviewing it can tell local-stdio and
@@ -604,11 +694,13 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
                               RateLimiter& rateLimiter, FtsSearch& search, NavQueries& nav,
                               IndexUpdater& indexUpdater, DocumentService& documents,
                               AttachmentService& attachments, McpUploadStaging& mcpUploads,
-                              McpAuditLog& auditLog) {
+                              McpAuditLog& auditLog, QueryBlocks& queryBlocks,
+                              CalendarQueries& calendarQueries) {
   app.registerHandler(
       "/mcp",
       [&remoteConfig, &rateLimiter, &search, &nav, &indexUpdater, &documents, &attachments,
-       &mcpUploads, &auditLog](const HttpRequestPtr& req,
+       &mcpUploads, &auditLog, &queryBlocks,
+       &calendarQueries](const HttpRequestPtr& req,
                    std::function<void(const HttpResponsePtr&)>&& callback) {
         // Feature off -> plain 404, indistinguishable from "this route
         // never existed" (see this file's own header comment on why:
@@ -720,6 +812,10 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
             result = handleListTags(nav);
           } else if (toolName == "list_documents") {
             result = handleListDocuments(search, args);
+          } else if (toolName == "run_query") {
+            result = handleRunQuery(queryBlocks, args);
+          } else if (toolName == "get_calendar_events") {
+            result = handleGetCalendarEvents(calendarQueries, args);
           } else if (toolName == "create_document") {
             // Enforced HERE too, not just by omitting it from
             // tools/list -- a client that calls a tool by name it was

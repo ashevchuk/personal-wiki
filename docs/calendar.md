@@ -101,8 +101,15 @@ every occurrence, only `date` moves.
 
 `due`/`recur` are plain optional string arguments on the existing
 `create_document`/`update_document` tools (stdio and remote HTTP both) —
-no new tool was needed. `update_document`'s usual partial-update rule
-applies: omit a field to keep its current value, or pass `""` to clear it.
-There's no calendar-specific MCP tool yet; an agent that wants a date range
-of events today has to read documents directly rather than calling
-`/api/calendar`.
+no new tool was needed for writing. `update_document`'s usual partial-update
+rule applies: omit a field to keep its current value, or pass `""` to clear
+it.
+
+`get_calendar_events(start, end, folder?, tags?)` is a dedicated read tool
+(stdio, remote HTTP, and the in-app Draft/Chat agent, all three — same
+`CalendarQueries::eventsBetween` engine as `/calendar` and
+`GET /api/calendar`), so an agent asked "what's due today" calls this
+directly instead of reading documents one at a time and parsing front
+matter itself. Recurring series come back already expanded into concrete
+per-day occurrences, exactly like the HTTP API. See `docs/mcp.md`'s tool
+list for the full parameter shape.

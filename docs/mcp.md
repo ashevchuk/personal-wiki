@@ -68,8 +68,22 @@ before the first MCP client connection.
 - **list_documents**(tag?: string, type?: string, folder?: string, limit?: number,
   offset?: number) — browsing without a search query, with pagination. `folder` is a
   path prefix (`"notes/"` matches `notes/foo.md`, `notes/sub/bar.md`).
+- **run_query**(query: string) — executes a ` ```query ` fenced block's body (the
+  `key: value` DSL — `type`, `tag`, `folder`, `search`, `sort`, `order`, `limit`,
+  `orphans`, `todos`, `links`; see `docs/architecture.md`'s query-blocks section for the
+  full grammar). Pass the block body only, not the surrounding ` ``` ` fences. Same
+  `QueryBlocks::parseAndRun` as `GET /api/query` and the in-app Draft/Chat agent's own
+  `run_query_block` tool — one whitelisted DSL, one implementation, identical behavior
+  everywhere it's exposed. A parse error (typo'd key) comes back as an actual tool
+  error, never a silent empty result.
+- **get_calendar_events**(start: string, end: string, folder?: string, tags?: string[]) —
+  calendar events (documents with a `due` date) in an inclusive date range, same engine
+  as `/calendar` and `GET /api/calendar` (`docs/calendar.md`). Recurring series are
+  already expanded into concrete per-day occurrences — one row per occurrence, not one
+  per document. This is how an agent answers "what's due today/this week" without
+  reading every document in the vault and parsing front matter itself.
 
-All four are visibility-aware: a private document never appears in any result unless
+All six are visibility-aware: a private document never appears in any result unless
 `[mcp].scope` in `config.toml` is `"admin"` (the default). `scope = "public"` restricts
 the MCP client to public content only — the same fail-safe-private principle as the
 HTTP layer, applied to a different trust boundary (a local process spawn by the

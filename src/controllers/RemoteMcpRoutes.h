@@ -2,10 +2,12 @@
 
 #include "auth/McpRemoteConfig.h"
 #include "auth/RateLimiter.h"
+#include "index/CalendarQueries.h"
 #include "index/FtsSearch.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
+#include "index/QueryBlocks.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/McpUploadStaging.h"
@@ -59,6 +61,8 @@ void registerRemoteMcpRoutes(drogon::HttpAppFramework& app,
                               wikicore::vault::DocumentService& documents,
                               wikicore::vault::AttachmentService& attachments,
                               wikicore::vault::McpUploadStaging& mcpUploads,
-                              wikicore::index::McpAuditLog& auditLog);
+                              wikicore::index::McpAuditLog& auditLog,
+                              wikicore::index::QueryBlocks& queryBlocks,
+                              wikicore::index::CalendarQueries& calendarQueries);
 
 }  // namespace wikicore::controllers
