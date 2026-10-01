@@ -1594,8 +1594,12 @@ pre code[class*="language-"] {
   cursor: pointer;
   white-space: nowrap;
 }
+/* --select-bg (the quick-open list's own faint highlight), not
+   --panel-bg -- the latter is near-black in this theme and the popup
+   itself is already --panel-bg-2 (also near-black), so a hovered option
+   was effectively invisible against it. */
 .wiki-dd-option:hover {
-  background: var(--panel-bg);
+  background: var(--select-bg);
 }
 .wiki-dd-option-selected,
 .wiki-dd-option-selected:hover {
