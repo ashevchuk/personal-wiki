@@ -482,22 +482,9 @@ window.WikiPages = window.WikiPages || {};
       '<label class="visibility-toggle"><input type="checkbox" id="f-visibility"> Public</label>' +
       "</div>" +
       '<div class="field-row">' +
-      '<label>Due <input type="date" id="f-due"></label>' +
-      '<label>Time <input type="time" id="f-due-time"></label>' +
-      '<label>Repeats' +
-      '<select id="f-recur-freq">' +
-      '<option value="">Does not repeat</option>' +
-      '<option value="daily">Daily</option>' +
-      '<option value="weekly">Weekly</option>' +
-      '<option value="monthly">Monthly</option>' +
-      '<option value="yearly">Yearly</option>' +
-      '<option value="custom">Custom…</option>' +
-      "</select>" +
+      '<label>Calendar event' +
+      '<button type="button" id="f-schedule-btn" class="btn dtp-trigger">No due date</button>' +
       "</label>" +
-      "</div>" +
-      '<div class="field-row" id="f-recur-custom-wrap" hidden>' +
-      '<label>Custom rule ' +
-      '<input type="text" id="f-recur-custom" placeholder="e.g. weekly;interval=2;until=2027-01-01"></label>' +
       "</div>" +
       "</div>" +
       '<div class="edit-attachments-slot" hidden>' +
@@ -533,67 +520,42 @@ window.WikiPages = window.WikiPages || {};
     var tagsInput = document.getElementById("f-tags");
     var typeInput = document.getElementById("f-type");
     var visibilityInput = document.getElementById("f-visibility");
-    var dueInput = document.getElementById("f-due");
-    var dueTimeInput = document.getElementById("f-due-time");
-    var recurFreqSelect = document.getElementById("f-recur-freq");
-    var recurCustomWrap = document.getElementById("f-recur-custom-wrap");
-    var recurCustomInput = document.getElementById("f-recur-custom");
-
-    // Due: a bare "YYYY-MM-DD" (all-day) or "YYYY-MM-DDTHH:MM" (a specific
-    // time) -- <input type="date"> and <input type="time"> can't represent
-    // that combined value directly, so this splits/joins across the two
-    // fields. No time typed -> no "T" in the saved value -> all-day, same
-    // as every document saved before this field existed.
+    // Due/Time/Repeats live in one custom modal (date-time-picker.js)
+    // instead of three native inputs — see that file's own header
+    // comment for why. setDueFields/currentDueValue/setRecurFields/
+    // currentRecurValue are the exact same four-function contract the
+    // rest of this file already called before the modal existed (save
+    // fingerprint, Draft snapshot, editorState restore, the real save
+    // payload, Upload population) — only their insides changed, from
+    // reading/writing DOM input values to reading/writing this closure's
+    // own due/recur variables and the trigger button's label.
+    var scheduleBtn = document.getElementById("f-schedule-btn");
+    var currentDue = "";
+    var currentRecur = "";
+    function refreshScheduleBtn() {
+      scheduleBtn.textContent = WikiDateTimePicker.formatSummary(currentDue, currentRecur);
+    }
     function setDueFields(due) {
-      if (!due) {
-        dueInput.value = "";
-        dueTimeInput.value = "";
-        return;
-      }
-      var t = due.indexOf("T");
-      if (t === -1) {
-        dueInput.value = due;
-        dueTimeInput.value = "";
-      } else {
-        dueInput.value = due.slice(0, t);
-        dueTimeInput.value = due.slice(t + 1);
-      }
+      currentDue = due || "";
+      refreshScheduleBtn();
     }
     function currentDueValue() {
-      var d = dueInput.value.trim();
-      if (!d) return ""; // a time with no date is meaningless -- drop it
-      var t = dueTimeInput.value.trim();
-      return t ? d + "T" + t : d;
+      return currentDue;
     }
-
-    // Repeats: a dropdown for the four bare frequencies (the overwhelming
-    // common case) plus "Custom…", which reveals a plain text field for
-    // the full ;interval=/;until=/;count= DSL (see CalendarQueries.h's own
-    // grammar comment) -- the dropdown never tries to build modifiers
-    // itself, it only recognizes a bare frequency on load.
-    var RECUR_BARE_FREQUENCIES = ["daily", "weekly", "monthly", "yearly"];
     function setRecurFields(recur) {
-      if (recur && RECUR_BARE_FREQUENCIES.indexOf(recur) !== -1) {
-        recurFreqSelect.value = recur;
-        recurCustomInput.value = "";
-        recurCustomWrap.hidden = true;
-      } else if (recur) {
-        recurFreqSelect.value = "custom";
-        recurCustomInput.value = recur;
-        recurCustomWrap.hidden = false;
-      } else {
-        recurFreqSelect.value = "";
-        recurCustomInput.value = "";
-        recurCustomWrap.hidden = true;
-      }
+      currentRecur = recur || "";
+      refreshScheduleBtn();
     }
     function currentRecurValue() {
-      return recurFreqSelect.value === "custom"
-        ? recurCustomInput.value.trim()
-        : recurFreqSelect.value;
+      return currentRecur;
     }
-    recurFreqSelect.addEventListener("change", function () {
-      recurCustomWrap.hidden = recurFreqSelect.value !== "custom";
+    scheduleBtn.addEventListener("click", function () {
+      WikiDateTimePicker.open({ due: currentDue, recur: currentRecur }).then(function (result) {
+        if (!result) return; // Cancel/Escape -- leave the existing value alone
+        currentDue = result.due;
+        currentRecur = result.recur;
+        refreshScheduleBtn();
+      });
     });
 
     pathInput.value = isNew ? docPath : data.path;

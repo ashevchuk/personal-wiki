@@ -98,55 +98,20 @@
   line-height: 1.2;
   gap: 0.2rem;
 }
-/* `.field-row label`'s own `display: flex` above (a class + element
-   selector) is MORE specific than the browser's built-in `[hidden] {
-   display: none }` UA rule (a bare attribute selector) -- without this,
-   the Custom-rule field marked `hidden` while "Repeats" isn't set to
-   "Custom…" would render fully visible anyway, [hidden] attribute or
-   not. Found live writing this exact field. */
-.field-row label[hidden] {
-  display: none;
-}
-/* Same author-vs-UA specificity trap as the rule above, now for a whole
-   row instead of one label: `.field-row { display: flex }` is an author
-   rule, so it beats the UA `[hidden] { display: none }` even when hidden
-   wins on raw specificity -- author origin always outranks the UA
-   stylesheet for non-!important declarations. #f-recur-custom-wrap is a
-   `.field-row` itself (its own row, not squeezed into the Due/Time/
-   Repeats one -- that let `flex-wrap` shove it onto a second line with
-   no column alignment to anything whenever the attachments panel left
-   too little width), so it needs the same explicit override. */
-.field-row[hidden] {
-  display: none;
-}
-/* Its own row, nothing beside it to share width with -- wide enough to
-   actually read the placeholder example instead of the shared 12rem
-   every other text field gets. */
-#f-recur-custom {
-  width: 100%;
-  max-width: 28rem;
-}
 /* An explicit, shared width -- not relying on every input TYPE's own
-   native default size to coincidentally match. They don't: a bare
-   <input type="date">/<select> renders narrower than a same-markup
-   <input type="text"> with no width set (each browser's own native
-   "size" default differs per control type), which is exactly why Due/
-   Repeats previously looked visually off against Path/Title/Type/Tags
-   directly above them despite using the "same" CSS -- there wasn't a
-   shared width at all, just four text inputs happening to default to
-   the same native size. Time gets its own narrower width (it's a
-   "HH:MM", not a path or a title). */
+   native default size to coincidentally match (a bare <input type=
+   "text">/<select> can render at different native widths with no
+   width set, each browser's own "size" default differing per control
+   type). */
 .field-row input[type="text"],
-.field-row input[type="date"],
 .field-row select {
   padding: 0.35rem;
   font-size: 0.95rem;
   width: 12rem;
 }
-.field-row input[type="time"] {
-  padding: 0.35rem;
-  font-size: 0.95rem;
-  width: 7rem;
+.dtp-trigger {
+  width: 18rem;
+  text-align: left;
 }
 .visibility-toggle {
   flex-direction: row !important;
@@ -701,4 +666,263 @@ body.chat-sidebar-resizing,
 body.chat-sidebar-resizing * {
   cursor: col-resize !important;
   user-select: none !important;
+}
+
+/* Due/Time/Repeats modal (date-time-picker.js) — every piece of UI here
+   is ordinary DOM this stylesheet fully controls, unlike the native
+   <input type="date"/"time"> this replaced (see that file's own header
+   comment for why: 12h/24h locale quirks and a pop-up picker CSS and
+   even this app's own browser-automation tooling couldn't reach into).
+   Reuses .wiki-dialog's own border/background/box-shadow (dialog.js) —
+   just a wider box, this one has three stacked sections instead of one
+   line of text. */
+/* max-height + overflow-y as a general safety net for a short viewport
+   (a <dialog> never shrinks its own content or grows itself to stay on
+   screen) -- unrelated to the Until popup now (see .dtp-until-popup's
+   own comment): that one escapes this entirely via position: fixed,
+   which an earlier version of this rule tried to work around by making
+   the whole DIALOG scroll instead -- found live that position: absolute
+   popup still got clipped by this same overflow:auto, looking like a
+   disconnected floating box hanging off the dialog's bottom edge. */
+.date-time-picker-dialog {
+  width: min(23rem, calc(100vw - 2.5rem));
+  max-height: calc(100vh - 2.5rem);
+  overflow-y: auto;
+}
+.dtp-title {
+  margin: 0 0 0.6rem;
+  font-size: 0.95rem;
+  color: var(--fg-bright);
+}
+.dtp-calendar {
+  margin-bottom: 0.6rem;
+}
+.dtp-cal-header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.3rem;
+}
+.dtp-cal-label {
+  flex: 1;
+  text-align: center;
+  font-size: 0.85rem;
+}
+.dtp-cal-nav {
+  padding: 0.1rem 0.4rem;
+}
+/* grid-auto-rows (not aspect-ratio on the cells) is what actually keeps
+   the grid's total height fixed across months -- each cell gets the
+   SAME row height regardless of how many rows the grid ends up with,
+   so there is no "4 vs 6 row" height to even arise. Combined with the
+   JS side always emitting 42 cells (createCalendarWidget's own
+   leading/trailing padding days), the grid is now fixed on both axes:
+   always 6 rows of this exact height. Found live: without this,
+   switching from a 4-week October to a 6-week November visibly grew
+   the whole dialog and shifted every control below it down the page. */
+.dtp-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  grid-auto-rows: 1.9rem;
+  gap: 1px;
+}
+.dtp-cal-grid--compact {
+  grid-auto-rows: 1.5rem;
+}
+.dtp-cal-weekday {
+  text-align: center;
+  font-size: 0.65rem;
+  color: var(--fg-dim);
+}
+.dtp-cal-day {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.dtp-cal-grid--compact .dtp-cal-day {
+  font-size: 0.7rem;
+}
+/* Leading/trailing filler days from the adjacent month -- visual only,
+   never a button, never clickable (see createCalendarWidget's own
+   comment on why every month always emits 42 cells). */
+.dtp-cal-cell-pad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--fg-dim);
+  opacity: 0.4;
+  font-size: 0.8rem;
+}
+.dtp-cal-grid--compact .dtp-cal-cell-pad {
+  font-size: 0.7rem;
+}
+.dtp-cal-day:hover {
+  border-color: var(--border);
+}
+.dtp-cal-today {
+  border-color: var(--border);
+}
+.dtp-cal-selected,
+.dtp-cal-selected:hover {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+.dtp-calendar--compact {
+  width: 11rem;
+}
+.dtp-time-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.6rem;
+  border-bottom: 1px solid var(--border);
+}
+.dtp-all-day-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.dtp-time-fields {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+/* The same author-vs-UA [hidden] specificity trap hit twice already
+   this session (edit.css's old #f-recur-custom-wrap, and the theme
+   files' picker-indicator work) -- a class selector's own `display:
+   flex` always beats the UA stylesheet's bare `[hidden] { display:
+   none }` at equal specificity, author origin always outranking UA.
+   Toggling .hidden on this element via JS (All day checked) needs this
+   explicit override or the time selects stay visible regardless. */
+.dtp-time-fields[hidden] {
+  display: none;
+}
+.dtp-time-select {
+  padding: 0.25rem;
+  font-size: 0.85rem;
+}
+.dtp-repeat {
+  margin-bottom: 0.6rem;
+}
+.dtp-freq-label {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.4rem;
+}
+.dtp-repeat-detail {
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+/* Same [hidden] override as .dtp-time-fields above -- this element's
+   own `display: flex` beats the UA [hidden] rule the same way. */
+.dtp-repeat-detail[hidden] {
+  display: none;
+}
+.dtp-interval-row {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+}
+.dtp-interval-input {
+  width: 3.5rem;
+  padding: 0.2rem;
+}
+/* flex-wrap row, not a column stack -- three options in one line
+   instead of three. (Also: every theme's global `label { display: flex;
+   flex-direction: column }` rule -- see green.css's own comment on the
+   identical .visibility-toggle bug this project already hit once --
+   would otherwise win the flex-direction for .dtp-end-option below,
+   since that rule only overrides `display`, not `flex-direction`;
+   .dtp-end-row stacking Forever/Until/After each on their own already-
+   vertical label made that invisible as "maybe intentional column
+   layout" rather than the same bug repeating a third time, until it
+   visibly ate a third of this dialog's height.) */
+.dtp-end-row {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1rem;
+}
+.dtp-end-option {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+.dtp-until-wrap {
+  display: inline-block;
+}
+.dtp-until-trigger {
+  padding: 0.15rem 0.4rem;
+  font-size: 0.8rem;
+}
+.dtp-until-trigger:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+/* Floating, not inline -- the inline calendar this replaced pushed
+   every control below it down the page and changed the dialog's own
+   height depending on whether "Until" happened to be selected.
+   position: fixed (top/left set from the trigger's own
+   getBoundingClientRect() in date-time-picker.js, not CSS) rather than
+   position: absolute against .dtp-until-wrap -- absolute was still
+   clipped by the dialog's own overflow:auto (see
+   .date-time-picker-dialog's comment), which cut the popup's bottom
+   half off and made it look like two disconnected floating boxes
+   instead of one picker. Fixed positioning measures against the
+   viewport itself, immune to any ancestor's overflow. z-index only
+   needs to clear this dialog's own content -- the dialog itself is
+   already in the browser's top layer, above everything outside it. */
+/* --panel-bg-2, not --panel-bg -- the latter is semi-transparent by
+   design in at least one theme (green.css's rgba(0,0,0,0.55), meant
+   for the sidebar sitting over the page background). Fine for a panel
+   that's always over the SAME background; wrong for a popup that
+   floats over arbitrary document content, where it visibly let that
+   content show through underneath -- found live, looked like a broken
+   opacity bug rather than the intentional sidebar effect it actually
+   was. --panel-bg-2 is solid in every theme. */
+.dtp-until-popup {
+  position: fixed;
+  z-index: 1;
+  padding: 0.5rem;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  box-shadow: var(--glow);
+}
+.dtp-until-popup[hidden] {
+  display: none;
+}
+.dtp-count-input {
+  padding: 0.2rem;
+  font-size: 0.85rem;
+  width: 3.5rem;
+}
+.dtp-summary-preview {
+  margin: 0 0 0.6rem;
+  color: var(--fg-dim);
+  font-size: 0.78rem;
+  font-style: italic;
+}
+.dtp-clear {
+  margin-right: auto;
 }
