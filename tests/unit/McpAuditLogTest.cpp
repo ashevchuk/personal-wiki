@@ -66,3 +66,24 @@ TEST_CASE("McpAuditLog::listRecent respects the limit", "[McpAuditLog]") {
   REQUIRE(log.listRecent(2).size() == 2);
   REQUIRE(log.listRecent(100).size() == 5);
 }
+
+TEST_CASE("McpAuditLog::record prunes down to kMaxRows, keeping the newest",
+          "[McpAuditLog]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+
+  McpAuditLog log(database);
+  const int total = static_cast<int>(McpAuditLog::kMaxRows) + 50;
+  for (int i = 0; i < total; ++i) {
+    log.record("create_document", "notes/" + std::to_string(i) + ".md", true, "created");
+  }
+
+  const auto entries = log.listRecent(static_cast<int>(McpAuditLog::kMaxRows) + 100);
+  REQUIRE(entries.size() == static_cast<size_t>(McpAuditLog::kMaxRows));
+  // Newest first -- the very last one written is still there...
+  REQUIRE(entries.front().path == "notes/" + std::to_string(total - 1) + ".md");
+  // ...and the oldest 50 (beyond the cap) were pruned away, not just
+  // excluded from this particular listRecent call.
+  REQUIRE(entries.back().path == "notes/50.md");
+}

@@ -5,6 +5,20 @@
 
 namespace wikicore::index {
 
+namespace {
+
+void pruneOld(Database& db) {
+  Statement prune(db.handle(),
+                   "DELETE FROM mcp_audit_log WHERE id <= ("
+                   "  SELECT id FROM mcp_audit_log ORDER BY id DESC "
+                   "  LIMIT 1 OFFSET ?1"
+                   ");");
+  prune.bind(1, McpAuditLog::kMaxRows);
+  prune.run();
+}
+
+}  // namespace
+
 void McpAuditLog::record(const std::string& toolName, const std::string& path, bool success,
                           const std::string& detail) {
   Statement insert(db_.handle(),
@@ -16,6 +30,7 @@ void McpAuditLog::record(const std::string& toolName, const std::string& path, b
       .bind(4, static_cast<int64_t>(success ? 1 : 0))
       .bind(5, detail);
   insert.run();
+  pruneOld(db_);
 }
 
 std::vector<McpAuditEntry> McpAuditLog::listRecent(int limit) const {

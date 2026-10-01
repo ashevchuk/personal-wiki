@@ -33,6 +33,20 @@ class McpAuditLog {
  public:
   explicit McpAuditLog(Database& db) : db_(db) {}
 
+  // Found live: GET /api/admin/mcp-audit-log only ever shows the 200
+  // most recent rows TOTAL, shared across every category (remote MCP,
+  // admin re-embeds, Draft/Chat) before the Web UI splits that one
+  // batch by tool_name prefix -- a session with real Chat/Draft use
+  // (several tool calls per message) ages older remote-MCP/admin
+  // entries out of that shared window within days, while this table
+  // kept every row ever written, forever, with no retention at all.
+  // 2000 is ten times that display window -- generous headroom for a
+  // personal, single-admin wiki's actual traffic, while still bounding
+  // the table instead of letting it grow for the life of the install.
+  // record() prunes down to this on every call (same prune-on-write
+  // shape as SessionStore::create()'s own pruneExpired()).
+  static constexpr int64_t kMaxRows = 2000;
+
   void record(const std::string& toolName, const std::string& path, bool success,
               const std::string& detail);
 
