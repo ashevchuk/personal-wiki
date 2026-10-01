@@ -106,12 +106,17 @@ window.WikiPages = window.WikiPages || {};
       var tr = document.createElement("tr");
 
       // Title (falls back to the path when the document had none) plus
-      // the real path and a short body excerpt underneath, both dim —
-      // found live: a bare path alone often isn't enough to recognize
-      // what a trashed document actually was without restoring it just
-      // to look. All three come straight from the GET response, already
-      // read server-side (AdminRoutes.cpp), no per-row fetch needed.
+      // the real path underneath, dim — found live: a bare path alone
+      // often isn't enough to recognize what a trashed document actually
+      // was without restoring it first just to look. The body excerpt is
+      // NOT rendered into the row itself -- plainTextExcerpt isn't
+      // markdown-aware (see its own comment in util/Excerpt.h), so raw
+      // table pipes/heading hashes sitting in the row looked like exactly
+      // the kind of noise this was supposed to cut through. A native
+      // title attribute (hover tooltip) surfaces the same text without
+      // permanently occupying row space with it.
       var docTd = document.createElement("td");
+      if (item.excerpt) docTd.title = item.excerpt;
       var titleDiv = document.createElement("div");
       titleDiv.className = "trash-title";
       titleDiv.textContent = item.title || item.path;
@@ -120,12 +125,6 @@ window.WikiPages = window.WikiPages || {};
       pathDiv.textContent = item.path;
       docTd.appendChild(titleDiv);
       docTd.appendChild(pathDiv);
-      if (item.excerpt) {
-        var excerptDiv = document.createElement("div");
-        excerptDiv.className = "trash-excerpt";
-        excerptDiv.textContent = item.excerpt;
-        docTd.appendChild(excerptDiv);
-      }
 
       var deletedTd = document.createElement("td");
       deletedTd.textContent = formatAuditAt(item.deletedAt);

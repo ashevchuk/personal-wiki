@@ -1528,12 +1528,6 @@ pre code[class*="language-"] {
   font-family: monospace;
   word-break: break-all;
 }
-.trash-excerpt {
-  color: var(--fg-dim);
-  font-size: 0.85em;
-  font-style: italic;
-  margin-top: 0.15rem;
-}
 /* De-styled from the generic input/select/button rule's own visible
    border+background (see .calendar-label-select's own comment on that
    same rule) -- a plain glyph-only control reads as an icon button only
