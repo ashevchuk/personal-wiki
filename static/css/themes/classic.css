@@ -1362,6 +1362,11 @@ pre code[class*="language-"] {
 }
 .icon-btn:hover,
 .icon-btn:focus {
+  /* The generic button:hover rule above sets color: var(--bg) (its
+     "inverted" look for text buttons) -- these SVGs use
+     stroke="currentColor", so without this override the icon strokes
+     turn the same near-black as the page background and vanish. */
+  color: var(--fg);
   border-color: var(--border);
   background: var(--select-bg);
 }
