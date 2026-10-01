@@ -19,7 +19,8 @@ what ships with it. Built to run comfortably on a Raspberry Pi.
 |---|---|
 | ![Document view](docs/screenshots/document-view.png) **Document view** — filterable, namespace-grouped tags (`lang/cpp`, `lang/python`…), resizable document tree, print/export | ![Backlinks](docs/screenshots/backlinks.png) **`[[wiki-links]]` + backlinks** — "Linked from" section, generated automatically |
 | ![Search](docs/screenshots/search.png) **Full-text search** — FTS5 with prefix matching, `bm25()` ranking, tag/type filters | ![Editor](docs/screenshots/editor.png) **WYSIWYG editor** — Toast UI Editor, undo/redo, syntax-highlighted code blocks |
-| ![Browse](docs/screenshots/browse.png) **Folder browser** — every document and folder, one click away | ![Account page](docs/screenshots/account-mcp.png) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
+| ![Graph view](docs/screenshots/graph.png) **Graph view** — every `[[wiki-link]]` as an edge, force-directed layout, filter by title/content | ![Account page](docs/screenshots/account-mcp.png) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
+| ![Calendar](docs/screenshots/calendar.png) **Calendar** — admin-only month/week/day view of every document's Due date, recurring events included | ![Calendar event picker](docs/screenshots/calendar-picker.png) **Custom date/time/recurrence picker** — no native `<input type="date">`, every control themeable |
 
 ### Themes
 
@@ -99,6 +100,17 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   A full `/graph` page for the whole vault (filter by title or content,
   hide unlinked, label density), plus a "Local graph" widget on each
   document (its connected component over `[[wiki-link]]`s) in a right rail.
+- **Calendar — admin-only, built from ordinary front matter.** Any document can
+  carry a `due` date and a recurrence rule (`weekly`, `;interval=2`,
+  `;until=`/`;count=` end conditions) — no separate "event" document type, a
+  calendar entry is just a document with `due` set. Month/week/day views at
+  `/calendar`, driven by a custom date-time-and-recurrence picker (every
+  control, including the calendar grid itself, is this app's own DOM — no
+  native `<input type="date">`/`<select>` anywhere, so no OS-chrome popup
+  that ignores the active theme). Deliberately NOT fail-safe-private like
+  every other read route: a schedule reveals more than "this document is
+  public," so `/calendar` and its API are gated to the admin outright,
+  regardless of any individual document's own `visibility`.
 - **Document history.** Every edit is snapshotted; diff any two versions, restore any
   of them (which itself snapshots first — restoring is undoable too).
 - **Fail-safe-private visibility.** Missing or malformed front-matter defaults to
