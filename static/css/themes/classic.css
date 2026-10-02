@@ -647,6 +647,17 @@ a.btn:focus {
   border: 0;
 }
 
+/* ```circuit fenced block (util/MarkdownRenderer.cpp's
+   substituteCircuitBlocks) -- see green.css's own comment on this class
+   for the full reasoning. */
+.circuit-embed {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 4 / 3;
+  border: 0;
+}
+
 /* [[wiki-link]] backlinks section on the document view page (view.js). */
 .backlinks {
   margin-top: 2rem;

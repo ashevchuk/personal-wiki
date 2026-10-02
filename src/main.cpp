@@ -430,9 +430,19 @@ int main(int argc, char** argv) {
   // silently fall back to main-thread layout, not a loud CSP error.
   // Everything else stays strict: no remote script/object loading, no
   // framing of this app by anyone, YouTube embeds (the one legitimate
-  // cross-origin iframe this app ever renders) are the only frame-src
-  // exception, images stay open to any https:/data: URL since markdown
-  // bodies can legitimately link to any external image.
+  // cross-origin iframe this app ever renders) are the only external
+  // frame-src exception, images stay open to any https:/data: URL since
+  // markdown bodies can legitimately link to any external image.
+  // frame-src also needs 'self': ```circuit fenced blocks
+  // (util/MarkdownRenderer.cpp's substituteCircuitBlocks) render as a
+  // SAME-origin iframe into the vendored static/js/circuitjs1/ app —
+  // found live the first time a circuit block was actually viewed: with
+  // only `frame-src https://www.youtube.com`, the browser silently
+  // refused to even issue the request for that iframe's own src (no
+  // network entry at all, not a 403/404 — CSP blocks a disallowed frame
+  // before any request is dispatched), rendering as Chrome's generic
+  // broken-frame icon with zero console error pointing at CSP as the
+  // cause.
   //
   // style-src/font-src EXPLICITLY allowlist Google Fonts
   // (fonts.googleapis.com serves the @font-face CSS, fonts.gstatic.com
@@ -461,20 +471,45 @@ int main(int argc, char** argv) {
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
       "font-src 'self' https://fonts.gstatic.com; "
       "img-src 'self' https: data:; "
-      "frame-src https://www.youtube.com; "
+      "frame-src 'self' https://www.youtube.com; "
       "object-src 'none'; "
       "base-uri 'self'; "
       "form-action 'self'; "
       "frame-ancestors 'none'";
+  // frame-ancestors is enforced by the response being framed, not the
+  // page doing the framing -- registerPreSendingAdvice is global, so
+  // without this exception the vendored circuitjs1 app (static/js/
+  // circuitjs1/, served under this same CSP like every other response)
+  // would carry `frame-ancestors 'none'` on itself and refuse to be
+  // framed by this app's own document-view iframe, even with frame-src
+  // 'self' already allowing the embed from the parent's side. Found live
+  // once the circuit-embed iframe tried to actually load inside the real
+  // app (a plain static server with no CSP at all never exposed this,
+  // see static/js/circuitjs1/VENDORED.md): `frame-ancestors 'self'`
+  // instead of 'none' for exactly this one static subtree, nothing else.
+  static const std::string kCspCircuitEmbed =
+      "default-src 'self'; "
+      "script-src 'self' 'unsafe-inline'; "
+      "worker-src 'self'; "
+      "style-src 'self' 'unsafe-inline'; "
+      "font-src 'self'; "
+      "img-src 'self' data:; "
+      "object-src 'none'; "
+      "base-uri 'self'; "
+      "form-action 'self'; "
+      "frame-ancestors 'self'";
   drogon::app().registerPreSendingAdvice(
-      [](const drogon::HttpRequestPtr&, const drogon::HttpResponsePtr& resp) {
-        resp->addHeader("Content-Security-Policy", kCsp);
+      [](const drogon::HttpRequestPtr& req, const drogon::HttpResponsePtr& resp) {
+        const bool isCircuitEmbed = req->path().rfind("/js/circuitjs1/", 0) == 0;
+        resp->addHeader("Content-Security-Policy",
+                         isCircuitEmbed ? kCspCircuitEmbed : kCsp);
         resp->addHeader("X-Content-Type-Options", "nosniff");
-        // Redundant with frame-ancestors 'none' above in any modern
-        // browser, but X-Frame-Options is what the handful of older
-        // clients that don't parse CSP's frame-ancestors still honor —
-        // costs nothing to set both.
-        resp->addHeader("X-Frame-Options", "DENY");
+        // Redundant with frame-ancestors above in any modern browser, but
+        // X-Frame-Options is what the handful of older clients that don't
+        // parse CSP's frame-ancestors still honor -- costs nothing to set
+        // both, and needs the identical same-origin relaxation for the
+        // same reason as kCspCircuitEmbed above.
+        resp->addHeader("X-Frame-Options", isCircuitEmbed ? "SAMEORIGIN" : "DENY");
         resp->addHeader("Referrer-Policy", "strict-origin-when-cross-origin");
       });
 

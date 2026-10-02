@@ -196,6 +196,79 @@ std::string substituteQueryBlocks(std::string html) {
   return out;
 }
 
+// Swaps a ```circuit fenced block for a view-only, non-interactive
+// <iframe> running circuitjs1 (vendored at static/js/circuitjs1/ — see
+// static/js/circuitjs1/VENDORED.md for provenance and the one source
+// patch applied) against the block's own content as the circuit to load.
+// Same post-substitution technique as substituteMermaidBlocks/
+// substituteQueryBlocks above — md4c already parsed the fence into
+// `<pre><code class="language-circuit">RAW XML, HTML-escaped</code></pre>`
+// for free, and that escaped content is copied straight into the
+// data-circuit-xml attribute below, untouched — the exact same reasoning
+// as those two functions' own comments: md4c-html's render_html_escaped
+// only ever escapes & < > ", the identical set and identical replacement
+// strings this renderer's own escapeHtml uses for HTML ATTRIBUTE content,
+// so what's already between the <pre><code> markers is already valid to
+// drop straight into any other HTML attribute, no unescape/re-escape
+// round-trip needed.
+//
+// The circuit is loaded via the `CircuitJS1.importCircuit()` same-origin
+// JS API (static/js/circuit-embed.js reads data-circuit-xml back off
+// this element and calls it once the iframe's own oncircuitjsloaded
+// fires), NOT via a `cct=` query parameter the way an earlier version of
+// this function worked — circuitjs1's own query-string decoder
+// (QueryParameters.java, GWT's URL.decode(), which matches JS decodeURI
+// not decodeURIComponent) never decodes a handful of URI-reserved
+// characters including `=` and `/`, both of which this XML format's own
+// attribute syntax (`attr="value"`) and self-closing tags (`/>`) use
+// constantly — there is no percent-encoding of the value that survives
+// that specific decoder's own round trip once the XML actually has
+// attributes, confirmed live (a real circuit with `<r ... r="20"/>`
+// reached the iframe as `r%3D"20"` — the literal three characters,
+// `%`/`3`/`D` — and failed to parse as XML at all). The hideSidebar/
+// hideMenu/hideInfoBox/editable/running flags below stay on the URL
+// since they're plain ASCII with no such characters, unaffected by that
+// decoder gap.
+std::string substituteCircuitBlocks(std::string html) {
+  constexpr std::string_view kOpenMarker = "<pre><code class=\"language-circuit\">";
+  constexpr std::string_view kCloseMarker = "</code></pre>";
+  // Relative, no leading slash: resolved against shell.html's own
+  // dynamically-injected <base> tag, same reasoning as mermaid-render.js's
+  // own script.src assignment (see that file's comment) — a leading
+  // slash or the document's own path has nothing to do with where this
+  // app's static files actually live once routed under a URL prefix.
+  constexpr std::string_view kViewerUrl =
+      "js/circuitjs1/circuitjs.html?hideSidebar=true&amp;hideMenu=true"
+      "&amp;hideInfoBox=true&amp;editable=false&amp;running=true";
+
+  std::string out;
+  out.reserve(html.size());
+  size_t pos = 0;
+  while (true) {
+    const size_t open = html.find(kOpenMarker, pos);
+    if (open == std::string::npos) {
+      out.append(html, pos, std::string::npos);
+      break;
+    }
+    out.append(html, pos, open - pos);
+
+    const size_t contentStart = open + kOpenMarker.size();
+    const size_t close = html.find(kCloseMarker, contentStart);
+    if (close == std::string::npos) {
+      out.append(html, open, std::string::npos);
+      break;
+    }
+
+    out.append("<iframe class=\"circuit-embed\" src=\"")
+        .append(kViewerUrl)
+        .append("\" data-circuit-xml=\"")
+        .append(html, contentStart, close - contentStart)
+        .append("\" loading=\"lazy\"></iframe>");
+    pos = close + kCloseMarker.size();
+  }
+  return out;
+}
+
 }  // namespace
 
 std::string renderMarkdownToHtml(std::string_view markdown) {
@@ -219,8 +292,8 @@ std::string renderMarkdownToHtml(std::string_view markdown) {
   if (rc != 0) {
     throw std::runtime_error("markdown rendering failed");
   }
-  return substituteQueryBlocks(
-      substituteMermaidBlocks(substituteYouTubeEmbeds(std::move(html))));
+  return substituteCircuitBlocks(substituteQueryBlocks(
+      substituteMermaidBlocks(substituteYouTubeEmbeds(std::move(html)))));
 }
 
 }  // namespace wikicore::util

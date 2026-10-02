@@ -764,6 +764,22 @@ a.btn:focus {
   border: 0;
 }
 
+/* ```circuit fenced block (util/MarkdownRenderer.cpp's
+   substituteCircuitBlocks) -- a view-only circuitjs1 schematic, same
+   "scale to column width, never overflow it" idea as .youtube-embed
+   above, just a boxier aspect ratio (circuitjs1's own canvas defaults
+   are closer to 4:3 than 16:9). No border -- circuitjs1's own black
+   canvas already reads as a distinct box against every theme here
+   without one, and a themed border color (bright green on the green
+   theme) looked louder than the schematic itself. */
+.circuit-embed {
+  display: block;
+  width: 100%;
+  max-width: 640px;
+  aspect-ratio: 4 / 3;
+  border: 0;
+}
+
 /* [[wiki-link]] backlinks section on the document view page (view.js) —
    deliberately visually distinct from the document body: a horizontal
    rule + dim heading so it reads as "documents that mention this one",

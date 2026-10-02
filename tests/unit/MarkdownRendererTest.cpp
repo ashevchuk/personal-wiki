@@ -94,3 +94,40 @@ TEST_CASE("renderMarkdownToHtml: a ```query fenced block becomes pre.query, "
   REQUIRE(html.find("tag: cpp") != std::string::npos);
   REQUIRE(html.find("limit: 5") != std::string::npos);
 }
+
+TEST_CASE("renderMarkdownToHtml: a ```circuit fenced block becomes a view-only "
+          "circuitjs1 iframe with the circuit XML in a data attribute",
+          "[MarkdownRenderer]") {
+  const std::string html = renderMarkdownToHtml("```circuit\n<cir f=\"1\">\n</cir>\n```");
+  REQUIRE(html.find("<iframe class=\"circuit-embed\"") != std::string::npos);
+  REQUIRE(html.find("src=\"js/circuitjs1/circuitjs.html?") != std::string::npos);
+  REQUIRE(html.find("hideSidebar=true") != std::string::npos);
+  REQUIRE(html.find("hideMenu=true") != std::string::npos);
+  REQUIRE(html.find("hideInfoBox=true") != std::string::npos);
+  REQUIRE(html.find("editable=false") != std::string::npos);
+  REQUIRE(html.find("running=true") != std::string::npos);
+  // The URL itself never carries a cct param -- static/js/circuit-embed.js
+  // loads the circuit via CircuitJS1.importCircuit() instead (see
+  // substituteCircuitBlocks' own comment on why: circuitjs1's own
+  // query-string decoder never decodes '=' or '/', both of which this
+  // XML format's attribute syntax needs).
+  REQUIRE(html.find("cct=") == std::string::npos);
+  // The circuit XML lands in data-circuit-xml, still HTML-escaped exactly
+  // as md4c left it -- valid for an HTML attribute as-is, same reasoning
+  // as substituteMermaidBlocks/substituteQueryBlocks copying their own
+  // content through untouched.
+  REQUIRE(html.find("data-circuit-xml=\"&lt;cir f=&quot;1&quot;&gt;") != std::string::npos);
+  REQUIRE(html.find("<cir") == std::string::npos);
+  // The intermediate md4c shape must never leak into the final output --
+  // same discipline as the mermaid/query tests above.
+  REQUIRE(html.find("<code class=\"language-circuit\">") == std::string::npos);
+  REQUIRE(html.find("<pre><code") == std::string::npos);
+}
+
+TEST_CASE("renderMarkdownToHtml: a ```circuit block containing characters md4c "
+          "HTML-escapes lands in data-circuit-xml still escaped",
+          "[MarkdownRenderer]") {
+  const std::string html = renderMarkdownToHtml("```circuit\n<r x=\"1 & 2\"/>\n```");
+  REQUIRE(html.find("data-circuit-xml=\"&lt;r x=&quot;1 &amp; 2&quot;/&gt;") !=
+          std::string::npos);
+}

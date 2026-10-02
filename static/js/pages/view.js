@@ -277,6 +277,9 @@ window.WikiPages = window.WikiPages || {};
         if (window.WikiQueryBlock) {
           window.WikiQueryBlock.renderIn(container);
         }
+        if (window.WikiCircuitEmbed) {
+          window.WikiCircuitEmbed.renderIn(container);
+        }
         if (window.WikiSectionZoom) {
           window.WikiSectionZoom.setup(container);
         }
