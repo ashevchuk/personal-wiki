@@ -67,7 +67,7 @@ qemu-arm-static ./build-arm/tests/unit_tests   # must pass every case before shi
 scp build-arm/wiki-server build-arm/wiki-mcp root@192.0.2.10:/tmp/
 scp -r static root@192.0.2.10:/tmp/static-new
 
-# 3. on the target: back up what's live, swap the new files in, restart, verify
+# 3. on the target: back up what's live, strip + swap the new files in, restart, verify
 ssh root@192.0.2.10 '
   set -e
   STAMP=$(date +%Y%m%d-%H%M%S)
@@ -75,6 +75,7 @@ ssh root@192.0.2.10 '
   cp /opt/wiki/bin/wiki-mcp /opt/wiki/bin/wiki-mcp.bak-$STAMP
   mv /opt/wiki/static /opt/wiki/static.bak-$STAMP
   chmod +x /tmp/wiki-server /tmp/wiki-mcp
+  strip --strip-all /tmp/wiki-server /tmp/wiki-mcp
   mv /tmp/wiki-server /opt/wiki/bin/wiki-server
   mv /tmp/wiki-mcp /opt/wiki/bin/wiki-mcp
   mv /tmp/static-new /opt/wiki/static
@@ -85,6 +86,20 @@ ssh root@192.0.2.10 '
   curl -s -o /dev/null -w "healthz: %{http_code}\n" http://127.0.0.1:8080/healthz
 '
 ```
+
+**Strip the binaries on the target device itself, never on the dev machine.**
+`CMAKE_BUILD_TYPE=RelWithDebInfo` keeps debug symbols in the statically-linked
+ELF — `wiki-server` ships at ~116M, `wiki-mcp` at ~61M. `strip --strip-all`
+drops that to ~14M for `wiki-server` (roughly 8x), with no change in behavior
+(verified: a stripped copy still starts and reaches real server logic). Doing
+it on the device matters, not just the step itself: the dev machine's own
+`strip` doesn't recognize this cross-compiled ARM ELF's architecture at all,
+and `zig objcopy --strip-all` — the obvious alternative, since the cross
+toolchain already goes through zig — errors `unimplemented` for this exact
+static-musl-ARM shape. The target's own native `strip` (real GNU binutils,
+correct architecture by construction) is what actually works. The unstripped
+`build-arm/wiki-server`/`wiki-mcp` stay on the dev machine either way — never
+shipped, there if a crash ever needs symbols for `addr2line`/`gdb`.
 
 The `.bak-$STAMP` copies are never cleaned up automatically — `/opt/wiki` on a
 long-lived deployment accumulates them; sweep old ones by hand occasionally.
