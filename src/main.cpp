@@ -444,32 +444,29 @@ int main(int argc, char** argv) {
   // broken-frame icon with zero console error pointing at CSP as the
   // cause.
   //
-  // style-src/font-src EXPLICITLY allowlist Google Fonts
-  // (fonts.googleapis.com serves the @font-face CSS, fonts.gstatic.com
-  // serves the actual .woff2 files those rules point at — two different
-  // origins, both needed) because static/css/themes/green.css —
-  // green being the SHIPPED DEFAULT THEME, not an opt-in one — pulls
-  // 'Orbitron' via exactly that `@import url('https://fonts.googleapis
-  // .com/...')`. Missing on the first version of this CSP: a plain
-  // `style-src 'self' 'unsafe-inline'` silently blocked that @import
-  // (no network request even attempted — confirmed via a live
-  // side-by-side against production, http://10.100.100.2/wiki/search,
-  // 2026-09-10: prod's "SEARCH" heading rendered in the real angular
-  // Orbitron face, this build's fell back to the theme's own
-  // 'Courier New' monospace stack instead, a real visual regression a
-  // human caught by eye, not something either the ASan pass or any
-  // existing test would ever have flagged since nothing here crashes or
-  // 500s — a CSP silently degrading a font is a rendering regression,
-  // not a wrong-status-code one). classic.css/dark.css only use system
-  // font stacks and never hit this path, but the CSP itself can't be
-  // conditioned on which theme ends up active client-side, so the
-  // allowlist has to cover green.css's need unconditionally.
+  // style-src/font-src need no external allowlist at all: green.css's
+  // own 'Ubuntu Sans Mono' face (the SHIPPED DEFAULT THEME, not an
+  // opt-in one) used to be a live `@import url('https://fonts
+  // .googleapis.com/...')`, which is WHY this CSP once carried explicit
+  // fonts.googleapis.com/fonts.gstatic.com exceptions here (missing on
+  // the first version of this CSP, a plain `style-src 'self'
+  // 'unsafe-inline'` silently blocked that @import with no network
+  // request even attempted — a CSP silently degrading a font is a
+  // rendering regression a human has to catch by eye, not a
+  // wrong-status-code one any test would flag). Now vendored instead
+  // (static/fonts/ubuntu-sans-mono/, see its own VENDORED.md) — same
+  // reasoning as every other frontend bundle in this app (Toast UI
+  // Editor, mermaid, Prism, circuitjs1): this was the one remaining
+  // live external network dependency anywhere in the frontend, serving
+  // every visitor's IP to Google on every green-theme page view
+  // (private documents included) for a project that otherwise builds
+  // and runs with zero network access beyond vcpkg.
   static const std::string kCsp =
       "default-src 'self'; "
       "script-src 'self' 'unsafe-inline'; "
       "worker-src 'self'; "
-      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-      "font-src 'self' https://fonts.gstatic.com; "
+      "style-src 'self' 'unsafe-inline'; "
+      "font-src 'self'; "
       "img-src 'self' https: data:; "
       "frame-src 'self' https://www.youtube.com; "
       "object-src 'none'; "

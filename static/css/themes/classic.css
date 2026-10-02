@@ -656,6 +656,7 @@ a.btn:focus {
   max-width: 640px;
   aspect-ratio: 4 / 3;
   border: 0;
+  outline: none;
 }
 
 /* [[wiki-link]] backlinks section on the document view page (view.js). */

@@ -259,7 +259,14 @@ std::string substituteCircuitBlocks(std::string html) {
       break;
     }
 
-    out.append("<iframe class=\"circuit-embed\" src=\"")
+    // tabindex="-1": this iframe was never meant to be a tab-order stop
+    // (editable=false, nothing inside it to interact with) -- removing
+    // it from focusability is what actually suppresses Chromium's
+    // native focused-frame indicator on click, which a plain CSS
+    // `outline: none` on .circuit-embed did NOT fully suppress on its
+    // own (found live: the ring persisted through a real deploy with
+    // that rule already in place).
+    out.append("<iframe class=\"circuit-embed\" tabindex=\"-1\" src=\"")
         .append(kViewerUrl)
         .append("\" data-circuit-xml=\"")
         .append(html, contentStart, close - contentStart)

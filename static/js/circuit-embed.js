@@ -21,6 +21,20 @@ window.WikiCircuitEmbed = (function () {
   function activate(iframe) {
     const xml = iframe.getAttribute("data-circuit-xml");
     if (!xml) return;
+    // circuitjs1's own `whiteBackground` embed param (its README's
+    // "Embedding" section) -- the server that renders this iframe's src
+    // (util/MarkdownRenderer.cpp) has no idea which theme a given
+    // browser has picked (that's client-side-only, localStorage), so
+    // this has to happen here instead: the classic theme is the one
+    // light theme of the three (green/dark are both black-background),
+    // and circuitjs1's own default black canvas reads as a stray hole
+    // in an otherwise white page there. Reassigning .src BEFORE
+    // anything below reads contentWindow replaces the pending
+    // navigation outright (same-tick src reassignment coalesces to one
+    // request, standard browser behavior) -- never a double load.
+    if (document.documentElement.getAttribute("data-theme") === "classic") {
+      iframe.src = iframe.src + "&whiteBackground=true";
+    }
     // Same-origin by construction (the src is always this app's own
     // vendored js/circuitjs1/circuitjs.html -- see substituteCircuitBlocks'
     // own comment on that trust shape), so contentWindow is readable
