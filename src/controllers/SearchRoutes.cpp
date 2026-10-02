@@ -4,6 +4,9 @@
 
 #include <drogon/HttpResponse.h>
 
+#include <algorithm>
+#include <string>
+
 using namespace drogon;
 using namespace wikicore::auth;
 using namespace wikicore::index;
@@ -33,6 +36,12 @@ std::vector<std::string> splitCsvParam(const std::string& raw) {
   return out;
 }
 
+// One page of real results; buildQuery asks FtsSearch for one more than
+// this (see below) purely to learn whether a next page exists, never
+// shown to the caller — resultsToJson/the handler below trim back to
+// this before the response goes out.
+constexpr int kPageSize = 50;
+
 SearchQuery buildQuery(const HttpRequestPtr& req, bool includePrivate) {
   SearchQuery q;
   q.text = req->getParameter("q");
@@ -44,7 +53,20 @@ SearchQuery buildQuery(const HttpRequestPtr& req, bool includePrivate) {
   // "any of these".
   q.docTypes = splitCsvParam(req->getParameter("type"));
   q.includePrivate = includePrivate;
-  q.limit = 50;
+  // +1 over the real page size: FtsSearch has no separate "count total
+  // matches" call (doing so would mean running the whole ranked query
+  // twice, once just to count), so the standard trick is asking for one
+  // extra row — its presence alone says "there's a next page" without
+  // ever touching how many total pages or results exist.
+  q.limit = kPageSize + 1;
+  const std::string& offsetParam = req->getParameter("offset");
+  if (!offsetParam.empty()) {
+    try {
+      q.offset = std::max(0, std::stoi(offsetParam));
+    } catch (const std::exception&) {
+      q.offset = 0;  // malformed offset -- behave like no offset at all
+    }
+  }
   return q;
 }
 
@@ -82,9 +104,17 @@ void registerSearchRoutes(HttpAppFramework& app, FtsSearch& search) {
       "/api/search",
       [&search](const HttpRequestPtr& req,
                 std::function<void(const HttpResponsePtr&)>&& callback) {
-        const auto results = search.search(buildQuery(req, isAuthenticated(req)));
+        const auto query = buildQuery(req, isAuthenticated(req));
+        auto results = search.search(query);
+        // The +1 FtsSearch was asked for (see buildQuery) is never shown —
+        // its presence is only ever "is there a next page", trimmed back
+        // to the real page size before this goes out over the wire.
+        const bool hasMore = results.size() > static_cast<size_t>(kPageSize);
+        if (hasMore) results.resize(kPageSize);
         Json::Value body;
         body["results"] = resultsToJson(results);
+        body["offset"] = query.offset;
+        body["hasMore"] = hasMore;
         callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Get, "wikicore::auth::AuthFilter"});

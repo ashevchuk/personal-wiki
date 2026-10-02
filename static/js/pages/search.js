@@ -138,6 +138,30 @@ window.WikiPages = window.WikiPages || {};
     resultsEl.innerHTML = html;
   }
 
+  // SearchRoutes.cpp's own page size (kPageSize) — kept in sync by hand,
+  // same as every other server/client constant pair in this app (no
+  // shared-config mechanism exists between the two).
+  var PAGE_SIZE = 50;
+
+  // offset === 0 && !hasMore (one short page, or zero results) means
+  // there's nothing to page through at all -- render nothing rather than
+  // a pager with both buttons permanently disabled.
+  function renderPager(pagerEl, offset, hasMore, onPrev, onNext) {
+    if (offset === 0 && !hasMore) {
+      pagerEl.innerHTML = "";
+      return;
+    }
+    pagerEl.innerHTML =
+      '<button type="button" class="search-pager-prev"' +
+      (offset === 0 ? " disabled" : "") +
+      ">Prev</button>" +
+      '<button type="button" class="search-pager-next"' +
+      (hasMore ? "" : " disabled") +
+      ">Next</button>";
+    pagerEl.querySelector(".search-pager-prev").addEventListener("click", onPrev);
+    pagerEl.querySelector(".search-pager-next").addEventListener("click", onNext);
+  }
+
   window.WikiPages.renderSearch = function (container) {
     document.getElementById("page-title").textContent = "Search — wiki";
 
@@ -158,34 +182,62 @@ window.WikiPages = window.WikiPages || {};
       '<div id="tag-select-mount"></div>' +
       '<div id="type-select-mount"></div>' +
       "</form>" +
-      '<div id="results">Loading&hellip;</div>';
+      '<div id="results">Loading&hellip;</div>' +
+      '<div id="search-pager" class="search-pager"></div>';
 
     var form = document.getElementById("search-form");
     var resultsEl = document.getElementById("results");
+    var pagerEl = document.getElementById("search-pager");
     var selectedTags = tagValues;
     var selectedTypes = typeValues;
+    var offset = 0;
 
     function runSearch() {
       var q = new URLSearchParams();
       if (form.q.value) q.set("q", form.q.value);
       if (selectedTags.length > 0) q.set("tag", selectedTags.join(","));
       if (selectedTypes.length > 0) q.set("type", selectedTypes.join(","));
+      if (offset > 0) q.set("offset", String(offset));
       fetch(basePath() + "/api/search?" + q.toString(), { credentials: "same-origin" })
         .then(function (r) {
           return r.json();
         })
         .then(function (data) {
           renderResults(resultsEl, data.results || []);
+          renderPager(
+            pagerEl,
+            offset,
+            !!data.hasMore,
+            function () {
+              offset = Math.max(0, offset - PAGE_SIZE);
+              runSearch();
+            },
+            function () {
+              offset += PAGE_SIZE;
+              runSearch();
+            }
+          );
         })
         .catch(function () {
           resultsEl.textContent = "Search failed.";
+          pagerEl.innerHTML = "";
         });
+    }
+
+    // Any change to the query text or filters invalidates whatever page
+    // the user was on -- an offset that made sense against the old
+    // result set can easily land past the end of the new one (or just
+    // show a confusing, unrelated "page 2"), so every one of these
+    // resets to the first page before re-running.
+    function newSearch() {
+      offset = 0;
+      runSearch();
     }
 
     var debounceTimer = null;
     function debouncedSearch() {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(runSearch, 300);
+      debounceTimer = setTimeout(newSearch, 300);
     }
     form.q.addEventListener("input", debouncedSearch);
 
@@ -215,7 +267,7 @@ window.WikiPages = window.WikiPages || {};
           selectedTags,
           function (sel) {
             selectedTags = sel;
-            runSearch();
+            newSearch();
           }
         );
         createMultiSelect(
@@ -225,7 +277,7 @@ window.WikiPages = window.WikiPages || {};
           selectedTypes,
           function (sel) {
             selectedTypes = sel;
-            runSearch();
+            newSearch();
           }
         );
       })
@@ -234,6 +286,6 @@ window.WikiPages = window.WikiPages || {};
         // works fine without them, so this is degraded, not broken.
       });
 
-    runSearch();
+    newSearch();
   };
 })();
