@@ -104,13 +104,10 @@ TEST_CASE("LocalEmbeddingProvider: a text exceeding the model's context "
           "window throws a real, catchable std::runtime_error instead of "
           "crashing the process",
           "[LocalEmbeddingProvider][real-model]") {
-  // Real bug, found live testing the admin embeddings-status endpoint
-  // (docs/embeddings.md's "Three real bugs" section): before this check
-  // existed, a text this long reached llama_decode() and tripped an
-  // internal GGML_ASSERT — a hard abort(), not a C++ exception
-  // IndexUpdater's own catch(...) could do anything about. A real
-  // wiki-server process was crashed this way saving one oversized
-  // document over real HTTP before the fix landed.
+  // Without this check, a text this long reaches llama_decode() and
+  // trips an internal GGML_ASSERT — a hard abort(), not a C++ exception
+  // IndexUpdater's own catch(...) can do anything about, crashing the
+  // whole wiki-server process on an oversized document save.
   LocalEmbeddingProvider provider(WIKI_TEST_EMBEDDING_MODEL_PATH);
 
   std::ostringstream huge;
@@ -131,20 +128,17 @@ TEST_CASE("LocalEmbeddingProvider: concurrent embed() calls on the SAME "
           "provider instance from multiple threads don't corrupt each "
           "other's results or crash",
           "[LocalEmbeddingProvider][real-model]") {
-  // Real bug, found live while ARM-cross-compiling for a production
-  // deploy (docs/embeddings.md): IndexUpdater::upsertOne() deliberately
-  // calls provider_->embed() OUTSIDE any lock (so a slow embed doesn't
-  // block other threads' document saves) — and main.cpp shares ONE
-  // LocalEmbeddingProvider instance across every IndexUpdater in the
-  // process (the HTTP-request one AND VaultWatcher's own). Nothing was
-  // serializing two threads calling embed() on that same instance at the
-  // same time, because llama_context's mutable KV-cache/sequence state
-  // (touched by llama_memory_clear/llama_decode) isn't reentrant.
-  // Reproduced live under qemu-arm-static as a hard SIGSEGV with just two
-  // threads racing one embed() call each — not a hypothetical, a real
-  // crash caught before a production deploy. Fixed with a mutex owned by
-  // LocalEmbeddingProvider itself (embedMutex_) rather than pushing the
-  // requirement onto every caller.
+  // IndexUpdater::upsertOne() deliberately calls provider_->embed()
+  // OUTSIDE any lock (so a slow embed doesn't block other threads'
+  // document saves) — and main.cpp shares ONE LocalEmbeddingProvider
+  // instance across every IndexUpdater in the process (the HTTP-request
+  // one AND VaultWatcher's own). Nothing serializes two threads calling
+  // embed() on that same instance at the same time, because
+  // llama_context's mutable KV-cache/sequence state (touched by
+  // llama_memory_clear/llama_decode) isn't reentrant — two threads
+  // racing one embed() call each is a hard SIGSEGV. Guarded by a mutex
+  // owned by LocalEmbeddingProvider itself (embedMutex_) rather than
+  // pushing the requirement onto every caller.
   LocalEmbeddingProvider provider(WIKI_TEST_EMBEDDING_MODEL_PATH);
 
   constexpr int kThreads = 8;
@@ -194,16 +188,14 @@ TEST_CASE("LocalEmbeddingProvider: embedQuery() with a configured prefix "
           "document — the actual reason this exists, not just a plumbing "
           "check",
           "[LocalEmbeddingProvider][real-model]") {
-  // Real bug, found live from a user report: searching a real production
-  // wiki for a single word ("stabilize") returned most of the vault
-  // (recipes, a welcome page, empty demo docs) because bge-small-en-v1.5
-  // — like other small local retrieval models — is trained with an
-  // instruction prefix on the QUERY side only (its own model card:
-  // "Represent this sentence for searching relevant passages: "). Without
-  // it, a bare one-word query embeds too close to genuinely unrelated
-  // passages for any distance threshold to cleanly separate them — see
-  // docs/embeddings.md's "hybrid search relevance" writeup for the full
-  // real-measured numbers this test's assertions are drawn from.
+  // bge-small-en-v1.5 — like other small local retrieval models — is
+  // trained with an instruction prefix on the QUERY side only (its own
+  // model card: "Represent this sentence for searching relevant
+  // passages: "). Without it, a bare one-word query embeds too close to
+  // genuinely unrelated passages for any distance threshold to cleanly
+  // separate them — see docs/embeddings.md's "hybrid search relevance"
+  // writeup for the full real-measured numbers this test's assertions
+  // are drawn from.
   LocalEmbeddingProvider withPrefix(
       WIKI_TEST_EMBEDDING_MODEL_PATH,
       "Represent this sentence for searching relevant passages: ");

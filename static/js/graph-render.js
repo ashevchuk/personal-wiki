@@ -464,9 +464,9 @@ window.WikiGraphRender = (function () {
     var ZOOM_STEP = 1.12;
     // Screen pixels, not view-space -- a threshold in viewBox units
     // would shrink under zoom and turn a tiny twitch into a pan (and
-    // swallow the click that should have opened the node). 4 was too
-    // tight: a normal click often jitters 4-6px, which flipped the
-    // gesture into a pan (found live after pan shipped, not guessed).
+    // swallow the click that should have opened the node). A normal
+    // click often jitters 4-6px, so a lower threshold flips the
+    // gesture into a pan.
     var PAN_THRESHOLD_PX = 8;
 
     var dragging = false;
@@ -537,10 +537,9 @@ window.WikiGraphRender = (function () {
       lastViewPt = clientToView(el, evt, width, height);
       // Do NOT setPointerCapture here. Capturing on the element from
       // the initial pointerdown retargets the subsequent click onto
-      // it, so a child <a href> (SVG) never activates -- nodes looked
-      // clickable and did nothing. Found live after pan shipped.
-      // Capture only starts once this gesture has actually become a
-      // pan (see pointermove).
+      // it, so a child <a href> (SVG) never activates -- nodes would
+      // look clickable and do nothing. Capture only starts once this
+      // gesture has actually become a pan (see pointermove).
     });
 
     el.addEventListener(

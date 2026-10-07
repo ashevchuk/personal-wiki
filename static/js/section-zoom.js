@@ -74,9 +74,9 @@ window.WikiSectionZoom = (function () {
     // heading.textContent, not the raw DOM property here -- by this
     // point the heading has its own "Zoom" button appended as a CHILD
     // (see setup() below), and textContent walks every descendant's
-    // text, button label included -- confirmed live, the banner first
-    // read "shared_ptrZoom" before this was caught. dataset.zoomLabel is
-    // the heading's own text captured in setup(), BEFORE that button
+    // text, button label included, so reading it here would pick up
+    // the button's own label too (e.g. "shared_ptrZoom"). dataset.zoomLabel
+    // is the heading's own text captured in setup(), BEFORE that button
     // existed.
     banner.querySelector(".zoom-current").textContent = heading.dataset.zoomLabel;
     // replaceState, not a bare location.hash assignment -- the latter

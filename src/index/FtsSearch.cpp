@@ -29,21 +29,21 @@ std::vector<std::string> splitCsv(const std::string& csv) {
 // verbatim. Two real problems that fixes:
 //
 // 1. Bare words that happen to collide with FTS5 query syntax — "AND",
-//    "OR", "NOT", a leading "-", an unmatched '"' — used to go straight
+//    "OR", "NOT", a leading "-", an unmatched '"' — must not go straight
 //    into MATCH unescaped. Best case that's a confusing non-match
-//    (searching for the literal word "and" silently became the boolean
-//    AND operator with nothing on one side); worst case it's a MATCH
-//    syntax error surfaced to the caller as a 500. Wrapping every
+//    (searching for the literal word "and" would silently become the
+//    boolean AND operator with nothing on one side); worst case it's a
+//    MATCH syntax error surfaced to the caller as a 500. Wrapping every
 //    whitespace-split word in "double quotes" makes FTS5 treat it as
 //    literal text regardless of what's inside — a literal '"' is
 //    escaped by doubling it, the one character quoting itself doesn't
 //    neutralize.
-// 2. No partial-word matching at all — confirmed live: searching "time"
-//    found a document containing the literal word "time" but NOT one
-//    that only said "Timers"/"timer", even with the porter stemmer
-//    active (porter doesn't reduce the "-er" agent-noun suffix, so
-//    "timer" and "time" are different stems — this is correct per the
-//    stemmer, just not what anyone actually wants from a search box).
+// 2. No partial-word matching at all — searching "time" would find a
+//    document containing the literal word "time" but NOT one that only
+//    said "Timers"/"timer", even with the porter stemmer active (porter
+//    doesn't reduce the "-er" agent-noun suffix, so "timer" and "time"
+//    are different stems — this is correct per the stemmer, just not
+//    what anyone actually wants from a search box).
 //    Appending '*' after each quoted word turns it into an FTS5 prefix
 //    query: it matches any INDEXED (post-stemming) term that starts
 //    with the given text, so "time*" matches the stored stem "timer"

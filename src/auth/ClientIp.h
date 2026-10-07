@@ -36,10 +36,8 @@ namespace wikicore::auth {
 // in the resulting header is exactly what the client claimed (trivially
 // spoofable: curl -H "X-Forwarded-For: 127.0.0.1" bypasses an allowlist
 // checking that entry), while the LAST entry is always nginx's own
-// append, exactly as trustworthy as X-Real-IP. An earlier version of
-// this function read X-Forwarded-For's FIRST entry as the trusted one —
-// backwards for this exact, real config; caught by reading the actual
-// deployed nginx file instead of assuming a convention.
+// append, exactly as trustworthy as X-Real-IP. Reading the FIRST entry
+// as the trusted one is backwards for this exact, real config.
 //
 // This still trusts whatever headers arrive at all — it is NOT safe if
 // something in front of this app forwards a client-supplied header

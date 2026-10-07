@@ -191,20 +191,15 @@ std::string rewriteWikiLinksToMarkdownLinks(std::string_view markdown) {
       // issue (MD_FLAG_NOHTMLSPANS/BLOCKS already strips any HTML either
       // way -- see MarkdownRenderer.cpp).
       //
-      // "d/" + target, NEVER the bare target -- a REAL bug, shipped and
-      // caught live by the user clicking a real link on the real
-      // production site, not found by any test (every existing test
-      // asserted the bare, broken shape as "correct" because it matched
-      // what the code already produced, not what the URL actually needed
-      // to be). shell.html's own <base href="{basePath}/"> means every
-      // relative href on the page resolves against the MOUNT ROOT, not
-      // the current document's own path -- normalizeTarget() returns a
-      // path in FILE space (matching the vault's own directory
-      // structure), but viewing a document is a ROUTE at `/d/{path}`,
-      // not the bare path itself. The two look similar enough (both are
-      // "notes/foo.md"-shaped) that this was easy to get wrong and easy
-      // to miss without actually clicking the rendered link in a real
-      // browser.
+      // "d/" + target, NEVER the bare target. shell.html's own
+      // <base href="{basePath}/"> means every relative href on the page
+      // resolves against the MOUNT ROOT, not the current document's own
+      // path -- normalizeTarget() returns a path in FILE space (matching
+      // the vault's own directory structure), but viewing a document is
+      // a ROUTE at `/d/{path}`, not the bare path itself. The two look
+      // similar enough (both are "notes/foo.md"-shaped) to conflate, and
+      // a test that only checks the href's content rather than its
+      // "d/"-prefixed shape would not catch the mistake.
       out.append("[").append(label).append("](d/").append(target).append(")");
     }
     pos = close + 2;

@@ -106,8 +106,8 @@ namespace wikicore::controllers {
 //        (not one per document), success = stillFailing == 0.
 //
 // Trash — soft-delete (DocumentService::softDelete) moves a document
-// under .trash/ instead of actually removing it, but nothing used to let
-// an admin see what had piled up there, undo one, or free the disk
+// under .trash/ instead of actually removing it. These three routes let
+// an admin see what has piled up there, undo one, or free the disk
 // space. All three are admin only:
 //   GET    /api/admin/trash
 //     -> {items: [{path, sizeBytes, deletedAt}]} — every *.md file under

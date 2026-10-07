@@ -56,11 +56,10 @@ window.WikiMermaidEditorPreview = (function () {
   // (mermaid-render.js) rather than a second copy of that logic. A no-op,
   // fetching nothing, whenever the Preview panel isn't currently in the
   // DOM at all (WYSIWYG mode active, or the user has never switched to
-  // Markdown mode yet), contains no mermaid block, OR -- confirmed live,
-  // not assumed, see the real bug this guards against below -- is
-  // currently display:none (the Write tab is active instead of Preview).
+  // Markdown mode yet), contains no mermaid block, OR is currently
+  // display:none (the Write tab is active instead of Preview).
   //
-  // REAL BUG this guard fixes: rendering into a display:none container
+  // What this guard fixes: rendering into a display:none container
   // permanently breaks flowchart/graph-family diagrams. mermaid's dagre
   // layout engine calls getBBox() on the live DOM to size nodes, which
   // every Chromium/WebKit browser returns as all-zero for anything
@@ -69,12 +68,8 @@ window.WikiMermaidEditorPreview = (function () {
   // ~0px height, invisible. It never recovers even after the panel
   // becomes visible, because mermaid marks that code block as already
   // processed and silently skips it on every later mermaid.run() call.
-  // sequenceDiagram-family blocks were NOT affected in live testing --
-  // their layout is computed, not DOM-measured -- which is exactly why
-  // this looked like a diagram-type-specific bug at first rather than a
-  // visibility-timing one, until checked with real DevTools measurements
-  // (getBoundingClientRect().height: ~59px for a broken flowchart vs.
-  // ~434px for a correctly-sized sequence diagram from the same page).
+  // sequenceDiagram-family blocks are NOT affected -- their layout is
+  // computed, not DOM-measured.
   function refreshPreview() {
     var preview = document.querySelector(".toastui-editor-md-preview");
     if (preview && isVisible(preview) && window.WikiMermaid) {

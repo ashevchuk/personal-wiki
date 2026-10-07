@@ -281,12 +281,12 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
       {Get, "wikicore::auth::AuthFilter"});
 
   // --- Trash: list/restore/purge what soft-delete (DocumentService::
-  // softDelete, DocumentRoutes.cpp) has moved under .trash/ -- a real gap
-  // found live: soft-delete existed, but nothing in the Web UI ever let
-  // an admin see what had accumulated there, undo one, or actually free
-  // the disk space. .trash/ itself has no retention of its own (by
-  // design — an admin decides what's actually gone, this app never
-  // guesses), so this is the only way any of it ever leaves the vault.
+  // softDelete, DocumentRoutes.cpp) has moved under .trash/. Without
+  // this, nothing in the Web UI lets an admin see what has accumulated
+  // there, undo one, or actually free the disk space. .trash/ itself
+  // has no retention of its own (by design — an admin decides what's
+  // actually gone, this app never guesses), so this is the only way any
+  // of it ever leaves the vault.
   app.registerHandler(
       "/api/admin/trash",
       [&vault](const HttpRequestPtr& req,
@@ -303,11 +303,11 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
           item["deletedAt"] = util::isoTimestampFromUnix(e.deletedAtUnix);
           // Best-effort title + a short rendered-markdown preview, so the
           // list itself answers "what IS this" without restoring it first
-          // just to look — found live: a bare path (especially a UUID-less
-          // stub or something renamed before deletion) often isn't enough
-          // to recognize what's actually in it. Rendered, not the raw
-          // excerpt this used to send: a plain-text slice of markdown
-          // shows its own table pipes/heading hashes as noise, and
+          // just to look — a bare path (especially a UUID-less stub or
+          // something renamed before deletion) often isn't enough to
+          // recognize what's actually in it. Rendered, not a raw
+          // plain-text excerpt: a plain-text slice of markdown shows its
+          // own table pipes/heading hashes as noise, and
           // renderMarkdownToHtml is already the exact function the real
           // document-view page uses, safe to embed as-is (raw HTML
           // passthrough is disabled in md4c — see the function's own

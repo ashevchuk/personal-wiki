@@ -89,16 +89,15 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
   // The context's n_ctx (the model's own trained context window — 512 for
   // bge-small-en-v1.5), captured at construction. embed() throws a real,
   // catchable std::runtime_error when a text's token count exceeds this,
-  // BEFORE calling llama_decode() — found live wiring up the admin
-  // "needing attention" retry path (docs/embeddings.md's "Three real
-  // bugs"): a text long enough to exceed llama.cpp's own internal
-  // n_ubatch trips `GGML_ASSERT(cparams.n_ubatch >= n_tokens)` INSIDE
-  // llama_decode(), which calls abort() directly — a hard process crash,
-  // not a C++ exception IndexUpdater's existing catch(...) can do
-  // anything about. Even below that harder limit, feeding a model more
-  // tokens than it was trained on (n_ctx) produces a semantically
-  // meaningless embedding, not just a slow one — this check makes BOTH
-  // problems a normal, recorded, retry-able embedding failure instead.
+  // BEFORE calling llama_decode(): a text long enough to exceed
+  // llama.cpp's own internal n_ubatch trips
+  // `GGML_ASSERT(cparams.n_ubatch >= n_tokens)` INSIDE llama_decode(),
+  // which calls abort() directly — a hard process crash, not a C++
+  // exception IndexUpdater's existing catch(...) can do anything about.
+  // Even below that harder limit, feeding a model more tokens than it
+  // was trained on (n_ctx) produces a semantically meaningless
+  // embedding, not just a slow one — this check makes BOTH problems a
+  // normal, recorded, retry-able embedding failure instead.
   int32_t maxTokens_ = 0;
   // Captured once at construction (path + mtime + size, not a content
   // hash of the whole file — see modelIdentifier()'s own doc comment in

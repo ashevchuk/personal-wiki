@@ -11,8 +11,7 @@ namespace wikicore::vault {
 
 // The read/write surface over the vault filesystem. Everything here goes
 // through PathGuard — nothing in this class (or its callers) is allowed
-// to build a vault path by any other means. M1 ships read-only; write
-// (atomic save, attachments) lands M2 as DocumentService/AttachmentService.
+// to build a vault path by any other means.
 class VaultRepository {
  public:
   explicit VaultRepository(std::filesystem::path vaultRoot)

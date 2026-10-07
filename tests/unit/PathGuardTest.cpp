@@ -1,7 +1,5 @@
-// Traversal tests for wikicore::vault::PathGuard — written and run before
-// any other code is allowed to touch the vault filesystem, per the plan
-// (Milestone 1). If these don't all pass, nothing else in `vault/` may be
-// trusted.
+// Traversal tests for wikicore::vault::PathGuard. If these don't all pass,
+// nothing else in `vault/` may be trusted.
 
 #include "vault/PathGuard.h"
 

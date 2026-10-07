@@ -147,8 +147,8 @@ window.WikiDateTimePicker = (function () {
   // dark theme). Always renders 6 full weeks (42 cells), padding BOTH
   // ends with the adjacent month's days rather than just leading blanks
   // -- a 4-week October next to a 6-week November otherwise resizes the
-  // whole dialog on every Prev/Next click, found live navigating months
-  // in the Due calendar. Returns {element, setSelected}; the caller owns
+  // whole dialog on every Prev/Next click. Returns {element, setSelected};
+  // the caller owns
   // when the widget is shown/hidden (e.g. only while the "Until" radio
   // is checked) and when it goes away (removed along with the rest of
   // the dialog's DOM on Cancel/Save, no separate teardown needed).
@@ -411,11 +411,11 @@ window.WikiDateTimePicker = (function () {
       // preventDefault lives in dropdown.js instead. A day cell or the
       // month-nav arrows, both real <button>s, are exempt: per spec a
       // label only delegates to its control for non-form-control
-      // descendants.) Found live: picking a month from the Month/Year
-      // dropdowns closed the whole popup instead of just updating it --
-      // invisible before those dropdowns existed because picking a day
-      // already closes the popup on purpose (onSelect below), so the
-      // same stray synthetic click was firing unnoticed.
+      // descendants.) Without stopPropagation/preventDefault here,
+      // picking a month from the Month/Year dropdowns closes the whole
+      // popup instead of just updating it, via the same stray synthetic
+      // click that picking a day already relies on closing the popup
+      // for (onSelect below).
       untilPopup.addEventListener("click", function (ev) {
         ev.stopPropagation();
         ev.preventDefault();
@@ -552,9 +552,9 @@ window.WikiDateTimePicker = (function () {
       // One delegated listener on the form for the remaining native
       // controls (the all-day checkbox, the end-mode radios, the
       // interval/count numbers), rather than wiring updateSummaryPreview
-      // onto each individually -- the per-control approach already
-      // missed the three end-mode radios (Forever/Until/After) the
-      // first time around, caught live: switching between them left the
+      // onto each individually -- a per-control approach is easy to
+      // miss one on, such as the three end-mode radios
+      // (Forever/Until/After): switching between them would leave the
       // preview line showing stale recurrence text. The three dropdowns
       // (Repeats, Hour, Minute -- WikiDropdown, not native <select>) and
       // both calendar widgets dispatch no native change/click bubble a

@@ -12,9 +12,8 @@ correctness) and stress_concurrency.py (race conditions).
    past what that many legitimate files should cost, and that it stays
    responsive throughout.
 
-2. A single 50 MiB upload — must be accepted (this used to sit over a 25/30
-   MiB cap pair that no longer exists) and land on disk, without crashing
-   the server.
+2. A single 50 MiB upload — well above a typical attachment, must be
+   accepted and land on disk, without crashing the server.
 
 3. Heavy concurrent search load vs. /healthz responsiveness — a burst of
    expensive concurrent FTS5 queries must not starve the Drogon thread
@@ -99,7 +98,7 @@ def stress_concurrent_uploads(server):
 
 
 def stress_oversized_upload(server):
-    print("\n--- 2. Single large upload (50 MiB, previously over-cap) -----------")
+    print("\n--- 2. Single large upload (50 MiB) -----------")
     admin, csrf = login_admin(server)
     status, _, _ = admin.post_json(
         "/api/documents",
@@ -108,7 +107,7 @@ def stress_oversized_upload(server):
         headers={"X-CSRF-Token": csrf})
     check("seed document created -> 201", status == 201, f"got {status}")
 
-    SIZE = 50 * 1024 * 1024  # used to exceed both the 25 MiB app cap and 30 MiB Drogon cap
+    SIZE = 50 * 1024 * 1024
     payload = os.urandom(1024) * (SIZE // 1024)
 
     start = time.monotonic()

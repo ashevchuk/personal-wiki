@@ -98,9 +98,9 @@ window.WikiPages = window.WikiPages || {};
 
   // Always 6 full weeks (42 cells) -- a 4-week February next to a
   // 6-week October otherwise resizes this whole page by two row-heights
-  // on every Prev/Next click (found live, the same fixed-height fix
-  // already applied to the Due-date picker's own calendar widget in
-  // date-time-picker.js). Leading/trailing filler cells show the
+  // on every Prev/Next click (same fixed-height fix as the Due-date
+  // picker's own calendar widget in date-time-picker.js).
+  // Leading/trailing filler cells show the
   // adjacent month's real day numbers, dimmed -- purely visual, never
   // a link -- rather than blank boxes, matching that same widget.
   function renderMonthGrid(anchor, eventsByDate) {

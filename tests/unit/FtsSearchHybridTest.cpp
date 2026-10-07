@@ -209,13 +209,12 @@ TEST_CASE("FtsSearch: a genuinely unrelated document does NOT appear in "
           "hybrid results just for being the closest thing available in a "
           "small vault",
           "[FtsSearch][real-model]") {
-  // Real bug, found live from a user report on real production content:
   // EmbeddingIndexer::nearest() has no relevance floor of its own — on a
   // small vault, "the nearest N neighbors" is effectively the WHOLE
   // vault, ranked by a distance that's often pure noise for a genuinely
-  // unrelated document, and RRF gave every one of them a nonzero score
-  // regardless of actual relevance. A one-word query against a handful of
-  // documents returned recipes, a welcome page, and empty demo docs
+  // unrelated document, and RRF gives every one of them a nonzero score
+  // regardless of actual relevance. Without a fix, a one-word query
+  // against a handful of documents returns totally unrelated ones
   // alongside the couple of actually-relevant results. See
   // docs/embeddings.md's "hybrid search relevance" writeup for the real
   // measured numbers behind the fix (a query-side instruction prefix,
@@ -252,8 +251,7 @@ TEST_CASE("FtsSearch: maxSemanticCandidates caps how many semantic matches "
           "flood in, even when every single one is individually under the "
           "distance cutoff",
           "[FtsSearch][real-model]") {
-  // A second, distinct real bug found re-checking the distance-cutoff fix
-  // above against more real production queries: a MULTI-word query's
+  // Distinct from the distance-cutoff fix above: a MULTI-word query's
   // embedding can sit at a uniformly "blurry" distance from several
   // unrelated documents at once on a small vault — each one individually
   // still under maxSemanticDistance, so the cutoff alone lets all of them
@@ -302,9 +300,7 @@ TEST_CASE("FtsSearch: an active tag filter excludes a document that only "
           "matches through the SEMANTIC candidate path, not just the BM25 "
           "one",
           "[FtsSearch][real-model]") {
-  // Real bug, reported live: searching "soup" with tags:cpp + type:note
-  // filters active still found a genuinely unrelated recipe document.
-  // Root cause: EmbeddingIndexer::nearest() (the semantic candidate
+  // EmbeddingIndexer::nearest() (the semantic candidate
   // source) has no concept of tag/docType/folder filters at all —
   // bm25CandidateRowIds() applied them correctly, but a document
   // admitted ONLY through the semantic side skipped the filter entirely,
@@ -343,9 +339,9 @@ TEST_CASE("FtsSearch: an active tag filter excludes a document that only "
 TEST_CASE("FtsSearch: a repeated identical query does NOT call embedQuery() "
           "again — the whole point of caching it",
           "[FtsSearch][real-model]") {
-  // Found live: a single embedQuery() call measured 1.3-2.6 SECONDS on the
-  // real production armv7 SBC — by far the dominant cost of a hybrid
-  // search request. search.js's tag/type filter checkboxes re-run a
+  // A single embedQuery() call measures 1.3-2.6 SECONDS on an armv7
+  // SBC — by far the dominant cost of a hybrid search request.
+  // search.js's tag/type filter checkboxes re-run a
   // search with the SAME query text on every toggle, with no debounce —
   // a real, common case this cache is meant to fix. See FtsSearch.h's own
   // comment on queryEmbeddingCache_ for the full reasoning.

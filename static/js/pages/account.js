@@ -130,9 +130,9 @@ window.WikiPages = window.WikiPages || {};
       var tr = document.createElement("tr");
 
       // Title (falls back to the path when the document had none) plus
-      // the real path underneath, dim — found live: a bare path alone
-      // often isn't enough to recognize what a trashed document actually
-      // was without restoring it first just to look. The rendered-
+      // the real path underneath, dim — a bare path alone often isn't
+      // enough to recognize what a trashed document actually was
+      // without restoring it first just to look. The rendered-
       // markdown preview (excerptHtml, AdminRoutes.cpp's own
       // renderMarkdownToHtml call) stays out of the row itself, shown in
       // the shared popup on hover instead of permanently occupying row

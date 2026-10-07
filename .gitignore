@@ -54,5 +54,8 @@ __pycache__/
 CLAUDE.md
 claude.sh
 
+# scratch notes, plans and investigation logs — never tracked docs
+.notes/
+
 # CMake user presets (machine-local)
 CMakeUserPresets.json

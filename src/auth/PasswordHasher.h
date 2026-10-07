@@ -8,9 +8,7 @@ namespace wikicore::auth {
 // minimums (m_cost=19 MiB, t_cost=2, p=1) — trivial memory/CPU cost for
 // any Raspberry Pi 4/5, and this is a single-admin login gated by
 // RateLimiter besides, so there's no reason to go higher and slow down
-// every request on weaker hardware. Bench against real target hardware
-// before deploying if that assumption ever needs revisiting (per the
-// plan's M1 note) — not done here, no RPi available in this environment.
+// every request on weaker hardware.
 class PasswordHasher {
  public:
   // Returns a self-describing encoded hash (algorithm + params + salt +

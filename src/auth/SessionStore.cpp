@@ -11,10 +11,6 @@ namespace wikicore::auth {
 
 namespace {
 
-// randomHexToken()/sha256Hex() used to live here directly — now shared
-// with McpRemoteConfig (see auth/Crypto.h), same reasoning either way:
-// a session/bearer token is stored as a hash, never the raw value.
-
 void bindText(sqlite3_stmt* stmt, int index, const std::string& value) {
   sqlite3_bind_text(stmt, index, value.c_str(), -1, SQLITE_TRANSIENT);
 }

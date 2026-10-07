@@ -28,12 +28,11 @@ WORKDIR /src
 
 # vcpkg is bootstrapped fresh, not vendored (matches the rest of this repo
 # — see .gitignore's own comment on why vcpkg/ is never committed). A
-# FULL clone, not --depth 1 -- confirmed live that a shallow clone can
-# miss vcpkg.json's pinned baseline commit entirely (manifest mode needs
+# FULL clone, not --depth 1: a shallow clone can miss vcpkg.json's
+# pinned baseline commit entirely (manifest mode needs
 # `git show <that commit>:versions/baseline.json`, which fails outright
 # against a one-commit-deep history that commit doesn't happen to be
-# — see docs/architecture.md's "Build" section for the full story). This
-# broke a real build of this exact Dockerfile, not a hypothetical.
+# — see docs/architecture.md's "Build" section for the full story).
 RUN git clone https://github.com/microsoft/vcpkg.git vcpkg \
     && ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 

@@ -324,8 +324,7 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
   // doesn't find this one document".
   if (provider_ != nullptr) {
     // Step 0: is there even enough text here to embed MEANINGFULLY?
-    // Found live from a real user report on real production content: a
-    // document with essentially no prose (a title plus, say, just an
+    // A document with essentially no prose (a title plus, say, just an
     // image link — "# Welcome\n\n![pic.webp](...)") produces a vector
     // that doesn't carry a strong-enough semantic signal to land
     // reliably far from unrelated queries. Measured against real
@@ -355,8 +354,8 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
       try {
         std::lock_guard<std::mutex> lock(mutex_);
         EmbeddingIndexer indexer(db_.handle());
-        // MUST run even on this skip path — found live: without it, a
-        // too-short document processed BEFORE any "normal" one leaves
+        // MUST run even on this skip path: without it, a too-short
+        // document processed BEFORE any "normal" one leaves
         // index_meta's dimensions/model completely unset; the next
         // document's own ensureTable() call then sees "no recorded
         // dimensions" as a model MISMATCH (the same signal a real model

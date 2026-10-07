@@ -89,7 +89,7 @@ class FtsSearch {
   // embeddingsMaxDistance's own comment for why this exists — without
   // it, a small vault's "nearest neighbors" is effectively the whole
   // vault, and every one of them gets a nonzero RRF score regardless of
-  // actual relevance). Found live on real production content.
+  // actual relevance).
   //
   // maxSemanticCandidates: a hard cap on how many of the nearest
   // neighbors (already sorted nearest-first, already past the distance
@@ -163,9 +163,9 @@ class FtsSearch {
   int maxSemanticCandidates_ = 5;
 
   // Cache of embedQuery(query.text) results, keyed on the raw query text.
-  // Found live: a single embedQuery() call costs 1.3-2.6 SECONDS on the
-  // real production armv7 SBC (bge-small-en-v1.5, no GPU) — the dominant
-  // cost of a hybrid search request by far, FTS5+RRF is noise next to it.
+  // A single embedQuery() call costs 1.3-2.6 SECONDS on an armv7 SBC
+  // (bge-small-en-v1.5, no GPU) — the dominant cost of a hybrid search
+  // request by far, FTS5+RRF is noise next to it.
   // search.js's tag/type filter checkboxes deliberately re-run a search
   // with the SAME query text and no debounce on every toggle (see that
   // file's own comment) — a real, common interaction this cache turns

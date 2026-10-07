@@ -43,17 +43,12 @@ TEST_CASE("rewriteWikiLinksToMarkdownLinks produces plain CommonMark links",
   REQUIRE(out == "See [notes/foo](d/notes/foo.md).");
 }
 
-// A real bug, shipped and caught live: the href used to be the bare
-// normalized target ("notes/foo.md") with no "d/" prefix at all — every
-// test at the time asserted THAT as correct, because it matched what the
-// code produced rather than what the URL actually needed to resolve to
-// against shell.html's <base href="{basePath}/">. Document VIEWS are a
-// route at /d/{path}, not the vault-relative path itself; the two are
-// easy to conflate since both look like "notes/foo.md". This test
-// exists specifically so that conflation can't silently come back —
-// asserting "starts with d/", not just equality against one fixed
-// string, so it stays meaningful even if normalizeTarget's own output
-// shape changes later.
+// Document VIEWS are a route at /d/{path}, not the vault-relative path
+// itself; the two are easy to conflate since both look like
+// "notes/foo.md". The href must resolve against shell.html's
+// <base href="{basePath}/">, so it needs the "d/" prefix. Asserts
+// "starts with d/", not equality against one fixed string, so it stays
+// meaningful even if normalizeTarget's own output shape changes later.
 TEST_CASE("rewriteWikiLinksToMarkdownLinks hrefs are d/-prefixed, not the bare "
           "vault-relative path",
           "[WikiLinks]") {

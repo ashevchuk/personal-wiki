@@ -68,10 +68,10 @@ window.WikiCommon = (function () {
   // GET /api/documents/{path} already exists for that — see view.js).
   // Deliberately NOT stripping *bold*/_italic_ markers too: unlike
   // image/link brackets and a leading heading #, a bare "_" or "*" is
-  // genuinely ambiguous with ordinary text (confirmed the hard way —
-  // an early version of this function mangled "photo_2026-09-03.jpg"
-  // into "photo2026-09-03.jpg", reading the underscores around the date
-  // as an italic span). Both regexes below only remove syntax CHARACTERS
+  // genuinely ambiguous with ordinary text — stripping it would mangle
+  // a filename like "photo_2026-09-03.jpg" into "photo2026-09-03.jpg",
+  // reading the underscores around the date as an italic span. Both
+  // regexes below only remove syntax CHARACTERS
   // and always keep whatever text was inside brackets/after # verbatim
   // (via a capture group), so a control byte that landed inside e.g.
   // `![al<mark-here>t](url)` survives intact in the kept text — only one
@@ -86,15 +86,16 @@ window.WikiCommon = (function () {
       // [text](url) handled above, and never rewritten server-side for a
       // search SNIPPET (rewriteWikiLinksToMarkdownLinks only runs on a
       // document's full body, at view time — see MarkdownRenderer.cpp).
-      // Found live: a search match landing inside a "[[...]]" span showed
-      // the raw brackets in the result list. Same "keep the readable
-      // half" contract as WikiLinks' own normalizeTarget — prefer the
-      // label when there is one, the bare target text otherwise.
+      // Without this, a search match landing inside a "[[...]]" span
+      // shows the raw brackets in the result list. Same "keep the
+      // readable half" contract as WikiLinks' own normalizeTarget —
+      // prefer the label when there is one, the bare target text
+      // otherwise.
       .replace(/\[\[([^\]|]*)\|([^\]]*)\]\]/g, "$2")
       .replace(/\[\[([^\]]*)\]\]/g, "$1")
-      // NOT `/^#{1,6}\s+/gm` (start-of-LINE anchored) — confirmed the hard
-      // way against a real search snippet: FTS5's snippet() flattens the
-      // document's original newlines into plain spaces, so a heading that
+      // NOT `/^#{1,6}\s+/gm` (start-of-LINE anchored): FTS5's snippet()
+      // flattens the document's original newlines into plain spaces, so
+      // a heading that
       // was on its own line in the source (e.g. "...soup.\n\n## Ingredients\n- Beets...")
       // arrives as "...soup. ## Ingredients - Beets..." with no real "\n"
       // for `^`/`m` to anchor on — `##` sat there raw in every snippet
@@ -132,11 +133,11 @@ window.WikiCommon = (function () {
 
   // "Home / notes / sub / foo.md" from a vault-relative path. Every
   // segment except the trailing one is a link to /folder/{cumulative
-  // path up to and including that segment} — used to be plain text for
-  // every segment but "Home", which made a breadcrumb trail from a
-  // document buried a few folders deep purely decorative: you could see
-  // where you were, but not jump back to any of the folders along the
-  // way without using the sidebar tree instead. The LAST segment stays
+  // path up to and including that segment} — a plain-text middle segment
+  // would make a breadcrumb trail from a document buried a few folders
+  // deep purely decorative: you could see where you were, but not jump
+  // back to any of the folders along the way without using the sidebar
+  // tree instead. The LAST segment stays
   // non-clickable (crumb-current) either way — for a document path
   // that's the filename itself (not a folder, nothing to link to); for
   // a folder-browse path (folder.js) it's the folder currently being

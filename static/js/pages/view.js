@@ -191,11 +191,11 @@ window.WikiPages = window.WikiPages || {};
         var chrome = "";
         if (session.authenticated) {
           // Both actions as same-look buttons in one flex row (see
-          // .doc-actions in each css/themes/*.css file) — Edit used to be a bare <a> next
-          // to a boxed Delete <button>, split by a literal "|", which
-          // read as two different UI languages sharing one line for no
-          // reason. <a class="btn"> makes Edit LOOK like a button while
-          // still being a real link (no JS needed to navigate there).
+          // .doc-actions in each css/themes/*.css file) — a bare <a>
+          // for Edit next to a boxed Delete <button> would read as two
+          // different UI languages sharing one line. <a class="btn">
+          // makes Edit LOOK like a button while still being a real
+          // link (no JS needed to navigate there).
           chrome =
             '<div class="doc-actions"><a class="btn" href="' +
             basePath() +

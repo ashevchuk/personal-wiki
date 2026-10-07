@@ -119,7 +119,8 @@ window.WikiChat = (function () {
   }
 
   // display:none (the hidden attribute) makes getBoundingClientRect()
-  // return 0, which used to clamp a restored width down to MIN_SIDE.
+  // return 0 -- trusting that directly would clamp a restored width
+  // down to MIN_W below.
   function panelWidthPx() {
     if (!panel) return MIN_W;
     if (!panel.hidden) {

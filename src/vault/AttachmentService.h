@@ -32,8 +32,7 @@ struct AttachmentInfo {
 // PathGuard, which still gets the final say.
 //
 // Any file extension is accepted on upload — there is no type allowlist
-// or blocklist here (there used to be an allowlist; removed deliberately,
-// see git history). The actual safety concern an extension policy was
+// or blocklist here. The actual safety concern an extension policy was
 // standing in for — a browser executing an uploaded file's content
 // in-origin when navigated to directly (worst case: an uploaded .html or
 // .svg with an embedded <script>) — is handled on the SERVING side

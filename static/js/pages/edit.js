@@ -1,7 +1,7 @@
 // Edit page — GET /api/documents/{path} (a 404 means "new, unsaved
-// document" rather than an error), builds the whole form dynamically
-// (used to be static HTML from EditPage.csp), mounts Toast UI Editor,
-// saves via the JSON API, and owns attachment upload wiring.
+// document" rather than an error), builds the whole form dynamically,
+// mounts Toast UI Editor, saves via the JSON API, and owns attachment
+// upload wiring.
 window.WikiPages = window.WikiPages || {};
 
 (function () {
@@ -160,13 +160,12 @@ window.WikiPages = window.WikiPages || {};
 
     // Appended to document.body, NOT wrap -- a "portal", the standard
     // fix for exactly this class of problem. Toast UI Editor's own
-    // WYSIWYG canvas (#editor) turns out to nest SEVERAL of its own
+    // WYSIWYG canvas (#editor) nests SEVERAL of its own
     // position:relative/absolute containers (.toastui-editor-main,
-    // .toastui-editor-main-container, the ProseMirror root itself) --
-    // found live via getComputedStyle walking that ancestor chain, not
-    // guessed. That nesting made the dropdown's stacking order relative
-    // to the editor's body text UNRELIABLE even after giving .field-row
-    // its own explicit position+z-index (which reliably beat the
+    // .toastui-editor-main-container, the ProseMirror root itself),
+    // which makes the dropdown's stacking order relative to the
+    // editor's body text UNRELIABLE even when giving .field-row
+    // its own explicit position+z-index (which reliably beats the
     // editor's plain TOOLBAR, itself unpositioned, but not consistently
     // the WYSIWYG canvas text several positioned layers deep inside
     // #editor). Rendering the menu as a direct child of <body> instead,
@@ -768,11 +767,10 @@ window.WikiPages = window.WikiPages || {};
     // NOT auto-derived from this app's own CSS — shell.html unconditionally
     // loads both toastui-editor.css and toastui-editor-dark.css (the option
     // just toggles a `.toastui-editor-dark` class the library adds itself),
-    // so nothing stops picking either one per site theme. This used to be
-    // hardcoded to "dark" — harmless back when the only site theme WAS a
-    // dark one (green.css), genuinely wrong once classic.css (a light
-    // theme) existed: a solid black editor panel sitting in the middle of
-    // an otherwise white page. `<html data-theme="...">` is set
+    // so nothing stops picking either one per site theme. Hardcoding this
+    // to "dark" would mean a solid black editor panel sitting in the
+    // middle of an otherwise white page on a light site theme like
+    // classic.css. `<html data-theme="...">` is set
     // synchronously by shell.html's own bootstrap script before this file
     // ever runs, so it's already there to read — green/dark both want the
     // editor's dark theme (both have dark page backgrounds), only classic

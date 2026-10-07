@@ -25,20 +25,19 @@ bool isYouTubeIdChar(char c) {
 // rewriteYouTubeEmbeds writes after recognizing a real youtube.com/
 // youtu.be URL — but it is NOT the only way to reach it: a raw
 // `<img src="youtube-embed:ID">` typed by hand as literal HTML DOES get
-// escaped to `&lt;img ...&gt;` by md4c (MD_FLAG_NOHTMLSPANS is on below,
-// confirmed live), but plain CommonMark image syntax typed directly —
+// escaped to `&lt;img ...&gt;` by md4c (MD_FLAG_NOHTMLSPANS is on below),
+// but plain CommonMark image syntax typed directly —
 // `![](youtube-embed:ID)` — is NOT raw HTML, isn't blocked by that flag,
 // and produces the identical `<img src="youtube-embed:ID" alt="">` md4c
 // would have produced from a real rewrite, which this function then
-// substitutes exactly the same way. Confirmed live (2026-09-10 ASan
-// adversarial pass, docs/architecture.md). This is harmless under the
+// substitutes exactly the same way. This is harmless under the
 // CURRENT trust model — the same single admin who can type either form
 // can already embed any YouTube video ID by pasting a real URL, so typing
 // the marker syntax directly grants no new capability — but it means this
-// substitution is NOT gated on "came from a real URL rewrite" the way an
-// earlier version of this comment claimed; it only checks the resulting
-// HTML shape, regardless of provenance. Re-check this reasoning if this
-// codebase ever adds multiple editors with different trust levels.
+// substitution is NOT gated on "came from a real URL rewrite"; it only
+// checks the resulting HTML shape, regardless of provenance. Re-check
+// this reasoning if this codebase ever adds multiple editors with
+// different trust levels.
 // This is the one and only place in this whole renderer where a
 // URL-derived value reaches raw HTML output — `ID` has already been
 // validated to exactly 11 URL-safe characters by rewriteYouTubeEmbeds
@@ -215,17 +214,16 @@ std::string substituteQueryBlocks(std::string html) {
 // The circuit is loaded via the `CircuitJS1.importCircuit()` same-origin
 // JS API (static/js/circuit-embed.js reads data-circuit-xml back off
 // this element and calls it once the iframe's own oncircuitjsloaded
-// fires), NOT via a `cct=` query parameter the way an earlier version of
-// this function worked — circuitjs1's own query-string decoder
-// (QueryParameters.java, GWT's URL.decode(), which matches JS decodeURI
-// not decodeURIComponent) never decodes a handful of URI-reserved
-// characters including `=` and `/`, both of which this XML format's own
-// attribute syntax (`attr="value"`) and self-closing tags (`/>`) use
-// constantly — there is no percent-encoding of the value that survives
-// that specific decoder's own round trip once the XML actually has
-// attributes, confirmed live (a real circuit with `<r ... r="20"/>`
-// reached the iframe as `r%3D"20"` — the literal three characters,
-// `%`/`3`/`D` — and failed to parse as XML at all). The hideSidebar/
+// fires), NOT via a `cct=` query parameter — circuitjs1's own
+// query-string decoder (QueryParameters.java, GWT's URL.decode(), which
+// matches JS decodeURI not decodeURIComponent) never decodes a handful
+// of URI-reserved characters including `=` and `/`, both of which this
+// XML format's own attribute syntax (`attr="value"`) and self-closing
+// tags (`/>`) use constantly — there is no percent-encoding of the
+// value that survives that specific decoder's own round trip once the
+// XML actually has attributes (a circuit with `<r ... r="20"/>` reaches
+// the iframe as `r%3D"20"` — the literal three characters, `%`/`3`/`D`
+// — and fails to parse as XML at all). The hideSidebar/
 // hideMenu/hideInfoBox/editable/running flags below stay on the URL
 // since they're plain ASCII with no such characters, unaffected by that
 // decoder gap.
@@ -262,10 +260,9 @@ std::string substituteCircuitBlocks(std::string html) {
     // tabindex="-1": this iframe was never meant to be a tab-order stop
     // (editable=false, nothing inside it to interact with) -- removing
     // it from focusability is what actually suppresses Chromium's
-    // native focused-frame indicator on click, which a plain CSS
-    // `outline: none` on .circuit-embed did NOT fully suppress on its
-    // own (found live: the ring persisted through a real deploy with
-    // that rule already in place).
+    // native focused-frame indicator on click. A plain CSS
+    // `outline: none` on .circuit-embed does NOT fully suppress it on
+    // its own.
     out.append("<iframe class=\"circuit-embed\" tabindex=\"-1\" src=\"")
         .append(kViewerUrl)
         .append("\" data-circuit-xml=\"")

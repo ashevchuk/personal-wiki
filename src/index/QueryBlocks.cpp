@@ -483,15 +483,15 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
 
   if (orphansOnly) {
     // A NOT EXISTS subquery, not a LEFT JOIN + IS NULL -- deliberately.
-    // An earlier version used a LEFT JOIN with an explicitly NUMBERED
-    // placeholder (?N) in the FROM clause, ahead of this WHERE clause's
-    // own plain "?" placeholders in the final SQL text. That's a real,
-    // caught-before-shipping bug: SQLite assigns a plain "?" the next
-    // number after the LARGEST number already seen IN TEXT-PARSE ORDER,
-    // not in this function's construction order -- a numbered "?N"
-    // appearing earlier in the text (the JOIN, here) silently shifts
-    // every later anonymous "?" (the WHERE clauses below) to the WRONG
-    // bind position, binding e.g. `type` to a slot meant for `folder`.
+    // A LEFT JOIN here would need an explicitly NUMBERED placeholder
+    // (?N) in the FROM clause, ahead of this WHERE clause's own plain
+    // "?" placeholders in the final SQL text -- a real trap: SQLite
+    // assigns a plain "?" the next number after the LARGEST number
+    // already seen IN TEXT-PARSE ORDER, not in this function's
+    // construction order -- a numbered "?N" appearing earlier in the
+    // text (the JOIN, here) would silently shift every later anonymous
+    // "?" (the WHERE clauses below) to the WRONG bind position, binding
+    // e.g. `type` to a slot meant for `folder`.
     // Keeping every parameterized condition inside WHERE, in the same
     // order its binder is pushed, sidesteps the whole class of bug --
     // text order and construction order are then the same order by

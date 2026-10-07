@@ -141,9 +141,8 @@
   }
 
   // /api/nav/tags (NavQueries::tagCounts) returns a FLAT list,
-  // alphabetically sorted (COLLATE NOCASE) — no client-side re-sort here
-  // anymore (there used to be one, by count descending, which fought the
-  // server's own order for no reason). A tag containing '/'
+  // alphabetically sorted (COLLATE NOCASE) — no client-side re-sort here,
+  // the server's own order is authoritative. A tag containing '/'
   // (e.g. "lang/cpp", "project/wiki") is grouped into a collapsible tree
   // HERE, client-side, on exactly the same '/'-split convention buildTree
   // above already uses for document folders — a namespaced flat list

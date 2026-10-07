@@ -32,9 +32,9 @@ inline constexpr int kEmbeddingChunkSpecialTokenReserve = 8;
 // catchable failure rather than a process crash. `maxInputTokens` is
 // the model's n_ctx (0 = unknown; uses kEmbeddingChunkTargetTokens).
 //
-// Short documents produce a single chunk identical to the old
-// `title + "\n\n" + body` string IndexUpdater used to embed as one
-// vector — same observable for anything that already fit in the window.
+// Short documents produce a single chunk identical to the plain
+// `title + "\n\n" + body` string — same observable for anything that
+// already fits in the window.
 std::vector<std::string> chunkForEmbedding(const std::string& title,
                                            const std::string& body,
                                            int maxInputTokens = 0);

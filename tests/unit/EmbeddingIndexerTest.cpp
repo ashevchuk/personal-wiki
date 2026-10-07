@@ -242,12 +242,9 @@ TEST_CASE("EmbeddingIndexer: recordEmbeddingFailure() AFTER a prior success "
   indexer.recordEmbeddingFailure(rowId, "network timeout");  // content changed to v2, embed failed
 
   REQUIRE(indexer.needsEmbedding(rowId, "hash-v2"));  // still needs it — failure didn't fix anything
-  // The originally tried expectation here — "even hash-v1 counts as stale
-  // now" — turned out to be wrong when this test was first run: the
-  // vector stored under hash-v1 is untouched by the failure (upsertOne()
-  // for v2 never ran), so it's genuinely still correct for that exact
-  // content. A real, useful finding caught by writing the test, not
-  // something to paper over with a looser assertion.
+  // The vector stored under hash-v1 is untouched by the v2 failure
+  // (upsertOne() for v2 never ran), so it's genuinely still correct for
+  // that exact content.
   REQUIRE_FALSE(indexer.needsEmbedding(rowId, "hash-v1"));
 }
 

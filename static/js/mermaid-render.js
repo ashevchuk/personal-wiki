@@ -47,9 +47,9 @@ window.WikiMermaid = (function () {
 
   // mermaid's own built-in "dark"/"default" themes have THEIR OWN fixed
   // palette (grey node fills, white borders for "dark") -- picking one
-  // per site theme (as an earlier version of this file did) still leaves
-  // diagrams looking like a generic mermaid dark theme bolted onto the
-  // page, not this site's own green-terminal/dark/classic palette. Using
+  // per site theme still leaves diagrams looking like a generic mermaid
+  // dark theme bolted onto the page, not this site's own
+  // green-terminal/dark/classic palette. Using
   // `theme: "base"` + explicit `themeVariables` instead pulls the SAME
   // CSS custom properties every other themed element on the page already
   // uses, read live via getComputedStyle -- one source of truth (the

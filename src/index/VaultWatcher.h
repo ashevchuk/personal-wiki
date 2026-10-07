@@ -53,8 +53,7 @@ class VaultWatcher {
   // file changed in the gap between the thread merely existing and it
   // actually having called inotify_add_watch() on the relevant directory
   // is invisible forever, since the kernel never queues an event for a
-  // watch that wasn't registered yet — a real race, not a hypothetical
-  // one; caught by VaultWatcherTest.) No-op if already running.
+  // watch that wasn't registered yet.) No-op if already running.
   void start();
 
   // Stops the background thread and joins it. Safe to call from the

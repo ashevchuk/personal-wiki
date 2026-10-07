@@ -1,9 +1,4 @@
 // wiki-server — HTTP entrypoint (Drogon).
-//
-// Milestone 1: auth (argon2id + SQLite sessions), CSRF, PathGuard-backed
-// read of one vault document with public/private gating. Full CRUD,
-// search, and navigation land M2/M3; see
-// /home/slayer/.claude/plans/zazzy-twirling-sundae.md.
 
 #include "auth/AdminAccount.h"
 #include "auth/AuthFilter.h"
@@ -352,8 +347,8 @@ int main(int argc, char** argv) {
   // Same embeddingProvider instance as the main indexUpdater above —
   // this IndexUpdater's own mutex_ member coordinates its EmbeddingIndexer
   // calls (same one guarding its document/FTS transactions — see that
-  // member's own comment for why a formerly-separate embedding mutex was
-  // a real bug) against ITS OWN connection (watcherDb), the identical
+  // member's own comment for why a separate embedding mutex is wrong)
+  // against ITS OWN connection (watcherDb), the identical
   // pattern already relied on for documents/FTS: distinct
   // sqlite3* connections to the same WAL-mode file coordinate correctly
   // at the file level (see the comment block above); a mutex only ever
@@ -387,10 +382,7 @@ int main(int argc, char** argv) {
   // without these lines the linker drops them silently and every route
   // that lists them fails at startup with "middleware ... not found" (a
   // log line, not a build error). See drogonframework/drogon#1268 and
-  // docs/architecture.md. (There used to be a matching pair of these for
-  // EditPage/SearchPage CSP views — removed along with the views
-  // themselves when the frontend moved to a JSON API + static SPA shell;
-  // see PageRoutes.cpp.)
+  // docs/architecture.md.
   (void)wikicore::auth::AuthFilter::classTypeName();
   (void)wikicore::auth::CsrfFilter::classTypeName();
 
@@ -435,32 +427,20 @@ int main(int argc, char** argv) {
   // markdown bodies can legitimately link to any external image.
   // frame-src also needs 'self': ```circuit fenced blocks
   // (util/MarkdownRenderer.cpp's substituteCircuitBlocks) render as a
-  // SAME-origin iframe into the vendored static/js/circuitjs1/ app —
-  // found live the first time a circuit block was actually viewed: with
-  // only `frame-src https://www.youtube.com`, the browser silently
-  // refused to even issue the request for that iframe's own src (no
-  // network entry at all, not a 403/404 — CSP blocks a disallowed frame
-  // before any request is dispatched), rendering as Chrome's generic
-  // broken-frame icon with zero console error pointing at CSP as the
-  // cause.
+  // SAME-origin iframe into the vendored static/js/circuitjs1/ app.
+  // Without it, the browser silently refuses to even issue the request
+  // for that iframe's own src (no network entry at all, not a
+  // 403/404 — CSP blocks a disallowed frame before any request is
+  // dispatched), rendering as Chrome's generic broken-frame icon with
+  // zero console error pointing at CSP as the cause.
   //
-  // style-src/font-src need no external allowlist at all: green.css's
-  // own 'Ubuntu Sans Mono' face (the SHIPPED DEFAULT THEME, not an
-  // opt-in one) used to be a live `@import url('https://fonts
-  // .googleapis.com/...')`, which is WHY this CSP once carried explicit
-  // fonts.googleapis.com/fonts.gstatic.com exceptions here (missing on
-  // the first version of this CSP, a plain `style-src 'self'
-  // 'unsafe-inline'` silently blocked that @import with no network
-  // request even attempted — a CSP silently degrading a font is a
-  // rendering regression a human has to catch by eye, not a
-  // wrong-status-code one any test would flag). Now vendored instead
-  // (static/fonts/ubuntu-sans-mono/, see its own VENDORED.md) — same
-  // reasoning as every other frontend bundle in this app (Toast UI
-  // Editor, mermaid, Prism, circuitjs1): this was the one remaining
-  // live external network dependency anywhere in the frontend, serving
-  // every visitor's IP to Google on every green-theme page view
-  // (private documents included) for a project that otherwise builds
-  // and runs with zero network access beyond vcpkg.
+  // style-src/font-src need no external allowlist at all: all frontend
+  // fonts, including green.css's 'Ubuntu Sans Mono' (the shipped default
+  // theme), are vendored locally (static/fonts/ubuntu-sans-mono/, see
+  // its own VENDORED.md) — same reasoning as every other frontend bundle
+  // in this app (Toast UI Editor, mermaid, Prism, circuitjs1): zero
+  // network access beyond vcpkg, and no visitor IP handed to a third
+  // party on page load.
   static const std::string kCsp =
       "default-src 'self'; "
       "script-src 'self' 'unsafe-inline'; "
@@ -518,11 +498,10 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerPageRoutes(drogon::app(), cfg);
 
   // A path that matches NEITHER a registered route NOR a real static
-  // file (e.g. a typo'd URL, or the OLD pre-fix shape of a [[wiki-link]]
-  // href — see WikiLinks.cpp's own commit history) used to fall through
-  // to Drogon's own bare default 404 page, which is where "drogon/1.9.13"
-  // was actually leaking from — not the Server header alone, the BODY of
-  // that stock error page names it too. Serving the exact same shell body
+  // file (e.g. a typo'd URL, or a malformed [[wiki-link]] href) must not
+  // fall through to Drogon's own bare default 404 page: that stock error
+  // page's BODY names "drogon/1.9.13" too, not just the Server header
+  // enableServerHeader(false) above suppresses. Serving the exact same shell body
   // every registered page route gets (shellResponse(), NOT a fresh
   // newFileResponse() — this is the one case base_path injection actually
   // matters for, see AppConfig.h), with a real 404 STATUS CODE preserved
@@ -544,19 +523,18 @@ int main(int argc, char** argv) {
   // sees them — independent of AttachmentService's own storage. Left at
   // its default, this collides with the deployed systemd unit's hardening
   // (`ProtectSystem=strict` + `ReadWritePaths=/opt/wiki/vault_data` only):
-  // caught live on first real-hardware deployment (armv7, see
-  // docs/deployment.md) as a spray of "Read-only file system" errors at
-  // startup, harmless for small JSON requests but fatal for actual file
-  // uploads. Point it at a dot-prefixed directory INSIDE the vault (like
+  // a spray of "Read-only file system" errors at startup, harmless for
+  // small JSON requests but fatal for actual file uploads (see
+  // docs/deployment.md). Point it at a dot-prefixed directory INSIDE the vault (like
   // `.trash`), so it's covered by the SAME ReadWritePaths=/opt/wiki/vault_data
   // entry the systemd unit already grants, and IndexBuilder's existing
   // "skip .git/.trash/anything-dot entirely" rule (see IndexBuilder.cpp)
   // keeps these transient buffer files from ever being seen as documents
   // by fullRescan or VaultWatcher. MUST be absolute: Drogon resolves a
   // relative setUploadPath() against its document root ("static/"), not
-  // the process CWD — a relative path here silently landed under
-  // static/./vault_data/... instead, caught live on real-hardware
-  // redeploy when the "fixed" path still hit ProtectSystem=strict.
+  // the process CWD — a relative path here silently lands under
+  // static/./vault_data/... instead, which still hits
+  // ProtectSystem=strict on a real deployment.
   {
     const auto uploadPath =
         std::filesystem::absolute(std::filesystem::path(cfg.vaultPath) / ".uploads-tmp");

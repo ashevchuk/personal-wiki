@@ -37,8 +37,7 @@ struct DocumentIndexEntry {
 // Keeps the SQLite index in sync with one document at a time, as it's
 // saved/deleted through the Web UI (DocumentService calls this after every
 // write). This is deliberately NOT the full-vault rescan (that's
-// IndexBuilder, Milestone 3) — it only ever touches the one row it's told
-// about.
+// IndexBuilder) — it only ever touches the one row it's told about.
 class IndexUpdater {
  public:
   // provider: optional (nullptr = no embedding computed on write — matches
@@ -83,10 +82,10 @@ class IndexUpdater {
   // rowid_id. The documents/FTS/tags write is a single transaction and
   // has finished before this returns. Embedding inference (multi-vector
   // chunks, slow on ARM) is queued on a background worker so a Web UI
-  // Save is not held open for N×1.3–2.6s — found live: nginx returned
-  // 504 Gateway Time-out on a long-document save while this still ran
-  // inline. Call flushEmbeddings() only when the caller actually needs
-  // vectors to exist before continuing (`--reindex`, tests).
+  // Save is not held open for N×1.3–2.6s (long enough to trip nginx's
+  // own 504 Gateway Time-out if run inline on a long-document save).
+  // Call flushEmbeddings() only when the caller actually needs vectors
+  // to exist before continuing (`--reindex`, tests).
   int64_t upsertOne(const DocumentIndexEntry& entry);
 
   // Blocks until every queued background embedding job has finished
@@ -178,13 +177,12 @@ class IndexUpdater {
   // serialized threading mode makes each INDIVIDUAL C API call thread-
   // safe, but does NOT make a multi-statement application-level
   // transaction atomic against another thread's calls interleaving on
-  // that same connection between BEGIN and COMMIT — confirmed live by
-  // tests/integration/stress_concurrency.py's same-document-path check,
-  // which reproduced exactly this as a real 500
+  // that same connection between BEGIN and COMMIT —
+  // tests/integration/stress_concurrency.py's same-document-path check
+  // reproduces this under concurrent writes as a 500
   // ({"error":"statement failed: not an error"} — SQLite's error text at
   // the point our code reads it, already stomped by another thread's
-  // subsequent call on the shared connection) under concurrent writes,
-  // not a hypothetical.
+  // subsequent call on the shared connection).
   //
   // An EARLIER version of this class used a SEPARATE embeddingMutex_ for
   // the embedding step's own transactions, reasoning that provider_->

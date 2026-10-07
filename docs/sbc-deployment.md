@@ -3,16 +3,15 @@
 Everything needed to get `wiki-server`/`wiki-mcp` running on a real single-board
 computer (Raspberry Pi or similar ARM/x86_64 SBC), start to finish, in one place. This
 is the practical runbook; `docs/deployment.md` and `docs/architecture.md` carry the
-broader design rationale and history — this file exists so a deployment doesn't require
-reading either of them first. What it does NOT cover: actually connecting an MCP client
-to `wiki-mcp` once it's built and installed (tool schemas, `claude_desktop_config.json`,
-the remote HTTP transport) — that's `docs/mcp.md`, a genuinely separate concern from
-getting the binary onto the device in the first place.
+broader design rationale — this file exists so a deployment doesn't require reading
+either of them first. What it does NOT cover: connecting an MCP client to `wiki-mcp`
+once it's built and installed (tool schemas, `claude_desktop_config.json`, the remote
+HTTP transport) — that's `docs/mcp.md`.
 
-See `docs/deployment.md`'s "Real-hardware verification status" for exactly what has and
-hasn't been verified live: cross-compiled binaries have been deployed to and verified
-running natively on a real armv7 (Debian 9 stretch) target; a full native build
-compiled on-device has not been done.
+See `docs/deployment.md`'s "Real-hardware verification status" for exactly what has
+and hasn't been verified live: cross-compiled binaries have been deployed to and
+verified running natively on a real armv7 (Debian 9 stretch) target; a full native
+build compiled on-device has not been done.
 
 ## Three ways to get this running on the device
 
@@ -74,7 +73,7 @@ image.
 ### Toolchain setup (one-time, on the dev machine)
 
 Install [zig](https://ziglang.org/) (any recent 0.16.x release works; the exact
-`code=139` linker bug below has only been confirmed against 0.16.0, but the fix applies
+`code=139` linker bug below is confirmed against 0.16.0, but the fix applies
 regardless). The repo already ships the cross-compilation scaffolding under `cross/`:
 
 - `cross/arm-musl/{cc,c++,ar,ranlib}` — thin wrapper scripts pinning the target
@@ -147,14 +146,14 @@ Only after both of those pass cleanly should the binaries get copied to the targ
 ### Known issues hit during cross-compilation (and their fixes)
 
 - **zig 0.16.0's bundled lld SIGSEGVs (`code=139`) when statically linking many `.a`
-  archives for `arm-linux-musleabihf`.** Root cause, found by bisecting a manually
-  reproduced link command flag-by-flag: NOT archive count, NOT parallelism (both tested
-  and ruled out) — it's `-Xlinker --dependency-file=...`, which CMake's Ninja generator
-  (≥3.20) adds automatically for linker-level dependency tracking. That one flag
-  crashes lld for this target 100% of the time, deterministically. Fix (already applied
-  in `cross/arm-musl/toolchain.cmake`): `set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)` — CMake
-  falls back to non-linker-based dependency tracking with no other effect.
-- **Linking a small executable against a single `.a` also crashed the same way** for
+  archives for `arm-linux-musleabihf`.** Root cause: not archive count, not
+  parallelism — the specific flag `-Xlinker --dependency-file=...`, which CMake's
+  Ninja generator (≥3.20) adds automatically for linker-level dependency tracking.
+  That flag crashes lld for this target 100% of the time, deterministically. Fix
+  (already applied in `cross/arm-musl/toolchain.cmake`):
+  `set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)` — CMake falls back to non-linker-based
+  dependency tracking with no other effect.
+- **Linking a small executable against a single `.a` also crashes the same way** for
   brotli's CLI tool and libuuid's `test_uuid` — same underlying lld bug, different
   trigger shape. Fixed via the two overlay ports under `cross/overlay-ports/`, which
   skip building those specific executables (neither is actually needed — only the
@@ -215,11 +214,10 @@ sudo -u wiki ./bin/wiki-server --create-admin
 ```
 
 This prompts for a username and password interactively (echo disabled, nothing gets
-logged). **Actually save the password somewhere before closing the terminal** — running
-this again overwrites the same single admin row, which is the only recovery path if the
-password gets lost, but it also means there's no "show me the current password" escape
-hatch; losing it silently locks the account out until someone reruns this exact
-command.
+logged). Save the password before closing the terminal — running this again overwrites
+the same single admin row, which is the only recovery path if the password is lost,
+but there is no "show me the current password" escape hatch; losing it locks the
+account out until this exact command is rerun.
 
 ## systemd
 
@@ -240,18 +238,14 @@ PrivateTmp=yes
 ReadWritePaths=/opt/wiki/vault_data
 ```
 
-`ReadWritePaths=/opt/wiki/vault_data` is the ONLY path the service can write to —
-everything else under `ProtectSystem=strict` is read-only to it. This already accounts
-for Drogon's own internal upload-buffering directory (used to stage large multipart
+`ReadWritePaths=/opt/wiki/vault_data` is the only path the service can write to —
+everything else under `ProtectSystem=strict` is read-only to it. This already covers
+Drogon's own internal upload-buffering directory (used to stage large multipart
 request bodies to disk, independent of the app's own attachment storage): it's pointed
-at `<vault_path>/.uploads-tmp` (an absolute path, computed at startup), which is
-covered by the same `ReadWritePaths` entry and skipped by `IndexBuilder`'s existing
-"skip `.git`/`.trash`/anything-dot" rule, so it's never mistaken for a document. This
-was a real bug caught live on the first real-hardware deploy — the app used to default
-to a relative `./uploads` path that Drogon resolved against its document root
-(`static/`), landing outside `ReadWritePaths` and spamming
-`Error 30 creating path ...: Read-only file system` at startup. It's fixed in the code
-now; nothing to configure manually for this.
+at `<vault_path>/.uploads-tmp` (an absolute path, computed at startup), which falls
+under the same `ReadWritePaths` entry and is skipped by `IndexBuilder`'s existing
+"skip `.git`/`.trash`/anything-dot" rule, so it's never mistaken for a document.
+Nothing to configure manually for this.
 
 `EnvironmentFile=-/etc/opt/wiki/wiki.env` is optional (note the leading `-`) —
 the file is allowed to simply not exist. The runtime secret readers are
@@ -311,19 +305,18 @@ location /wiki/ {
 }
 ```
 
-No `sub_filter`, no `proxy_redirect`, no response-rewriting of any kind needed on the
-nginx side — that whole class of hack was only ever necessary back when the backend
-still templated pages server-side; the current client-rendered shell removes the need
-for all of it permanently, regardless of whether `base_path` below is set.
+No `sub_filter`, `proxy_redirect`, or response-rewriting of any kind is needed on the
+nginx side — that whole class of workaround only applied when the backend templated
+pages server-side; the current client-rendered shell has no use for it, regardless of
+whether `base_path` below is set.
 
 **One gap this inference can never close by pattern-matching alone**: a path matching
-NO known route (a typo, a stale `[[wiki-link]]`) on a browser with nothing yet cached
+no known route (a typo, a stale `[[wiki-link]]`) on a browser with nothing yet cached
 in `localStorage` either — no signal survives client-side for that exact combination.
 The `localStorage`-cached last-known-good prefix (`wiki.lastKnownBasePath`) covers the
 realistic case (a broken link clicked from an already-loaded page) completely, but a
 genuinely cold start — landing directly on a stale link, nothing cached yet — still
-degrades to an unstyled (never crashing) page. Caught live: a real user's first-ever
-visit to a real deployment landed exactly there.
+degrades to an unstyled (never crashing) page.
 
 **`[server].base_path = "/wiki"` in `config.toml` closes this completely, optionally**
 (restart the service after setting it) — `PageRoutes.cpp` then bakes that prefix into
@@ -347,12 +340,12 @@ very large vault, nothing more). Minimum viable backup: the vault directory, reg
   alive, which is exactly the case a dead SD card is not.
 - **Automated, unattended**: an opt-in `systemd` timer
   (`share/wiki/systemd/wiki-backup.{service,timer}`, installed the same way `wiki.service`
-  itself was above — NOT enabled by a plain `cmake --install`). Tars `VAULT_PATH`
+  itself was above — not enabled by a plain `cmake --install`). Tars `VAULT_PATH`
   straight off disk, independent of `wiki-server` entirely — keeps working whether the
-  service is healthy, crashed, or mid-restart. Point its `BACKUP_DIR` at a DIFFERENT
+  service is healthy, crashed, or mid-restart. Point its `BACKUP_DIR` at a different
   disk/mount than the SD card the vault itself lives on (a USB drive, a network share,
   another machine over sshfs/NFS) — a backup on the same card it's meant to protect
-  against doesn't survive that card dying, which is the actual disaster this exists for.
+  against doesn't survive that card dying.
 
 ## Update
 
@@ -392,8 +385,7 @@ For a cross-compiled deployment, "install" means: rebuild `build-arm`, re-verify
   almost certainly the `-Xlinker --dependency-file=...` / `CMAKE_LINK_DEPENDS_USE_LINKER`
   issue if the toolchain file has drifted from `cross/arm-musl/toolchain.cmake`.
 - **Locked out of the admin account** — there is no "recover the password" path by
-  design (only an argon2id hash is stored). Stop the service, re-run
+  design (only an argon2id hash is stored). Stop the service first, then re-run
   `sudo -u wiki ./bin/wiki-server --create-admin` on the target (overwrites the single
-  admin row), start the service back up. Stopping first is what's actually been
-  verified to work cleanly; running `--create-admin` concurrently against a live
-  service's SQLite connection hasn't been tested and isn't a claim made here.
+  admin row), and start the service back up. Running `--create-admin` concurrently
+  against a live service's SQLite connection is unsupported.

@@ -259,10 +259,11 @@
 
       for (i = 0; i < n; i++) {
         var p = bodies[i];
-        // Isolates used to share the same pull as a linked cluster, so
-        // a vault of mostly-unlinked notes collapsed into one unreadable
-        // pile on top of the real structure. A much weaker pull leaves
-        // them near the starting circle (the periphery) instead.
+        // Isolates must NOT share the same pull as a linked cluster:
+        // that would collapse a vault of mostly-unlinked notes into one
+        // unreadable pile on top of the real structure. A much weaker
+        // pull leaves them near the starting circle (the periphery)
+        // instead.
         var pull = (degree[p.path] || 0) === 0 ? CENTER_PULL * 0.12 : CENTER_PULL;
         p.vx += (midX - p.x) * pull;
         p.vy += (midY - p.y) * pull;

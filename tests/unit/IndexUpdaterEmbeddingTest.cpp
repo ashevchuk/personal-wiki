@@ -201,9 +201,8 @@ TEST_CASE("IndexUpdater::upsertOne skips a real embed() call when content is "
 TEST_CASE("IndexUpdater::upsertOne never calls embed() at all for a "
           "too-short document, and doesn't flag it as needing attention",
           "[IndexUpdater][EmbeddingIndexer][real-model]") {
-  // Real bug, found live from a user report on real production content: a
-  // near-empty document (title plus just an image link, no real prose)
-  // produced a vector whose semantic signal was too weak to reliably land
+  // A near-empty document (title plus just an image link, no real prose)
+  // produces a vector whose semantic signal is too weak to reliably land
   // far from unrelated queries — no distance threshold alone fixes a
   // document whose OWN vector doesn't carry a strong enough signal. See
   // docs/embeddings.md's "A real relevance bug" for the measured numbers.
@@ -280,18 +279,16 @@ TEST_CASE("IndexUpdater::upsertOne: a too-short document processed BEFORE "
           "any real embed doesn't lose its recorded state once a real "
           "embed happens afterward",
           "[IndexUpdater][EmbeddingIndexer][real-model]") {
-  // Real bug, found live wiring up the too-short-document skip itself (a
-  // genuine "the fix had a bug" moment, caught before shipping, not a
-  // hypothetical): the skip path originally recorded success WITHOUT
-  // calling EmbeddingIndexer::ensureTable() first. If a too-short
-  // document is the FIRST one ever processed, index_meta's dimensions/
-  // model are still completely unset at that point. The next REAL
+  // The skip path for too-short documents must call
+  // EmbeddingIndexer::ensureTable() too, even though it never embeds
+  // (cheap — a no-op once already matching). If a too-short document is
+  // the FIRST one ever processed and the skip path omits that call,
+  // index_meta's dimensions/model stay completely unset. The next REAL
   // document's own ensureTable() call then sees "no recorded dimensions"
   // as a model MISMATCH — the exact same signal a genuine model swap
   // gives — and wipes the ENTIRE document_embedding_state table as a
   // side effect of establishing the schema, silently erasing the
-  // too-short document's just-recorded row. Fixed by having the skip
-  // path call ensureTable() too (cheap — a no-op once already matching).
+  // too-short document's just-recorded row.
   TempDb env;
   LocalEmbeddingProvider provider(WIKI_TEST_EMBEDDING_MODEL_PATH);
   IndexUpdater indexUpdater(env.db(), &provider);
@@ -301,7 +298,8 @@ TEST_CASE("IndexUpdater::upsertOne: a too-short document processed BEFORE "
       indexUpdater.upsertOne(makeEntry("welcome.md", "Welcome", "Hi there."));
 
   // A real, normal-length document SECOND — this is the one whose own
-  // ensureTable() call used to wipe the row just written above.
+  // ensureTable() call would wipe the row just written above if the skip
+  // path above had omitted its own ensureTable() call.
   indexUpdater.upsertOne(makeEntry(
       "notes/real.md", "Real Document", "This document has plenty of real content to embed."));
   indexUpdater.flushEmbeddings();

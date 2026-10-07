@@ -1,6 +1,5 @@
 // Login page — renders into #app-content, posts to /api/login (JSON),
-// and does the "already logged in" redirect that used to be a
-// server-side check in the old HTML-returning /login GET handler.
+// and does the "already logged in" redirect client-side.
 window.WikiPages = window.WikiPages || {};
 
 (function () {

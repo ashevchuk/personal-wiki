@@ -13,9 +13,9 @@ window.WikiPages = window.WikiPages || {};
   var escapeHtml = WikiCommon.escapeHtml;
   var markSnippet = WikiCommon.markSnippet;
 
-  // Checkbox-list dropdown replacing what used to be a free-text
-  // <input name="tag">/<input name="type"> — the user had to already
-  // know exact tag/type spelling and type it by hand, with zero
+  // Checkbox-list dropdown, not a free-text <input name="tag">/
+  // <input name="type"> — a free-text field would require the user to
+  // already know exact tag/type spelling and type it by hand, with zero
   // discoverability of what actually exists in the vault. Options come
   // from /api/nav/tags and /api/nav/types (both already visibility-gated
   // server-side, same as the sidebar's tag cloud), so this can never

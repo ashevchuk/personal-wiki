@@ -13,24 +13,19 @@ struct AppConfig {
   uint16_t port = 8080;
   size_t threads = 2;
   // Reverse-proxying under a subpath (e.g. "/wiki") needs NO server-side
-  // configuration for the common case — there used to be a base_path
-  // setting here for exactly that, removed once the frontend became a
-  // fully client-rendered SPA shell + JSON API (see docs/architecture.md):
-  // shell.html's own inline bootstrap script infers the mount prefix from
-  // location.pathname at load time for every KNOWN route (/d/..., /search,
-  // ...), correct automatically with nothing server-side needing to know
-  // or care.
+  // configuration for the common case: shell.html's own inline bootstrap
+  // script infers the mount prefix from location.pathname at load time
+  // for every KNOWN route (/d/..., /search, ...), correct automatically
+  // with nothing server-side needing to know or care.
   //
-  // Brought back here, OPTIONAL, empty by default, after a real deployment
-  // hit the one case that client-side pattern-matching cannot ever close:
-  // a request whose path matches NO known route (a typo, a stale
-  // [[wiki-link]], someone's old bookmark) served by main.cpp's
-  // setDefaultHandler, on a browser with nothing yet cached in
-  // localStorage — no page load has happened yet to record a known-good
-  // prefix, so there is no signal left ANYWHERE client-side to recover
-  // it from; the earlier "cache the last known-good prefix" fallback
-  // degrades gracefully but stays visibly broken on that first hit.
-  // Setting this closes that gap completely: PageRoutes.cpp bakes it into
+  // OPTIONAL, empty by default. Covers the one case client-side
+  // pattern-matching cannot ever close: a request whose path matches NO
+  // known route (a typo, a stale [[wiki-link]], someone's old bookmark)
+  // served by main.cpp's setDefaultHandler, on a browser with nothing
+  // yet cached in localStorage — no page load has happened yet to
+  // record a known-good prefix, so there is no signal left ANYWHERE
+  // client-side to recover it from. Setting this closes that gap
+  // completely: PageRoutes.cpp bakes it into
   // EVERY served shell.html as an authoritative
   // `window.__WIKI_KNOWN_BASE_PATH__`, which the bootstrap script uses
   // instead of guessing, matched route or not. Leave unset for a
@@ -139,17 +134,17 @@ struct AppConfig {
   // relevance floor — on a small vault (the common case for this
   // project), that's effectively the WHOLE vault, ranked by a distance
   // that's often just noise for a genuinely unrelated document, and RRF
-  // then gives every one of them a nonzero score. Found live on real
-  // production content: a plain one-word query returned most of an
-  // unrelated vault (recipes, a welcome page, empty demo docs) alongside
-  // the few actually-relevant results. Default chosen empirically against
+  // then gives every one of them a nonzero score — a plain one-word
+  // query would return most of an unrelated vault (recipes, a welcome
+  // page, empty demo docs) alongside the few actually-relevant results.
+  // Default chosen empirically against
   // real bge-small-en-v1.5 measurements — see docs/embeddings.md — not
   // guessed; tune per-model if a different one is configured.
   double embeddingsMaxDistance = 0.5;
   // Local/cloud — a document whose title+body combined has FEWER
   // whitespace-separated words than this never gets a real embed() call
-  // at all (IndexUpdater::upsertOne()) — found live: a near-empty
-  // document (a title plus just an image link, no real prose) produces a
+  // at all (IndexUpdater::upsertOne()). A near-empty document (a title
+  // plus just an image link, no real prose) produces a
   // vector whose semantic signal is too weak to reliably land far from
   // queries it has nothing to do with, and no distance threshold alone
   // fixes a document whose OWN vector doesn't carry a strong enough
@@ -159,11 +154,10 @@ struct AppConfig {
   int embeddingsMinContentWords = 6;
   // Local/cloud — a hard cap on how many of the nearest neighbors are
   // even allowed into the semantic candidate list RRF blends with BM25,
-  // on TOP of the distance cutoff above, not instead of it. Found live
-  // re-checking the distance-cutoff fix against more real production
-  // queries: a multi-word query's embedding can sit at a uniformly
-  // "blurry" distance from MANY unrelated documents at once on a small
-  // vault, each individually still under embeddingsMaxDistance — RRF has
+  // on TOP of the distance cutoff above, not instead of it. A
+  // multi-word query's embedding can sit at a uniformly "blurry"
+  // distance from MANY unrelated documents at once on a small vault,
+  // each individually still under embeddingsMaxDistance — RRF has
   // no way to reject a candidate once it's in the ranked list, only rank
   // it (see FtsSearch.h's own comment), so a threshold alone can't bound
   // how many mediocre matches flood in for that kind of query. Default
