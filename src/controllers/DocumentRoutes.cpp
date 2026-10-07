@@ -514,7 +514,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
           callback(notFound());
           return;
         }
-        if (!std::filesystem::exists(fullPath)) {
+        if (!std::filesystem::exists(fullPath) || std::filesystem::is_directory(fullPath)) {
           callback(notFound());
           return;
         }

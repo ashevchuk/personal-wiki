@@ -411,13 +411,11 @@ def run_checks(sandbox, vault):
     check("document still in place after rejected move", status == 200, f"got {status}")
 
     # --- 6a2. /api/documents/{path}/raw (literal on-disk bytes) -----------
-    # This route sat behind a general "^/api/documents/(.*)$" handler
-    # registered earlier in DocumentRoutes.cpp -- Drogon matches regex
-    # handlers in registration order, and the general handler's own
-    # "(.*)" greedily swallowed a trailing "/raw" as part of its own
-    # docPath, so this route was 100% unreachable until the ordering was
-    # fixed. Real bug, not hypothetical -- caught building the document
-    # view page's "Download" button, this route's first real caller.
+    # This route must be registered BEFORE the general
+    # "^/api/documents/(.*)$" handler in DocumentRoutes.cpp -- Drogon
+    # matches regex handlers in registration order, and the general
+    # handler's own "(.*)" would otherwise greedily swallow a trailing
+    # "/raw" as part of its own docPath, making this route unreachable.
     status, _, body = anon.get("/api/documents/notes/public.md/raw")
     text = body.decode("utf-8")
     check("anon raw: public doc returns literal file bytes (front-matter + body), not JSON",
@@ -775,6 +773,18 @@ def run_checks(sandbox, vault):
     check("admin can fetch attachment of private doc", status == 200, f"got {status}")
     status, _, _ = anon.get(f"/assets/{attach_path}")
     check("anon CANNOT fetch attachment of private doc", status == 404, f"got {status}")
+
+    # Requesting the .assets DIRECTORY itself (not a file inside it) must
+    # 404, not crash the server — newFileResponse()/sendfile() on a
+    # directory fd is a Drogon FATAL, not a normal error path. The
+    # trailing slash is what makes owningDocumentFor() match the
+    # directory's own name as if it were an asset path.
+    assets_dir = attach_path.rsplit("/", 1)[0]
+    status, _, _ = admin.get(f"/assets/{assets_dir}/")
+    check("fetching the .assets directory itself -> 404, not a crash",
+          status == 404, f"got {status}")
+    status, _, _ = admin.get("/healthz")
+    check("server still alive after directory-as-file request", status == 200, f"got {status}")
 
     status, _, body = admin.get_json("/api/attachments/notes/private.md")
     listed = [f["path"] for f in (body or {}).get("files", [])] if isinstance(body, dict) else []
