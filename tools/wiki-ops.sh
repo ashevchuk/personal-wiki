@@ -663,9 +663,17 @@ cmd_deploy() {
   case "$WIKI_DEPLOY_VARIANT" in
     native|cross|cross-container) ;;
     container|container-arm)
+      # Docker owns this process's lifecycle (docker-compose.yml's own
+      # restart: unless-stopped) — there is no $install_root/share/wiki/
+      # systemd/wiki.service staged anywhere for this variant (only
+      # native/cross/cross-container's cmake --install / stage_bare_binary_tree
+      # produce that tree). Calling cmd_systemd_install here would `cp` a
+      # path that was never created. --with-backup-timer isn't wired up
+      # for this path either — wiki-backup.sh runs INSIDE a binary
+      # install's bin/, never copied into the container image at all.
       resolve_optional WIKI_DEPLOY_PORT "$port_flag" "${WIKI_DEPLOY_PORT:-}" "" "Host-side port (blank = compose default, 8080)"
+      [ "$with_backup_timer" = 1 ] && log "--with-backup-timer has no effect for '$WIKI_DEPLOY_VARIANT' — not wired up for container deploys yet, see docs/wiki-ops.md"
       cmd_deploy_container "$WIKI_DEPLOY_VARIANT" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_PORT"
-      cmd_systemd_install "$with_backup_timer" "$WIKI_DEPLOY_INSTALL_ROOT"
       return
       ;;
     *) die "deploy: unknown variant '$WIKI_DEPLOY_VARIANT'" ;;
