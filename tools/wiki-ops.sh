@@ -423,7 +423,7 @@ cmd_build_container_native() {
 # ============================================================
 
 cmd_verify_cross() {
-  local build_dir=$1 qemu_cpu=$2
+  local build_dir=$1 qemu_cpu=$2 skip_admin_smoke=$3
   command -v qemu-arm-static >/dev/null 2>&1 || die "qemu-arm-static not found — install qemu-user-static"
   local unit_tests_bin="$build_dir/tests/unit_tests"
   [ -x "$unit_tests_bin" ] || unit_tests_bin="$build_dir/unit_tests"
@@ -446,20 +446,28 @@ cmd_verify_cross() {
 
   log "running unit_tests under qemu-arm-static — must report all cases passed, not just exit 0"
   qemu-arm-static "${qemu_cpu_args[@]}" "$unit_tests_bin"
-  log "running wiki-server --create-admin under qemu-arm-static as a real smoke test"
-  qemu-arm-static "${qemu_cpu_args[@]}" "$build_dir/wiki-server" --create-admin
+  if [ "$skip_admin_smoke" = 1 ]; then
+    log "skipping --create-admin smoke test — needs a real interactive TTY (password echo disabled), which 'update' never has"
+  else
+    log "running wiki-server --create-admin under qemu-arm-static as a real smoke test"
+    qemu-arm-static "${qemu_cpu_args[@]}" "$build_dir/wiki-server" --create-admin
+  fi
 }
 
 cmd_verify_container_native() {
-  local build_dir=$1
+  local build_dir=$1 skip_admin_smoke=$2
   [ -x "$build_dir/bin/wiki-server" ] || die "no wiki-server binary found under $build_dir/bin — run 'build container-native' first"
   # No qemu here — this is a native-architecture binary (unless --platform
   # was used to cross-build it with buildx, in which case it won't even
   # execute on this host at all; that combination has no local smoke test
   # available, only the full ctest run that already happened INSIDE the
   # docker build itself).
-  log "running wiki-server --create-admin directly (native binary, no emulation) as a real smoke test"
-  "$build_dir/bin/wiki-server" --create-admin
+  if [ "$skip_admin_smoke" = 1 ]; then
+    log "skipping --create-admin smoke test — needs a real interactive TTY (password echo disabled), which 'update' never has"
+  else
+    log "running wiki-server --create-admin directly (native binary, no emulation) as a real smoke test"
+    "$build_dir/bin/wiki-server" --create-admin
+  fi
 }
 
 cmd_verify_container() {
@@ -860,6 +868,7 @@ cmd_deploy_container() {
 
 cmd_deploy() {
   local flag_target=$1 flag_variant=$2 first_time=$3 with_backup_timer=$4 static_only=$5 skip_verify=$6 qemu_cpu=$7 port_flag=$8 triplet_flag=$9
+  local skip_admin_smoke=${10:-0}
 
   resolve_optional WIKI_DEPLOY_HOST "$flag_target" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
   resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm|container-native)"
@@ -904,8 +913,8 @@ cmd_deploy() {
 
   if [ "$skip_verify" != 1 ]; then
     case "$verify_kind" in
-      cross) cmd_verify_cross "$build_dir" "$qemu_cpu" ;;
-      container-native) cmd_verify_container_native "$build_dir" ;;
+      cross) cmd_verify_cross "$build_dir" "$qemu_cpu" "$skip_admin_smoke" ;;
+      container-native) cmd_verify_container_native "$build_dir" "$skip_admin_smoke" ;;
     esac
   fi
 
@@ -1052,7 +1061,11 @@ cmd_update() {
     cmd_static_redeploy "${WIKI_DEPLOY_INSTALL_ROOT:-/opt/wiki}" "$variant"
   else
     dispatch_build "$variant"
-    cmd_deploy "$target" "$variant" 0 "$with_backup_timer" 0 "$skip_verify" "$qemu_cpu" "$port" "$triplet"
+    # Final 1: skip the --create-admin smoke test specifically — it needs a
+    # real interactive TTY (password echo disabled), which update never has.
+    # The rest of verify (unit_tests under qemu, or the ctest run already
+    # inside container-native's own docker build) still runs normally.
+    cmd_deploy "$target" "$variant" 0 "$with_backup_timer" 0 "$skip_verify" "$qemu_cpu" "$port" "$triplet" 1
   fi
 }
 
@@ -1091,11 +1104,11 @@ main() {
       [ $# -gt 0 ] && shift
       parse_flags "$@"
       case "$sub" in
-        cross) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "")" "$FLAG_QEMU_CPU" ;;
-        cross-container) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "-container")" "$FLAG_QEMU_CPU" ;;
+        cross) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "")" "$FLAG_QEMU_CPU" 0 ;;
+        cross-container) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "-container")" "$FLAG_QEMU_CPU" 0 ;;
         container) cmd_verify_container ;;
         container-arm) cmd_verify_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" ;;
-        container-native) cmd_verify_container_native build-container-native ;;
+        container-native) cmd_verify_container_native build-container-native 0 ;;
         *) die "verify: variant must be one of cross|cross-container|container|container-arm|container-native" ;;
       esac
       ;;
