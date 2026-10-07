@@ -4,7 +4,8 @@ A personal knowledge base that's just markdown files on disk — full-text searc
 clean WYSIWYG/markdown editor, public/private visibility per document, and an MCP
 server so Claude (or any MCP client) can search, read, and — if you let it — write
 your notes directly. One C++ binary, no database server, no runtime dependency beyond
-what ships with it. Built to run comfortably on a Raspberry Pi.
+what ships with it. Built to run comfortably on a Raspberry Pi or similar ARM/x86_64
+SBC.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
@@ -128,8 +129,8 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   UI, and a classic MediaWiki-style light theme — picked from a small icon in the
   sidebar, remembered per browser. Each is a fully independent CSS file, not a shared
   palette with variables swapped underneath.
-- **Built for a Raspberry Pi.** One static, cross-compiled binary — verified running
-  natively on real armv7 hardware, not just in theory.
+- **Built for ARM SBCs.** One static, cross-compiled binary — verified running
+  natively on real armv7 (Raspberry Pi-class) hardware, not just in theory.
 
 ## Quick start
 
@@ -168,7 +169,8 @@ conflicting source of truth for a value SQLite already owns).
 
 Deploying somewhere real (systemd unit, reverse proxy for TLS, native vs. cross-
 compiled build for a weak/old SBC, backup timer): the self-contained
-[`docs/sbc-deployment.md`](docs/sbc-deployment.md) runbook.
+[`docs/sbc-deployment.md`](docs/sbc-deployment.md) runbook — or `tools/wiki-ops.sh` to
+automate all of it, see [`docs/wiki-ops.md`](docs/wiki-ops.md).
 
 **Or, on a normal x86_64/arm64 machine (not a weak/old ARM SBC — see
 [`docs/docker.md`](docs/docker.md) for why):**
@@ -287,9 +289,10 @@ startup. Full architecture rationale lives in
 Feature-complete: auth, CRUD/WYSIWYG editing, search/nav, MCP (stdio + remote),
 hardening, deployment, document versioning, `[[wiki-links]]` backlinks, vault backup,
 and semantic search are all implemented. Cross-compiled builds run natively on ARM —
-see [`docs/sbc-deployment.md`](docs/sbc-deployment.md). Semantic search configuration is in
-[`docs/embeddings.md`](docs/embeddings.md); the Draft agent and sidebar Chat panel are
-documented in [`docs/llm.md`](docs/llm.md).
+see [`docs/sbc-deployment.md`](docs/sbc-deployment.md), and
+[`docs/wiki-ops.md`](docs/wiki-ops.md) for the build+deploy automation script. Semantic
+search configuration is in [`docs/embeddings.md`](docs/embeddings.md); the Draft agent
+and sidebar Chat panel are documented in [`docs/llm.md`](docs/llm.md).
 
 ## License
 
