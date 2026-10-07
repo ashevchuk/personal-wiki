@@ -50,6 +50,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /src
 
+# Confirmed live under --platform linux/arm/v7: without this, vcpkg
+# tries to download its own pre-built x86_64 helper tools (cmake, etc.)
+# and, finding none for arm, falls back to compiling its OWN vcpkg-tool
+# FROM SOURCE under QEMU emulation — over an hour of wasted compute
+# before failing anyway with "Environment variable
+# VCPKG_FORCE_SYSTEM_BINARIES must be set on arm...". Setting it
+# unconditionally (not just when TARGETARCH is arm) is harmless on
+# amd64/arm64 too: the apt-get above already installs cmake/ninja, so
+# vcpkg has real system binaries to use there either way.
+ENV VCPKG_FORCE_SYSTEM_BINARIES=1
+
 # vcpkg is bootstrapped fresh, not vendored (matches the rest of this repo
 # — see .gitignore's own comment on why vcpkg/ is never committed). A
 # FULL clone, not --depth 1: a shallow clone can miss vcpkg.json's

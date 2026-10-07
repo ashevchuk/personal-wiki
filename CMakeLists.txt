@@ -14,6 +14,18 @@ endif()
 add_compile_options(-Wall -Wextra)
 
 find_package(SQLite3 REQUIRED)
+# Confirmed live: CMake's own bundled FindSQLite3 module only creates the
+# SQLite3::SQLite3 imported target on newer CMake (4.4.3 does; the 3.25.1
+# debian:bookworm-slim's apt installs does not, even though it finds the
+# library/headers just fine — SQLite3_FOUND is TRUE either way). vcpkg's
+# sqlite3 port exports its own unofficial-sqlite3 CONFIG package
+# regardless of CMake version; fall back to aliasing that when the
+# modern target didn't get created, rather than depend on every build
+# environment happening to have a new-enough system CMake.
+if(NOT TARGET SQLite3::SQLite3)
+  find_package(unofficial-sqlite3 CONFIG REQUIRED)
+  add_library(SQLite3::SQLite3 ALIAS unofficial::sqlite3::sqlite3)
+endif()
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(yaml-cpp CONFIG REQUIRED)
 find_package(md4c CONFIG REQUIRED)

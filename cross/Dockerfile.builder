@@ -41,14 +41,26 @@ RUN curl -sSfL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${Z
 
 WORKDIR /src
 
+COPY vcpkg.json .
+
 # vcpkg bootstrapped fresh inside the image, not vendored — same
 # reasoning as the main Dockerfile and .gitignore's own comment on vcpkg/.
-# FULL clone, not --depth 1 (see docs/architecture.md's "Build" section —
-# manifest mode needs the exact pinned builtin-baseline commit reachable).
+# FULL clone, not --depth 1 (manifest mode needs the exact pinned
+# builtin-baseline commit reachable) — AND checked out to that exact
+# commit before bootstrapping, not left on whatever HEAD this clone
+# happens to land on. Classic mode (used below, for the arm-musl
+# triplet) has no builtin-baseline pinning of its own; pinning it here
+# anyway keeps a fresh clone reproducible against the same ports state
+# the host's own vcpkg/ checkout uses — worth doing on principle, though
+# NOT what fixed the SQLite3::SQLite3 target issue actually hit here
+# (that was a CMake-version difference — see CMakeLists.txt's own
+# comment on its fallback).
 RUN git clone https://github.com/microsoft/vcpkg.git vcpkg \
+    && cd vcpkg \
+    && git checkout "$(python3 -c "import json; print(json.load(open('../vcpkg.json'))['builtin-baseline'])")" \
+    && cd .. \
     && ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-COPY vcpkg.json .
 # Native x64-linux drogon_ctl, built first: classic-mode cross builds
 # reuse this host tool instead of cross-building the `ctl` code-generator
 # (drogon[ctl] isn't supported cross — see docs/sbc-deployment.md's Path B).
