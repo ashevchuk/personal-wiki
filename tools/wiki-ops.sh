@@ -207,6 +207,26 @@ platform_tag_suffix() {
   printf '%s' "$1" | sed -e 's#^linux/##' -e 's#/#-#'
 }
 
+# platform_build_args PLATFORM — echoes --build-arg flags for TARGETARCH
+# (and TARGETVARIANT, if the platform string has one) derived from
+# "linux/arm/v7" style strings. Confirmed live: buildx does NOT reliably
+# auto-populate these from --platform alone in every builder/version
+# combination — a real `build container-arm` run with
+# --platform=linux/arm/v7 silently built as TARGETARCH=amd64 (the
+# Dockerfile's own fallback default), wasting over 40 minutes of
+# QEMU-emulated compute before failing on an architecture mismatch
+# further in. Passing them explicitly removes the dependency on that
+# auto-population working at all.
+platform_build_args() {
+  local platform=$1 rest arch variant
+  rest="${platform#linux/}"
+  arch="${rest%%/*}"
+  variant=""
+  [ "$rest" != "$arch" ] && variant="${rest#*/}"
+  printf -- '--build-arg\nTARGETARCH=%s\n' "$arch"
+  [ -n "$variant" ] && printf -- '--build-arg\nTARGETVARIANT=%s\n' "$variant"
+}
+
 # triplet_build_dir TRIPLET SUFFIX — "build-arm"/"build-arm-container" for the
 # default triplet (arm-musl, preserving the long-documented directory name so
 # nothing that already assumes it breaks), "build-$TRIPLET"/
@@ -333,10 +353,12 @@ cmd_build_container_arm() {
   fi
   local extra_args
   extra_args=$(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
+  local arch_args
+  mapfile -t arch_args < <(platform_build_args "$platform")
   if [ -n "$extra_args" ]; then
-    run docker buildx build --platform "$platform" --build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args" -t "$tag" --load .
+    run docker buildx build --platform "$platform" "${arch_args[@]}" --build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args" -t "$tag" --load .
   else
-    run docker buildx build --platform "$platform" -t "$tag" --load .
+    run docker buildx build --platform "$platform" "${arch_args[@]}" -t "$tag" --load .
   fi
   log "built $tag"
 }
@@ -364,7 +386,9 @@ cmd_build_container_native() {
   [ -n "$extra_args" ] && build_args=(--build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args")
 
   if [ -n "$platform" ]; then
-    run docker buildx build --target build --platform "$platform" "${build_args[@]}" -t wiki-native-builder --load .
+    local arch_args
+    mapfile -t arch_args < <(platform_build_args "$platform")
+    run docker buildx build --target build --platform "$platform" "${arch_args[@]}" "${build_args[@]}" -t wiki-native-builder --load .
   else
     run docker build --target build "${build_args[@]}" -t wiki-native-builder .
   fi
@@ -446,7 +470,9 @@ cmd_verify_container_arm() {
   command -v docker >/dev/null || die "docker not found"
   docker buildx inspect >/dev/null 2>&1 || die "no buildx builder available — 'docker buildx create --use' first"
   local tag="personal-wiki:$(platform_tag_suffix "$platform")-verify"
-  docker build --platform "$platform" -t "$tag" --load .
+  local arch_args
+  mapfile -t arch_args < <(platform_build_args "$platform")
+  docker build --platform "$platform" "${arch_args[@]}" -t "$tag" --load .
   local cid
   cid=$(docker run -d --platform "$platform" -p 18081:8080 "$tag")
   sleep 5
