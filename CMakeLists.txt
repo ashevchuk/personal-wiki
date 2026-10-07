@@ -157,26 +157,30 @@ target_link_libraries(wiki-server PRIVATE wikicore Drogon::Drogon PkgConfig::ARG
 # carry the HTTP stack, and MCP clients spawn this per-session so it needs
 # to start fast.
 #
-# MCP protocol layer: hkr04/cpp-mcp, vendored via FetchContent and pinned
-# to a commit (no vcpkg port exists for it). Spiked clean against this
-# exact toolchain (GCC 16.2.1, C++20) before committing to it over the
-# plan's hand-rolled-JSON-RPC fallback — see docs/architecture.md. Its own
-# CMakeLists.txt builds its examples/ too (no option to skip); accepted as
-# a few extra seconds of build time rather than fighting its build system's
-# internals to cherry-pick just the `mcp` library target.
+# MCP protocol (JSON-RPC 2.0 framing, tools/list, tools/call) is hand-rolled
+# directly in src/mcp/McpServer.cpp, using the project's own nlohmann_json
+# dependency (already PUBLIC-linked into wikicore above) — no separate MCP
+# library.
 # ---------------------------------------------------------------------------
 include(FetchContent)
-set(MCP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+# cpp-mcp is kept ONLY as a source of its vendored, header-only
+# cpp-httplib copy (common/httplib.h) — used for outbound HTTPS by
+# CloudChatClient.cpp (wiki-server) and CloudEmbeddingProvider.cpp
+# (wikicore, WIKI_ENABLE_CLOUD_EMBEDDINGS); nothing links its `mcp`
+# library target. FetchContent_Populate (not MakeAvailable) only clones
+# the source tree — its own CMakeLists.txt, which would otherwise also
+# configure and build its examples/, never runs.
 FetchContent_Declare(
   cpp_mcp
   GIT_REPOSITORY https://github.com/hkr04/cpp-mcp.git
   GIT_TAG 13a8bef5f1885b10b8d6038c4b319b7024744fa5
 )
-FetchContent_MakeAvailable(cpp_mcp)
+FetchContent_Populate(cpp_mcp)
 
 # CloudChatClient.cpp (wiki-server) includes the same vendored httplib.h
-# cpp-mcp already fetched — same pattern CloudEmbeddingProvider uses,
-# just always-on because the Draft agent is part of the HTTP binary, not
+# cpp-mcp provides — same pattern CloudEmbeddingProvider uses, just
+# always-on because the Draft agent is part of the HTTP binary, not
 # behind WIKI_ENABLE_CLOUD_EMBEDDINGS.
 target_include_directories(wiki-server PRIVATE ${cpp_mcp_SOURCE_DIR}/common)
 
@@ -184,13 +188,7 @@ add_executable(wiki-mcp
   src/mcp_main.cpp
   src/mcp/McpServer.cpp
 )
-target_link_libraries(wiki-mcp PRIVATE wikicore mcp)
-# cpp-mcp's own CMakeLists.txt sets these up via directory-scoped
-# include_directories() rather than target_include_directories() on the
-# `mcp` target, so they don't propagate to us automatically — add them
-# explicitly.
-target_include_directories(wiki-mcp PRIVATE ${cpp_mcp_SOURCE_DIR}/include
-                                              ${cpp_mcp_SOURCE_DIR}/common)
+target_link_libraries(wiki-mcp PRIVATE wikicore)
 
 # ---------------------------------------------------------------------------
 # sqlite-vec (document_embeddings storage) — only needed when at least one
@@ -257,9 +255,8 @@ endif()
 # ---------------------------------------------------------------------------
 # Cloud embedding provider — no new dependency at all: reuses cpp-mcp's own
 # vendored cpp-httplib (${cpp_mcp_SOURCE_DIR}/common/httplib.h), the exact
-# same header, already fetched above for wiki-mcp. cpp-mcp itself builds
-# with MCP_SSL/CPPHTTPLIB_OPENSSL_SUPPORT off (it doesn't need outbound
-# HTTPS), but httplib.h is header-only — CloudEmbeddingProvider.cpp defines
+# same header already populated above for wiki-server's CloudChatClient.cpp.
+# httplib.h is header-only — CloudEmbeddingProvider.cpp defines
 # CPPHTTPLIB_OPENSSL_SUPPORT itself before including it, affecting only
 # that one translation unit, and links against the OpenSSL this project
 # already requires (find_package(OpenSSL REQUIRED) near the top of this
@@ -302,12 +299,12 @@ if(WIKI_ENABLE_LOCAL_EMBEDDINGS)
   set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
   set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
   set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
-  # NOT unconditionally OFF — confirmed live (SIGILL, "Illegal
-  # instruction") that a hardcoded OFF here makes ggml pick one fixed CPU
-  # backend variant (AVX2 among its flags) regardless of what the actual
-  # build host supports; this machine's own CPU has AVX/FMA/F16C but NOT
-  # AVX2, and the resulting binary crashed on its very first embed() call.
-  # OFF is still correct, and necessary, for cross-compiling (ggml must
+  # NOT unconditionally OFF — a hardcoded OFF here makes ggml pick one
+  # fixed CPU backend variant (AVX2 among its flags) regardless of what
+  # the actual build host supports, which crashes with SIGILL ("Illegal
+  # instruction") on any host missing that exact flag set (e.g. one with
+  # AVX/FMA/F16C but not AVX2). OFF is still correct, and necessary, for
+  # cross-compiling (ggml must
   # never probe the BUILD host's CPU when the RUN target is a different
   # architecture entirely) — ON for a native build lets ggml detect this
   # exact host's real feature set instead of guessing a fixed one.

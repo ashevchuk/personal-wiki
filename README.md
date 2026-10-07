@@ -53,7 +53,7 @@ underneath, so a fourth theme later is just a new file, not a refactor.
   `text-embedding-3-small`), both build-time-optional so an SBC build stays
   light unless you opt in. Admin panel exposes re-embed/re-embed-all with the same
   audit trail as everything else. See [`docs/embeddings.md`](docs/embeddings.md) for
-  the full design, the real bugs found building it, and production numbers.
+  the full design and configuration.
 - **`[[wiki-links]]` and automatic backlinks**, Obsidian-style — link two notes,
   see the connection from both ends without touching either file's `tags`.
 - **Namespaced tags, filterable.** A tag containing `/` (`lang/cpp`, `project/wiki`)
@@ -139,7 +139,7 @@ git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 # vcpkg is bootstrapped locally, not vendored — one-time setup. A FULL
 # clone, not --depth 1 — a shallow clone can end up missing vcpkg.json's
 # pinned baseline commit once upstream has moved far enough past it (see
-# docs/architecture.md's "Build" section for exactly why, confirmed live).
+# docs/architecture.md's "Build" section for exactly why).
 git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
@@ -258,8 +258,7 @@ dependency — `vault/`, `index/`, `config/`, `util/`:
 
 The vault directory is the only thing that has to survive a disaster — the SQLite
 index is a disposable cache, rebuilt with `wiki-server --reindex` or on the next
-startup. Full rationale and the milestone-by-milestone build log (including a couple
-of real bugs caught by an actual E2E test, not just theory) live in
+startup. Full architecture rationale lives in
 [`docs/architecture.md`](docs/architecture.md).
 
 ## Tech stack
@@ -273,7 +272,7 @@ of real bugs caught by an actual E2E test, not just theory) live in
 | Password hashing | argon2id ([libargon2](https://github.com/P-H-C/phc-winner-argon2)) |
 | Config | [toml++](https://github.com/marzer/tomlplusplus) |
 | WYSIWYG editor | [Toast UI Editor](https://github.com/nhn/tui.editor) (vendored, committed) |
-| MCP protocol | [hkr04/cpp-mcp](https://github.com/hkr04/cpp-mcp) (vendored via `FetchContent`) |
+| MCP protocol | hand-rolled JSON-RPC 2.0 (`src/mcp/McpServer.cpp`, `src/controllers/RemoteMcpRoutes.cpp`) |
 | Vector storage | [sqlite-vec](https://github.com/asg017/sqlite-vec) (vendored via `FetchContent`) — build-time-optional |
 | Local embeddings | [llama.cpp](https://github.com/ggml-org/llama.cpp) (vendored via `FetchContent`) — build-time-optional |
 | Diagrams | [mermaid.js](https://mermaid.js.org/) (vendored, ~5.3 MiB) — loaded client-side, lazily, only on documents that use it |
@@ -285,17 +284,12 @@ of real bugs caught by an actual E2E test, not just theory) live in
 
 ## Status
 
-All originally-planned milestones are done — bootstrap, auth, CRUD/WYSIWYG,
-search/nav, MCP (stdio + remote), hardening, deployment — plus a second pass adding
-document versioning, `[[wiki-links]]` backlinks, Cmd-K quick-open, vault backup,
-YouTube embeds, a Docker build, and a filterable/namespaced tag tree in the sidebar.
-Deployed and verified running on real ARM hardware via cross-compilation; see
-[`docs/deployment.md`](docs/deployment.md) for the exact, current verification status.
-Semantic search (`sqlite-vec` + embeddings, hybrid FTS5/cosine ranking) — originally
-the one deliberately-deferred item — is done and live on the real production
-instance; see [`docs/embeddings.md`](docs/embeddings.md). The Draft agent
-and sidebar Chat panel (cloud chat as HTTP client, tools in-process, MCP
-unchanged) are documented in [`docs/llm.md`](docs/llm.md).
+Feature-complete: auth, CRUD/WYSIWYG editing, search/nav, MCP (stdio + remote),
+hardening, deployment, document versioning, `[[wiki-links]]` backlinks, vault backup,
+and semantic search are all implemented. Cross-compiled builds run natively on ARM —
+see [`docs/deployment.md`](docs/deployment.md). Semantic search configuration is in
+[`docs/embeddings.md`](docs/embeddings.md); the Draft agent and sidebar Chat panel are
+documented in [`docs/llm.md`](docs/llm.md).
 
 ## License
 

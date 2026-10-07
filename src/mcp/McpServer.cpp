@@ -4,25 +4,257 @@
 #include "util/Base64.h"
 #include "vault/AttachToDocument.h"
 
-// From the vendored hkr04/cpp-mcp library (FetchContent, see
-// CMakeLists.txt) — mcp::json is nlohmann::ordered_json, vendored by that
-// library under common/json.hpp. Deliberately never mix this file's JSON
-// handling with this project's own vcpkg nlohmann_json dependency (used
-// elsewhere for e.g. the edit page's doc-data blob) — two different
-// vendored copies of the same header in one translation unit is an ODR
-// risk not worth taking for zero benefit. Everything in this file goes
-// through mcp::json exclusively.
-#include <mcp_server.h>
-#include <mcp_tool.h>
+#include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
+#include <iostream>
 #include <memory>
 #include <stdexcept>
+#include <vector>
 
 using namespace wikicore;
 
 namespace wikicore::mcp {
+
+// Hand-rolled JSON-RPC 2.0 / MCP stdio transport. A JSON-RPC notification
+// (a message with no "id", e.g. notifications/initialized) must never
+// receive a response, full stop — the loop below enforces that
+// generically (no response is written whenever the incoming message has
+// no "id"), not as a special case keyed on one method name.
+//
+// `json` is nlohmann::ordered_json from the project's own vcpkg
+// nlohmann_json dependency (already linked into wikicore) — no separate
+// vendored copy. Tool schemas come out in registration order rather
+// than key-sorted; MCP clients don't care about object key order either
+// way, so this is a readability nicety, not a behavioral requirement.
+using json = nlohmann::ordered_json;
+
+enum class error_code : int {
+  parse_error = -32700,
+  invalid_request = -32600,
+  method_not_found = -32601,
+  invalid_params = -32602,
+  internal_error = -32603,
+};
+
+class mcp_exception : public std::runtime_error {
+ public:
+  mcp_exception(error_code code, const std::string& message)
+      : std::runtime_error(message), code_(code) {}
+  error_code code() const { return code_; }
+
+ private:
+  error_code code_;
+};
+
+using tool_handler = std::function<json(const json& params)>;
+
+struct tool {
+  std::string name;
+  std::string description;
+  json inputSchema;
+
+  json toJson() const {
+    return json{{"name", name}, {"description", description}, {"inputSchema", inputSchema}};
+  }
+};
+
+// Fluent builder covering only the parameter kinds this project's tools
+// actually use (string, number, string-array) — no boolean/object
+// params, so none are implemented.
+class tool_builder {
+ public:
+  explicit tool_builder(std::string name) : name_(std::move(name)) {
+    schema_["type"] = "object";
+    schema_["properties"] = json::object();
+  }
+
+  tool_builder& with_description(std::string description) {
+    description_ = std::move(description);
+    return *this;
+  }
+  tool_builder& with_string_param(const std::string& name, const std::string& description,
+                                   bool required) {
+    return addParam(name, json{{"type", "string"}, {"description", description}}, required);
+  }
+  tool_builder& with_number_param(const std::string& name, const std::string& description,
+                                   bool required) {
+    return addParam(name, json{{"type", "number"}, {"description", description}}, required);
+  }
+  tool_builder& with_array_param(const std::string& name, const std::string& description,
+                                  const std::string& itemType, bool required) {
+    return addParam(name,
+                     json{{"type", "array"},
+                          {"description", description},
+                          {"items", json{{"type", itemType}}}},
+                     required);
+  }
+
+  tool build() const {
+    json schema = schema_;
+    if (!required_.empty()) schema["required"] = required_;
+    return tool{name_, description_, schema};
+  }
+
+ private:
+  tool_builder& addParam(const std::string& name, json paramSchema, bool required) {
+    schema_["properties"][name] = std::move(paramSchema);
+    if (required) required_.push_back(name);
+    return *this;
+  }
+
+  std::string name_;
+  std::string description_;
+  json schema_;
+  std::vector<std::string> required_;
+};
+
+// One process serves exactly one client for its whole lifetime (stdio,
+// spawned fresh per MCP session) — no multi-session bookkeeping, no
+// transport abstraction.
+class server {
+ public:
+  server(std::string name, std::string version)
+      : name_(std::move(name)), version_(std::move(version)) {}
+
+  void register_tool(tool t, tool_handler handler) {
+    tools_.push_back({std::move(t), std::move(handler)});
+  }
+
+  // Blocks until stdin closes. One JSON-RPC message per line.
+  void start_stdio();
+
+ private:
+  json dispatch(const std::string& method, const json& params);
+  json handleInitialize() const;
+  json handleToolsCall(const json& params);
+
+  std::string name_;
+  std::string version_;
+  struct ToolEntry {
+    tool def;
+    tool_handler handler;
+  };
+  std::vector<ToolEntry> tools_;
+};
+
+json server::handleInitialize() const {
+  return json{{"protocolVersion", "2025-03-26"},
+              {"capabilities", json{{"tools", json::object()}}},
+              {"serverInfo", json{{"name", name_}, {"version", version_}}}};
+}
+
+json server::handleToolsCall(const json& params) {
+  if (!params.contains("name") || !params["name"].is_string()) {
+    throw mcp_exception(error_code::invalid_params, "missing 'name'");
+  }
+  const std::string toolName = params["name"].get<std::string>();
+  const auto it = std::find_if(tools_.begin(), tools_.end(),
+                                [&](const ToolEntry& e) { return e.def.name == toolName; });
+  if (it == tools_.end()) {
+    throw mcp_exception(error_code::invalid_params, "Tool not found: " + toolName);
+  }
+  const json args = params.value("arguments", json::object());
+
+  // A handler-thrown exception (including mcp_exception) becomes a
+  // successful JSON-RPC response carrying isError:true, per the MCP
+  // spec's own distinction between a tool-execution failure and a
+  // protocol-level error — only "missing name"/"tool not found" above,
+  // thrown before this try, surface as real JSON-RPC errors.
+  json result;
+  result["isError"] = false;
+  try {
+    result["content"] = it->handler(args);
+  } catch (const std::exception& e) {
+    result["isError"] = true;
+    result["content"] = json::array({json{{"type", "text"}, {"text", e.what()}}});
+  }
+  return result;
+}
+
+json server::dispatch(const std::string& method, const json& params) {
+  if (method == "initialize") return handleInitialize();
+  if (method == "ping") return json::object();
+  if (method == "tools/list") {
+    json arr = json::array();
+    for (const auto& entry : tools_) arr.push_back(entry.def.toJson());
+    return json{{"tools", arr}};
+  }
+  if (method == "tools/call") return handleToolsCall(params);
+  throw mcp_exception(error_code::method_not_found, "Method not found: " + method);
+}
+
+void server::start_stdio() {
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    if (line.empty()) continue;
+
+    json request;
+    try {
+      request = json::parse(line);
+    } catch (const json::parse_error& e) {
+      std::cout << json{{"jsonrpc", "2.0"},
+                         {"id", nullptr},
+                         {"error", json{{"code", static_cast<int>(error_code::parse_error)},
+                                        {"message", std::string("parse error: ") + e.what()}}}}
+                       .dump()
+                << "\n"
+                << std::flush;
+      continue;
+    }
+    if (!request.is_object() || request.value("jsonrpc", std::string()) != "2.0") {
+      std::cout << json{{"jsonrpc", "2.0"},
+                         {"id", nullptr},
+                         {"error", json{{"code", static_cast<int>(error_code::invalid_request)},
+                                        {"message", "invalid JSON-RPC envelope"}}}}
+                       .dump()
+                << "\n"
+                << std::flush;
+      continue;
+    }
+
+    // A request with no "id" is a JSON-RPC notification: it must never
+    // get a response, not even an empty one.
+    const bool isNotification = !request.contains("id");
+    const json id = isNotification ? json(nullptr) : request["id"];
+    const std::string method = request.value("method", std::string());
+    const json params = request.value("params", json::object());
+
+    json result;
+    try {
+      result = dispatch(method, params);
+    } catch (const mcp_exception& e) {
+      if (!isNotification) {
+        std::cout << json{{"jsonrpc", "2.0"},
+                           {"id", id},
+                           {"error", json{{"code", static_cast<int>(e.code())},
+                                          {"message", e.what()}}}}
+                         .dump()
+                  << "\n"
+                  << std::flush;
+      }
+      continue;
+    } catch (const std::exception& e) {
+      if (!isNotification) {
+        std::cout << json{{"jsonrpc", "2.0"},
+                           {"id", id},
+                           {"error", json{{"code", static_cast<int>(error_code::internal_error)},
+                                          {"message", e.what()}}}}
+                         .dump()
+                  << "\n"
+                  << std::flush;
+      }
+      continue;
+    }
+
+    if (isNotification) continue;
+    std::cout << json{{"jsonrpc", "2.0"}, {"id", id}, {"result", result}}.dump() << "\n"
+              << std::flush;
+  }
+}
 
 namespace {
 
@@ -85,8 +317,8 @@ std::string renderMcpSnippet(const index::SearchResultItem& item) {
   return out;
 }
 
-::mcp::json searchResultToJson(const index::SearchResultItem& item) {
-  return ::mcp::json{
+json searchResultToJson(const index::SearchResultItem& item) {
+  return json{
       {"path", item.path},       {"title", item.title},
       {"visibility", item.visibility}, {"type", item.docType},
       {"tags", item.tags},       {"updated", item.updatedAt},
@@ -94,8 +326,8 @@ std::string renderMcpSnippet(const index::SearchResultItem& item) {
   };
 }
 
-::mcp::json textContent(const std::string& text) {
-  return ::mcp::json::array({::mcp::json{{"type", "text"}, {"text", text}}});
+json textContent(const std::string& text) {
+  return json::array({json{{"type", "text"}, {"text", text}}});
 }
 
 // Applies the fail-safe-private rule independently at the tool layer, on
@@ -106,13 +338,12 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
   return includePrivate || visibility == "public";
 }
 
-::mcp::tool_handler makeSearchDocumentsHandler(index::FtsSearch& search,
+tool_handler makeSearchDocumentsHandler(index::FtsSearch& search,
                                                 bool includePrivate) {
-  return [&search, includePrivate](const ::mcp::json& params,
-                                    const std::string&) -> ::mcp::json {
+  return [&search, includePrivate](const json& params) -> json {
     if (!params.contains("query") || !params["query"].is_string() ||
         params["query"].get<std::string>().empty()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "missing or empty 'query'");
     }
 
@@ -128,19 +359,19 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
     }
 
     const auto results = search.search(q);
-    ::mcp::json arr = ::mcp::json::array();
+    json arr = json::array();
     for (const auto& item : results) arr.push_back(searchResultToJson(item));
     return textContent(arr.dump(2));
   };
 }
 
-::mcp::tool_handler makeGetDocumentHandler(vault::DocumentService& documents,
+tool_handler makeGetDocumentHandler(vault::DocumentService& documents,
                                             index::IndexUpdater& indexUpdater,
                                             bool includePrivate) {
   return [&documents, &indexUpdater, includePrivate](
-             const ::mcp::json& params, const std::string&) -> ::mcp::json {
+             const json& params) -> json {
     if (!params.contains("id_or_path") || !params["id_or_path"].is_string()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "missing 'id_or_path'");
     }
     const std::string idOrPath = params["id_or_path"].get<std::string>();
@@ -162,7 +393,7 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
       }
     }
     if (!record || !isVisibleTo(record->frontMatter.visibility, includePrivate)) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "document not found: " + idOrPath);
     }
 
@@ -183,21 +414,20 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
   };
 }
 
-::mcp::tool_handler makeListTagsHandler(index::NavQueries& nav, bool includePrivate) {
-  return [&nav, includePrivate](const ::mcp::json&, const std::string&) -> ::mcp::json {
+tool_handler makeListTagsHandler(index::NavQueries& nav, bool includePrivate) {
+  return [&nav, includePrivate](const json&) -> json {
     const auto tags = nav.tagCounts(includePrivate);
-    ::mcp::json arr = ::mcp::json::array();
+    json arr = json::array();
     for (const auto& t : tags) {
-      arr.push_back(::mcp::json{{"tag", t.tag}, {"count", t.count}});
+      arr.push_back(json{{"tag", t.tag}, {"count", t.count}});
     }
     return textContent(arr.dump(2));
   };
 }
 
-::mcp::tool_handler makeListDocumentsHandler(index::FtsSearch& search,
+tool_handler makeListDocumentsHandler(index::FtsSearch& search,
                                               bool includePrivate) {
-  return [&search, includePrivate](const ::mcp::json& params,
-                                    const std::string&) -> ::mcp::json {
+  return [&search, includePrivate](const json& params) -> json {
     index::SearchQuery q;
     q.includePrivate = includePrivate;
     q.limit = params.value("limit", 50);
@@ -213,9 +443,9 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
     }
 
     const auto results = search.search(q);
-    ::mcp::json arr = ::mcp::json::array();
+    json arr = json::array();
     for (const auto& item : results) {
-      arr.push_back(::mcp::json{
+      arr.push_back(json{
           {"path", item.path},       {"title", item.title},
           {"visibility", item.visibility}, {"type", item.docType},
           {"tags", item.tags},       {"updated", item.updatedAt},
@@ -230,12 +460,11 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 // run_query_block tool (AgentRuntime.cpp) — one `key: value` grammar,
 // one implementation (QueryBlocks::parseAndRun), exposed identically
 // across every caller instead of three parallel reimplementations.
-::mcp::tool_handler makeRunQueryHandler(index::QueryBlocks& queryBlocks,
+tool_handler makeRunQueryHandler(index::QueryBlocks& queryBlocks,
                                          bool includePrivate) {
-  return [&queryBlocks, includePrivate](const ::mcp::json& params,
-                                         const std::string&) -> ::mcp::json {
+  return [&queryBlocks, includePrivate](const json& params) -> json {
     if (!params.contains("query") || !params["query"].is_string()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "missing 'query'");
     }
     const auto result =
@@ -244,11 +473,11 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
       // Same discipline as a typo'd query-block in a document: a parse
       // error must surface as an actual tool error, never as "ran fine,
       // zero rows" — see QueryBlocks.h's own comment on why.
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, result.error);
+      throw mcp_exception(error_code::invalid_params, result.error);
     }
-    ::mcp::json arr = ::mcp::json::array();
+    json arr = json::array();
     for (const auto& row : result.rows) {
-      arr.push_back(::mcp::json{{"path", row.path},
+      arr.push_back(json{{"path", row.path},
                                  {"title", row.title},
                                  {"visibility", row.visibility},
                                  {"updatedAt", row.updatedAt},
@@ -261,13 +490,12 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 // Same engine as /calendar and GET /api/calendar (CalendarQueries.cpp) —
 // recurring series already expanded into concrete per-day occurrences,
 // one row per occurrence.
-::mcp::tool_handler makeGetCalendarEventsHandler(index::CalendarQueries& calendarQueries,
+tool_handler makeGetCalendarEventsHandler(index::CalendarQueries& calendarQueries,
                                                   bool includePrivate) {
-  return [&calendarQueries, includePrivate](const ::mcp::json& params,
-                                             const std::string&) -> ::mcp::json {
+  return [&calendarQueries, includePrivate](const json& params) -> json {
     if (!params.contains("start") || !params["start"].is_string() ||
         !params.contains("end") || !params["end"].is_string()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "missing 'start' or 'end'");
     }
     const std::string folder =
@@ -281,9 +509,9 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
     const auto events = calendarQueries.eventsBetween(
         params["start"].get<std::string>(), params["end"].get<std::string>(),
         includePrivate, folder, tags);
-    ::mcp::json arr = ::mcp::json::array();
+    json arr = json::array();
     for (const auto& ev : events) {
-      arr.push_back(::mcp::json{{"path", ev.path},
+      arr.push_back(json{{"path", ev.path},
                                  {"title", ev.title},
                                  {"visibility", ev.visibility},
                                  {"date", ev.date},
@@ -298,14 +526,13 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 // reject traversal (PathTraversalError), this just makes sure the
 // attempt still lands in the audit log rather than only ever showing up
 // as a generic error the caller sees but the admin never does.
-::mcp::tool_handler makeCreateDocumentHandler(vault::DocumentService& documents,
+tool_handler makeCreateDocumentHandler(vault::DocumentService& documents,
                                                index::McpAuditLog& auditLog,
                                                LazyEmbeddingProvider& lazyProvider) {
-  return [&documents, &auditLog, &lazyProvider](const ::mcp::json& params,
-                                                 const std::string&) -> ::mcp::json {
+  return [&documents, &auditLog, &lazyProvider](const json& params) -> json {
     if (!params.contains("path") || !params["path"].is_string() ||
         params["path"].get<std::string>().empty()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
+      throw mcp_exception(error_code::invalid_params, "missing 'path'");
     }
     const std::string path = params["path"].get<std::string>();
     lazyProvider.ensureLoaded();
@@ -331,14 +558,14 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
       return textContent("Created " + rec.path);
     } catch (const vault::DocumentAlreadyExistsError&) {
       auditLog.record("create_document", path, false, "a document already exists at that path");
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "a document already exists at that path");
     } catch (const vault::PathTraversalError&) {
       auditLog.record("create_document", path, false, "path traversal rejected");
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+      throw mcp_exception(error_code::invalid_params, "invalid path");
     } catch (const std::exception& e) {
       auditLog.record("create_document", path, false, e.what());
-      throw ::mcp::mcp_exception(::mcp::error_code::internal_error, e.what());
+      throw mcp_exception(error_code::internal_error, e.what());
     }
   };
 }
@@ -349,14 +576,13 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 // route), so an LLM caller that only means to change the body shouldn't
 // have to first fetch and echo back the title/tags/type/visibility it
 // isn't touching.
-::mcp::tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
+tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
                                                index::McpAuditLog& auditLog,
                                                LazyEmbeddingProvider& lazyProvider) {
-  return [&documents, &auditLog, &lazyProvider](const ::mcp::json& params,
-                                                 const std::string&) -> ::mcp::json {
+  return [&documents, &auditLog, &lazyProvider](const json& params) -> json {
     if (!params.contains("path") || !params["path"].is_string() ||
         params["path"].get<std::string>().empty()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
+      throw mcp_exception(error_code::invalid_params, "missing 'path'");
     }
     const std::string path = params["path"].get<std::string>();
     lazyProvider.ensureLoaded();
@@ -381,13 +607,13 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
       return textContent("Updated " + rec.path);
     } catch (const vault::DocumentNotFoundError&) {
       auditLog.record("update_document", path, false, "document not found");
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "document not found: " + path);
+      throw mcp_exception(error_code::invalid_params, "document not found: " + path);
     } catch (const vault::PathTraversalError&) {
       auditLog.record("update_document", path, false, "path traversal rejected");
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+      throw mcp_exception(error_code::invalid_params, "invalid path");
     } catch (const std::exception& e) {
       auditLog.record("update_document", path, false, e.what());
-      throw ::mcp::mcp_exception(::mcp::error_code::internal_error, e.what());
+      throw mcp_exception(error_code::internal_error, e.what());
     }
   };
 }
@@ -399,42 +625,42 @@ bool isVisibleTo(const std::string& visibility, bool includePrivate) {
 // cap is a JSON-size gate, not AttachmentService's own (there isn't one).
 constexpr size_t kMaxEncodedAttachmentBytes = 36ull * 1024 * 1024;
 
-std::string decodeContentBase64Param(const ::mcp::json& params) {
+std::string decodeContentBase64Param(const json& params) {
   if (!params.contains("content_base64") || !params["content_base64"].is_string()) {
-    throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'content_base64'");
+    throw mcp_exception(error_code::invalid_params, "missing 'content_base64'");
   }
   const std::string raw = params["content_base64"].get<std::string>();
   if (raw.size() > kMaxEncodedAttachmentBytes) {
-    throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+    throw mcp_exception(error_code::invalid_params,
                                 "content_base64 is too large; pass source_path for big files");
   }
   const auto decoded = util::decodeBase64(util::stripDataUrlPrefix(raw));
   if (!decoded) {
-    throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid base64");
+    throw mcp_exception(error_code::invalid_params, "invalid base64");
   }
   return *decoded;
 }
 
-::mcp::tool_handler makeAttachFileHandler(vault::DocumentService& documents,
+tool_handler makeAttachFileHandler(vault::DocumentService& documents,
                                            vault::AttachmentService& attachments,
                                            index::McpAuditLog& auditLog,
                                            LazyEmbeddingProvider& lazyProvider) {
   return [&documents, &attachments, &auditLog, &lazyProvider](
-             const ::mcp::json& params, const std::string&) -> ::mcp::json {
+             const json& params) -> json {
     if (!params.contains("path") || !params["path"].is_string() ||
         params["path"].get<std::string>().empty()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'path'");
+      throw mcp_exception(error_code::invalid_params, "missing 'path'");
     }
     const std::string path = params["path"].get<std::string>();
     const bool hasSource = params.contains("source_path") && params["source_path"].is_string() &&
                             !params["source_path"].get<std::string>().empty();
     const bool hasB64 = params.contains("content_base64") && params["content_base64"].is_string();
     if (hasSource && hasB64) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "pass either source_path or content_base64, not both");
     }
     if (!hasSource && !hasB64) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params,
+      throw mcp_exception(error_code::invalid_params,
                                   "missing 'source_path' or 'content_base64'");
     }
 
@@ -446,7 +672,7 @@ std::string decodeContentBase64Param(const ::mcp::json& params) {
       filename = std::filesystem::path(params["source_path"].get<std::string>()).filename().string();
     }
     if (filename.empty()) {
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "missing 'filename'");
+      throw mcp_exception(error_code::invalid_params, "missing 'filename'");
     }
     lazyProvider.ensureLoaded();
 
@@ -465,24 +691,24 @@ std::string decodeContentBase64Param(const ::mcp::json& params) {
                          std::to_string(attached.info.size) + " bytes, " +
                          attached.info.mimeType + ")\nInserted markdown: " +
                          attached.markdownLink);
-    } catch (const ::mcp::mcp_exception&) {
+    } catch (const mcp_exception&) {
       auditLog.record("attach_file", path, false, "invalid or missing content_base64");
       throw;
     } catch (const vault::DocumentNotFoundError&) {
       auditLog.record("attach_file", path, false, "document not found");
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "document not found: " + path);
+      throw mcp_exception(error_code::invalid_params, "document not found: " + path);
     } catch (const vault::AttachmentRejectedError& e) {
       auditLog.record("attach_file", path, false, e.what());
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, e.what());
+      throw mcp_exception(error_code::invalid_params, e.what());
     } catch (const vault::PathTraversalError&) {
       auditLog.record("attach_file", path, false, "path traversal rejected");
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+      throw mcp_exception(error_code::invalid_params, "invalid path");
     } catch (const std::filesystem::filesystem_error& e) {
       auditLog.record("attach_file", path, false, e.what());
-      throw ::mcp::mcp_exception(::mcp::error_code::invalid_params, "invalid path");
+      throw mcp_exception(error_code::invalid_params, "invalid path");
     } catch (const std::exception& e) {
       auditLog.record("attach_file", path, false, e.what());
-      throw ::mcp::mcp_exception(::mcp::error_code::internal_error, e.what());
+      throw mcp_exception(error_code::internal_error, e.what());
     }
   };
 }
@@ -497,16 +723,10 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                bool includePrivate, bool writeAccess, const config::AppConfig& cfg) {
   LazyEmbeddingProvider lazyProvider(indexUpdater, cfg);
 
-  ::mcp::server::configuration conf;
-  conf.name = serverName;
-  conf.version = serverVersion;
+  server srv(serverName, serverVersion);
 
-  ::mcp::server srv(conf);
-  srv.set_server_info(serverName, serverVersion);
-  srv.set_capabilities(::mcp::json{{"tools", ::mcp::json::object()}});
-
-  ::mcp::tool searchDocumentsTool =
-      ::mcp::tool_builder("search_documents")
+  tool searchDocumentsTool =
+      tool_builder("search_documents")
           .with_description(
               "Full-text search over the wiki's documents (FTS5, ranked). "
               "Returns matching documents with a highlighted snippet.")
@@ -518,8 +738,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
   srv.register_tool(searchDocumentsTool,
                      makeSearchDocumentsHandler(search, includePrivate));
 
-  ::mcp::tool getDocumentTool =
-      ::mcp::tool_builder("get_document")
+  tool getDocumentTool =
+      tool_builder("get_document")
           .with_description(
               "Fetch one document's full markdown body and metadata, by "
               "its vault-relative path or its id (uuid).")
@@ -528,14 +748,14 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
   srv.register_tool(getDocumentTool,
                      makeGetDocumentHandler(documents, indexUpdater, includePrivate));
 
-  ::mcp::tool listTagsTool =
-      ::mcp::tool_builder("list_tags")
+  tool listTagsTool =
+      tool_builder("list_tags")
           .with_description("List every tag in use, with document counts.")
           .build();
   srv.register_tool(listTagsTool, makeListTagsHandler(nav, includePrivate));
 
-  ::mcp::tool listDocumentsTool =
-      ::mcp::tool_builder("list_documents")
+  tool listDocumentsTool =
+      tool_builder("list_documents")
           .with_description(
               "Browse/list documents (no search text) with optional tag/"
               "type/folder filters and pagination.")
@@ -548,8 +768,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
   srv.register_tool(listDocumentsTool,
                      makeListDocumentsHandler(search, includePrivate));
 
-  ::mcp::tool runQueryTool =
-      ::mcp::tool_builder("run_query")
+  tool runQueryTool =
+      tool_builder("run_query")
           .with_description(
               "Execute a wiki ```query fenced block (the live table the "
               "human sees on a page). Pass the block BODY only — the "
@@ -561,8 +781,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
           .build();
   srv.register_tool(runQueryTool, makeRunQueryHandler(queryBlocks, includePrivate));
 
-  ::mcp::tool getCalendarEventsTool =
-      ::mcp::tool_builder("get_calendar_events")
+  tool getCalendarEventsTool =
+      tool_builder("get_calendar_events")
           .with_description(
               "Calendar events (documents with a due date, same engine as "
               "/calendar and GET /api/calendar) in a date range, inclusive. "
@@ -581,8 +801,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
   // registered-but-erroring. An MCP client asking "what can you do"
   // never even learns these exist unless the admin opted in.
   if (writeAccess) {
-    ::mcp::tool createDocumentTool =
-        ::mcp::tool_builder("create_document")
+    tool createDocumentTool =
+        tool_builder("create_document")
             .with_description(
                 "Create a new document in the wiki. Fails if a document "
                 "already exists at that path. A path that does not already "
@@ -604,8 +824,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
     srv.register_tool(createDocumentTool,
                        makeCreateDocumentHandler(documents, auditLog, lazyProvider));
 
-    ::mcp::tool updateDocumentTool =
-        ::mcp::tool_builder("update_document")
+    tool updateDocumentTool =
+        tool_builder("update_document")
             .with_description(
                 "Update an existing document. Any field left out keeps its "
                 "current value — this is a partial update, not a full "
@@ -627,8 +847,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
     srv.register_tool(updateDocumentTool,
                        makeUpdateDocumentHandler(documents, auditLog, lazyProvider));
 
-    ::mcp::tool attachFileTool =
-        ::mcp::tool_builder("attach_file")
+    tool attachFileTool =
+        tool_builder("attach_file")
             .with_description(
                 "Attach a file to an existing document and append a markdown "
                 "link (image embed for png/jpg/gif/webp, a regular link "
@@ -656,11 +876,11 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                        makeAttachFileHandler(documents, attachments, auditLog, lazyProvider));
   }
 
-  // CRITICAL: nothing in this process may ever write to stdout except the
-  // library's own JSON-RPC framing — any stray std::cout (a debug print, a
-  // library that logs there by default, ...) corrupts the pipe and the
-  // MCP client sees garbage. All our own diagnostics go to stderr, and
-  // start_stdio() blocks until stdin closes.
+  // CRITICAL: nothing in this process may ever write to stdout except
+  // start_stdio()'s own JSON-RPC framing above — any stray std::cout (a
+  // debug print, a library that logs there by default, ...) corrupts the
+  // pipe and the MCP client sees garbage. All our own diagnostics go to
+  // stderr, and start_stdio() blocks until stdin closes.
   srv.start_stdio();
 }
 
