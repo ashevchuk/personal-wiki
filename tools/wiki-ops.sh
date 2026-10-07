@@ -594,7 +594,21 @@ cmd_systemd_install() {
       log "'$variant' is a Docker deployment — Docker's own restart: unless-stopped already owns the process lifecycle; skipping the wiki.service install (see docs/wiki-ops.md's 'Container variants' notes)"
       ;;
     *)
-      remote_sh "sudo cp '$install_root/share/wiki/systemd/wiki.service' /etc/systemd/system/ && sudo systemctl daemon-reload"
+      # Confirmed live (2026-10-07): this used to overwrite an existing
+      # target's wiki.service unconditionally, silently discarding a
+      # customized EnvironmentFile= path (the target had one pointing at a
+      # legacy location this repo no longer ships) — real outage, caused by
+      # this one `cp` having no idea the target's unit differed from the
+      # one it was about to ship. Back up whatever's there first regardless
+      # (recoverable even if this check has a gap), and make a path
+      # mismatch loud and confirmable instead of invisible.
+      local existing_env_file new_env_file
+      existing_env_file=$(remote_sh_capture "sed -n 's/^EnvironmentFile=-\\?//p' /etc/systemd/system/wiki.service 2>/dev/null || true")
+      new_env_file=$(sed -n 's/^EnvironmentFile=-\?//p' systemd/wiki.service)
+      if [ -n "$existing_env_file" ] && [ "$existing_env_file" != "$new_env_file" ]; then
+        confirm_or_die "target's existing wiki.service reads env from '$existing_env_file', not this repo's '$new_env_file' — overwrite it anyway? (backed up first, but the running service's secrets may live at the old path)"
+      fi
+      remote_sh "if [ -f /etc/systemd/system/wiki.service ]; then sudo cp /etc/systemd/system/wiki.service /etc/systemd/system/wiki.service.bak-\$(date +%Y%m%d-%H%M%S); fi; sudo cp '$install_root/share/wiki/systemd/wiki.service' /etc/systemd/system/ && sudo systemctl daemon-reload"
       local is_active
       is_active=$(remote_sh_capture "systemctl is-active wiki.service 2>/dev/null || true")
       if [ "$is_active" = active ]; then
