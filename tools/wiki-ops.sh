@@ -132,6 +132,7 @@ load_deploy_config() {
   : "${WIKI_DEPLOY_BACKUP_DIR:=}"
   : "${WIKI_DEPLOY_WITH_BACKUP_TIMER:=false}"
   : "${WIKI_DEPLOY_PORT:=}"
+  : "${WIKI_DEPLOY_TRIPLET:=}"
   : "${WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV:=}"
   : "${WIKI_DEPLOY_LLM_API_KEY_ENV:=}"
   if [ -f "$DEPLOY_CONFIG" ]; then
@@ -206,6 +207,21 @@ platform_tag_suffix() {
   printf '%s' "$1" | sed -e 's#^linux/##' -e 's#/#-#'
 }
 
+# triplet_build_dir TRIPLET SUFFIX — "build-arm"/"build-arm-container" for the
+# default triplet (arm-musl, preserving the long-documented directory name so
+# nothing that already assumes it breaks), "build-$TRIPLET"/
+# "build-$TRIPLET-container" for any other — so switching --triplet (e.g. to
+# armv6-musl) never silently overwrites a different target's own build output
+# in the same directory.
+triplet_build_dir() {
+  local triplet=$1 suffix=$2
+  if [ "$triplet" = arm-musl ]; then
+    printf 'build-arm%s' "$suffix"
+  else
+    printf 'build-%s%s' "$triplet" "$suffix"
+  fi
+}
+
 # embeddings_cmake_args LOCAL_EMBEDDINGS CLOUD_EMBEDDINGS — the only two real
 # WIKI_ENABLE_* flags that belong on a build/deploy command (CMakeLists.txt's
 # third one, WIKI_ENABLE_FUZZING, is a dev-only tests/fuzz/ flag, needs Clang,
@@ -232,6 +248,8 @@ cmd_build_native() {
 
 cmd_build_cross() {
   local triplet=$1 cross_dir=$2 skip_tests=$3 local_embeddings=$4 cloud_embeddings=$5
+  local build_dir
+  build_dir=$(triplet_build_dir "$triplet" "")
   local drogon_ctl="$SCRIPT_DIR/build/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl"
   [ -x "$drogon_ctl" ] || die "native drogon_ctl not found at $drogon_ctl — run '$0 build native' first (classic-mode cross builds reuse the host's own drogon_ctl, see docs/sbc-deployment.md's Path B)"
   if [ "$local_embeddings" = 1 ]; then
@@ -246,18 +264,19 @@ cmd_build_cross() {
   export PKG_CONFIG_LIBDIR="$SCRIPT_DIR/vcpkg_installed_arm/$triplet/lib/pkgconfig:$SCRIPT_DIR/vcpkg_installed_arm/$triplet/share/pkgconfig"
   export PKG_CONFIG_SYSROOT_DIR=""
 
-  run cmake -S . -B build-arm -G Ninja \
+  run cmake -S . -B "$build_dir" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$cross_dir/toolchain.cmake" \
     -DCMAKE_PREFIX_PATH="$SCRIPT_DIR/vcpkg_installed_arm/$triplet" \
     -DCMAKE_FIND_ROOT_PATH="$SCRIPT_DIR/vcpkg_installed_arm/$triplet" \
     -DDROGON_CTL_COMMAND="$drogon_ctl" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     $(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
-  run cmake --build build-arm -j"$(nproc)"
+  run cmake --build "$build_dir" -j"$(nproc)"
 
   if [ "$skip_tests" != 1 ]; then
-    log "cross build has no on-host test run — use 'wiki-ops.sh verify cross' (qemu-arm-static) instead"
+    log "cross build has no on-host test run — use 'wiki-ops.sh verify cross --triplet=$triplet' (qemu-arm-static) instead"
   fi
+  log "built into $build_dir/"
 }
 
 cmd_build_container() {
@@ -272,17 +291,19 @@ cmd_build_container() {
 }
 
 cmd_build_cross_container() {
-  local local_embeddings=$1 cloud_embeddings=$2
-  local out_dir="$SCRIPT_DIR/build-arm-container"
+  local triplet=$1 local_embeddings=$2 cloud_embeddings=$3
+  local out_dir
+  out_dir=$(triplet_build_dir "$triplet" "-container")
+  out_dir="$SCRIPT_DIR/$out_dir"
   if [ "$local_embeddings" = 1 ]; then
     log "WIKI_ENABLE_LOCAL_EMBEDDINGS under this zig toolchain is UNVERIFIED — see docs/wiki-ops.md"
   fi
-  local extra_args
+  local extra_args build_args=(--build-arg "WIKI_CROSS_TRIPLET=$triplet")
   extra_args=$(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
   if [ -n "$extra_args" ]; then
-    run docker build -f cross/Dockerfile.builder --build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args" -t wiki-cross-builder .
+    run docker build -f cross/Dockerfile.builder "${build_args[@]}" --build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args" -t wiki-cross-builder .
   else
-    run docker build -f cross/Dockerfile.builder -t wiki-cross-builder .
+    run docker build -f cross/Dockerfile.builder "${build_args[@]}" -t wiki-cross-builder .
   fi
   if [ "$DRY_RUN" = 1 ]; then
     log "(dry-run) would extract wiki-server/wiki-mcp/unit_tests from wiki-cross-builder into $out_dir/"
@@ -521,29 +542,72 @@ EOF
 # ============================================================
 
 cmd_systemd_install() {
-  local with_backup_timer=$1 install_root=$2
+  local with_backup_timer=$1 install_root=$2 variant=$3
 
-  remote_sh "sudo cp '$install_root/share/wiki/systemd/wiki.service' /etc/systemd/system/ && sudo systemctl daemon-reload"
-
-  local is_active
-  is_active=$(remote_sh_capture "systemctl is-active wiki.service 2>/dev/null || true")
-  if [ "$is_active" = active ]; then
-    confirm_or_die "wiki.service is already running on $( [ -n "${WIKI_DEPLOY_HOST:-}" ] && echo "$WIKI_DEPLOY_HOST" || echo "this machine" ) — restart it now?"
-    remote_sh "sudo systemctl restart wiki.service"
-  else
-    remote_sh "sudo systemctl enable --now wiki.service"
-  fi
-  remote_sh "sleep 1; sudo systemctl is-active wiki.service; curl -s -o /dev/null -w 'healthz: %{http_code}\n' http://127.0.0.1:8080/healthz"
+  case "$variant" in
+    container|container-arm)
+      log "'$variant' is a Docker deployment — Docker's own restart: unless-stopped already owns the process lifecycle; skipping the wiki.service install (see docs/wiki-ops.md's 'Container variants' notes)"
+      ;;
+    *)
+      remote_sh "sudo cp '$install_root/share/wiki/systemd/wiki.service' /etc/systemd/system/ && sudo systemctl daemon-reload"
+      local is_active
+      is_active=$(remote_sh_capture "systemctl is-active wiki.service 2>/dev/null || true")
+      if [ "$is_active" = active ]; then
+        confirm_or_die "wiki.service is already running on $( [ -n "${WIKI_DEPLOY_HOST:-}" ] && echo "$WIKI_DEPLOY_HOST" || echo "this machine" ) — restart it now?"
+        remote_sh "sudo systemctl restart wiki.service"
+      else
+        remote_sh "sudo systemctl enable --now wiki.service"
+      fi
+      remote_sh "sleep 1; sudo systemctl is-active wiki.service; curl -s -o /dev/null -w 'healthz: %{http_code}\n' http://127.0.0.1:8080/healthz"
+      ;;
+  esac
 
   if [ "$with_backup_timer" = 1 ]; then
-    remote_sh "sudo cp '$install_root'/share/wiki/systemd/wiki-backup.{service,timer} /etc/systemd/system/ && sudo mkdir -p /etc/opt/wiki"
-    local has_env
-    has_env=$(remote_sh_capture "[ -f /etc/opt/wiki/wiki-backup.env ] && echo yes || echo no")
-    if [ "$has_env" = no ]; then
-      remote_sh "sudo cp '$install_root/share/wiki/systemd/wiki-backup.env.example' /etc/opt/wiki/wiki-backup.env"
-      log "wrote /etc/opt/wiki/wiki-backup.env from the example — edit BACKUP_DIR (a DIFFERENT disk/mount than the vault) before trusting this"
+    cmd_backup_timer_install "$install_root"
+  fi
+}
+
+# Ships wiki-backup.sh plus its systemd unit/timer/env fresh from THIS
+# REPO's own systemd/ directory — never relies on anything a previous
+# deploy step staged remotely, so it works identically whether
+# install_root has a bin/+share/wiki/systemd/ tree already (native/cross/
+# cross-container/container-native) or nothing at all yet (container/
+# container-arm, which never stage one). VAULT_PATH defaults to
+# $install_root/vault_data — the same path both a binary install's
+# config.toml ([vault].path, relative to WorkingDirectory=$install_root)
+# and a container deployment's host-side bind mount
+# (docker-compose.yml's ./vault_data:/data/vault, same cwd) actually use.
+cmd_backup_timer_install() {
+  local install_root=$1
+  ensure_remote_user "$WIKI_DEPLOY_SERVICE_USER" "$install_root"
+
+  remote_sh "sudo mkdir -p '$install_root/bin'"
+  copy_to_target systemd/wiki-backup.sh /tmp/wiki-backup.sh
+  remote_sh "sudo mv /tmp/wiki-backup.sh '$install_root/bin/wiki-backup.sh' && sudo chown '$WIKI_DEPLOY_SERVICE_USER':'$WIKI_DEPLOY_SERVICE_USER' '$install_root/bin/wiki-backup.sh' && sudo chmod +x '$install_root/bin/wiki-backup.sh'"
+
+  copy_to_target systemd/wiki-backup.service /tmp/wiki-backup.service
+  copy_to_target systemd/wiki-backup.timer /tmp/wiki-backup.timer
+  remote_sh "sudo mv /tmp/wiki-backup.service /etc/systemd/system/wiki-backup.service && sudo mv /tmp/wiki-backup.timer /etc/systemd/system/wiki-backup.timer"
+
+  local has_env
+  has_env=$(remote_sh_capture "[ -f /etc/opt/wiki/wiki-backup.env ] && echo yes || echo no")
+  if [ "$has_env" = no ]; then
+    remote_sh "sudo mkdir -p /etc/opt/wiki"
+    copy_to_target systemd/wiki-backup.env.example /tmp/wiki-backup.env.example
+    remote_sh "sudo mv /tmp/wiki-backup.env.example /etc/opt/wiki/wiki-backup.env && sudo sed -i 's|^VAULT_PATH=.*|VAULT_PATH=$install_root/vault_data|' /etc/opt/wiki/wiki-backup.env"
+    local backup_dir
+    resolve_optional backup_dir "" "${WIKI_DEPLOY_BACKUP_DIR:-}" "" "BACKUP_DIR (a DIFFERENT disk/mount than the vault; blank = edit it yourself later)"
+    if [ -n "$backup_dir" ]; then
+      remote_sh "sudo sed -i 's|^BACKUP_DIR=.*|BACKUP_DIR=$backup_dir|' /etc/opt/wiki/wiki-backup.env"
+    else
+      log "wrote /etc/opt/wiki/wiki-backup.env — VAULT_PATH defaulted to $install_root/vault_data; BACKUP_DIR left at its placeholder, edit it yourself (a DIFFERENT disk/mount than the vault)"
     fi
-    remote_sh "sudo systemctl daemon-reload && sudo systemctl enable --now wiki-backup.timer"
+  fi
+
+  remote_sh "sudo systemctl daemon-reload && sudo systemctl enable --now wiki-backup.timer"
+
+  if [ "$install_root" != /opt/wiki ]; then
+    log "WARNING: the shipped wiki-backup.service hardcodes ReadOnlyPaths=/opt/wiki/vault_data — install_root is '$install_root', not /opt/wiki, so this unit's own sandboxing won't actually permit reading the real vault path; pre-existing limitation of the shipped unit file itself, not specific to this deploy"
   fi
 }
 
@@ -587,7 +651,11 @@ cmd_configure_toml() {
 # ============================================================
 
 cmd_setup_admin() {
-  local install_root=$1
+  local install_root=$1 variant=$2
+  case "$variant" in
+    container|container-arm)
+      die "setup-admin assumes a binary install — '$variant' runs via Docker; create the admin account with: docker compose exec wiki wiki-server --create-admin" ;;
+  esac
   if [ -n "${WIKI_DEPLOY_HOST:-}" ]; then
     run ssh -t -p "$WIKI_DEPLOY_SSH_PORT" "$WIKI_DEPLOY_HOST" \
       "cd '$install_root' && sudo -u '$WIKI_DEPLOY_SERVICE_USER' ./bin/wiki-server --create-admin"
@@ -620,7 +688,11 @@ verify_static_md5() {
 }
 
 cmd_static_redeploy() {
-  local install_root=$1
+  local install_root=$1 variant=$2
+  case "$variant" in
+    container|container-arm)
+      die "static-redeploy assumes a binary install — '$variant' serves static/ from inside the image; rebuild ('build $variant') and 'deploy --variant=$variant' again instead" ;;
+  esac
   local tmp_tar remote_tar
   tmp_tar=$(mktemp /tmp/wiki-static-XXXXXX.tar.gz)
   run tar -czf "$tmp_tar" -C static .
@@ -741,16 +813,17 @@ cmd_deploy_container() {
 }
 
 cmd_deploy() {
-  local flag_target=$1 flag_variant=$2 first_time=$3 with_backup_timer=$4 static_only=$5 skip_verify=$6 qemu_cpu=$7 port_flag=$8
+  local flag_target=$1 flag_variant=$2 first_time=$3 with_backup_timer=$4 static_only=$5 skip_verify=$6 qemu_cpu=$7 port_flag=$8 triplet_flag=$9
 
   resolve_optional WIKI_DEPLOY_HOST "$flag_target" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
   resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm|container-native)"
   resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
   resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
   resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
+  resolve WIKI_DEPLOY_TRIPLET "$triplet_flag" "${WIKI_DEPLOY_TRIPLET:-}" "arm-musl" "cross/cross-container triplet (ignored for every other variant)"
 
   if [ "$static_only" = 1 ]; then
-    cmd_static_redeploy "$WIKI_DEPLOY_INSTALL_ROOT"
+    cmd_static_redeploy "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
     return
   fi
 
@@ -760,14 +833,15 @@ cmd_deploy() {
       # Docker owns this process's lifecycle (docker-compose.yml's own
       # restart: unless-stopped) — there is no $install_root/share/wiki/
       # systemd/wiki.service staged anywhere for this variant (only
-      # native/cross/cross-container's cmake --install / stage_bare_binary_tree
-      # produce that tree). Calling cmd_systemd_install here would `cp` a
-      # path that was never created. --with-backup-timer isn't wired up
-      # for this path either — wiki-backup.sh runs INSIDE a binary
-      # install's bin/, never copied into the container image at all.
+      # native/cross/cross-container/container-native's install step
+      # produces that tree). cmd_systemd_install knows to skip the
+      # wiki.service part for these two variants — but --with-backup-timer
+      # still works, via cmd_backup_timer_install shipping wiki-backup.sh
+      # fresh from this repo's own systemd/ directory, independent of
+      # anything a container deploy would otherwise stage.
       resolve_optional WIKI_DEPLOY_PORT "$port_flag" "${WIKI_DEPLOY_PORT:-}" "" "Host-side port (blank = compose default, 8080)"
-      [ "$with_backup_timer" = 1 ] && log "--with-backup-timer has no effect for '$WIKI_DEPLOY_VARIANT' — not wired up for container deploys yet, see docs/wiki-ops.md"
       cmd_deploy_container "$WIKI_DEPLOY_VARIANT" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_PORT"
+      cmd_systemd_install "$with_backup_timer" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
       return
       ;;
     *) die "deploy: unknown variant '$WIKI_DEPLOY_VARIANT'" ;;
@@ -776,8 +850,8 @@ cmd_deploy() {
   local build_dir strip_bins=0 verify_kind=""
   case "$WIKI_DEPLOY_VARIANT" in
     native) build_dir=build ;;
-    cross) build_dir=build-arm; strip_bins=1; verify_kind=cross ;;
-    cross-container) build_dir=build-arm-container; strip_bins=1; verify_kind=cross ;;
+    cross) build_dir=$(triplet_build_dir "$WIKI_DEPLOY_TRIPLET" ""); strip_bins=1; verify_kind=cross ;;
+    cross-container) build_dir=$(triplet_build_dir "$WIKI_DEPLOY_TRIPLET" "-container"); strip_bins=1; verify_kind=cross ;;
     container-native) build_dir=build-container-native; strip_bins=1; verify_kind=container-native ;;
   esac
   [ -d "$build_dir" ] || die "no $build_dir/ found — run 'build $WIKI_DEPLOY_VARIANT' first"
@@ -804,10 +878,10 @@ cmd_deploy() {
     cmd_configure_toml "$WIKI_DEPLOY_INSTALL_ROOT" "$port_flag"
   fi
 
-  cmd_systemd_install "$with_backup_timer" "$WIKI_DEPLOY_INSTALL_ROOT"
+  cmd_systemd_install "$with_backup_timer" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
 
   if [ "$first_time" = 1 ]; then
-    cmd_setup_admin "$WIKI_DEPLOY_INSTALL_ROOT"
+    cmd_setup_admin "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
   fi
 }
 
@@ -831,9 +905,9 @@ removes the hand-typing and enforces the order).
   deploy  [--target=HOST] [--variant=V] [--first-time] [--with-backup-timer]
           [--static-only] [--skip-verify] [--qemu-cpu=NAME] [--port=N]
           [--yes] [--dry-run]
-  static-redeploy [--target=HOST] [--dry-run]
-  setup-admin [--target=HOST]
-  systemd install [--target=HOST] [--with-backup-timer] [--yes] [--dry-run]
+  static-redeploy [--target=HOST] [--variant=V] [--dry-run]
+  setup-admin [--target=HOST] [--variant=V]
+  systemd install [--target=HOST] [--variant=V] [--with-backup-timer] [--yes] [--dry-run]
   systemd status  [--target=HOST]
   nginx-config root --domain=D [--out=FILE]
   nginx-config subpath --base-path=/wiki [--out=FILE]
@@ -854,8 +928,8 @@ FLAG_VARIANT=""
 FLAG_DOMAIN=""
 FLAG_BASE_PATH=""
 FLAG_OUT=""
-FLAG_TRIPLET="arm-musl"
-FLAG_CROSS_DIR="cross/arm-musl"
+FLAG_TRIPLET=""
+FLAG_CROSS_DIR=""
 FLAG_PLATFORM=""
 FLAG_QEMU_CPU=""
 FLAG_PORT=""
@@ -909,9 +983,12 @@ main() {
       load_deploy_config
       case "$sub" in
         native) cmd_build_native "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        cross) cmd_build_cross "$FLAG_TRIPLET" "$FLAG_CROSS_DIR" "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+        cross)
+          local resolved_triplet="${FLAG_TRIPLET:-arm-musl}"
+          cmd_build_cross "$resolved_triplet" "${FLAG_CROSS_DIR:-cross/$resolved_triplet}" "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS"
+          ;;
         container) cmd_build_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        cross-container) cmd_build_cross_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+        cross-container) cmd_build_cross_container "${FLAG_TRIPLET:-arm-musl}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
         container-arm) cmd_build_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
         container-native) cmd_build_container_native "$FLAG_PLATFORM" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
         *) die "build: variant must be one of native|cross|container|cross-container|container-arm|container-native" ;;
@@ -923,8 +1000,8 @@ main() {
       [ $# -gt 0 ] && shift
       parse_flags "$@"
       case "$sub" in
-        cross) cmd_verify_cross build-arm "$FLAG_QEMU_CPU" ;;
-        cross-container) cmd_verify_cross build-arm-container "$FLAG_QEMU_CPU" ;;
+        cross) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "")" "$FLAG_QEMU_CPU" ;;
+        cross-container) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "-container")" "$FLAG_QEMU_CPU" ;;
         container) cmd_verify_container ;;
         container-arm) cmd_verify_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" ;;
         container-native) cmd_verify_container_native build-container-native ;;
@@ -935,7 +1012,7 @@ main() {
     deploy)
       parse_flags "$@"
       load_deploy_config
-      cmd_deploy "$FLAG_TARGET" "$FLAG_VARIANT" "$FLAG_FIRST_TIME" "$FLAG_WITH_BACKUP_TIMER" "$FLAG_STATIC_ONLY" "$FLAG_SKIP_VERIFY" "$FLAG_QEMU_CPU" "$FLAG_PORT"
+      cmd_deploy "$FLAG_TARGET" "$FLAG_VARIANT" "$FLAG_FIRST_TIME" "$FLAG_WITH_BACKUP_TIMER" "$FLAG_STATIC_ONLY" "$FLAG_SKIP_VERIFY" "$FLAG_QEMU_CPU" "$FLAG_PORT" "$FLAG_TRIPLET"
       ;;
 
     static-redeploy)
@@ -945,7 +1022,8 @@ main() {
       resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
       resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
       resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
-      cmd_static_redeploy "$WIKI_DEPLOY_INSTALL_ROOT"
+      resolve_optional WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "" "Variant (blank if unknown — only checked to refuse container/container-arm)"
+      cmd_static_redeploy "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
       ;;
 
     setup-admin)
@@ -955,7 +1033,8 @@ main() {
       resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
       resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
       resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
-      cmd_setup_admin "$WIKI_DEPLOY_INSTALL_ROOT"
+      resolve_optional WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "" "Variant (blank if unknown — only checked to refuse container/container-arm)"
+      cmd_setup_admin "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
       ;;
 
     systemd)
@@ -966,8 +1045,9 @@ main() {
       resolve_optional WIKI_DEPLOY_HOST "$FLAG_TARGET" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
       resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
       resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
+      resolve_optional WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "" "Variant (blank if unknown — only checked to skip the wiki.service part for container/container-arm)"
       case "$sub" in
-        install) cmd_systemd_install "$FLAG_WITH_BACKUP_TIMER" "$WIKI_DEPLOY_INSTALL_ROOT" ;;
+        install) cmd_systemd_install "$FLAG_WITH_BACKUP_TIMER" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT" ;;
         status) cmd_systemd_status ;;
         *) die "systemd: subcommand must be 'install' or 'status'" ;;
       esac

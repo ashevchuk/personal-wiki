@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1
 #
-# Containerized cross-toolchain: produces the exact same static
-# arm-linux-musleabihf binaries as docs/sbc-deployment.md's "Path B" /
-# `wiki-ops.sh build cross`, without needing zig or vcpkg installed on the
-# host — only Docker. This is a build-only image; its output is extracted
+# Containerized cross-toolchain: produces the exact same static binaries
+# as docs/sbc-deployment.md's "Path B" / `wiki-ops.sh build cross` for
+# whichever cross/<name>/ toolchain WIKI_CROSS_TRIPLET names (armv7
+# arm-musl by default; armv6-musl works too — see cross/armv6-musl/),
+# without needing zig or vcpkg installed on the host — only Docker. This
+# is a build-only image; its output is extracted
 # via `docker create`+`docker cp` (see `wiki-ops.sh build cross-container`),
 # never run as a container itself. Deliberately NOT using a buildx
 # `--output` target, so this stays usable with plain `docker build` too,
@@ -19,6 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # zig bundles its own libc/libc++ for the target — no separate ARM
 # cross-toolchain package needed beyond this one tarball.
 ARG ZIG_VERSION=0.16.0
+# Which cross/<name>/ toolchain to use — defaults to the long-documented
+# armv7 target. The directory name always equals the triplet name (see
+# docs/sbc-deployment.md's "Porting to a different board" section), so
+# this one ARG is enough; no separate cross-dir ARG needed.
+ARG WIKI_CROSS_TRIPLET=arm-musl
 # Extra -D... CMake cache flags (see the main Dockerfile's own
 # WIKI_CMAKE_EXTRA_ARGS comment — same mechanism, same
 # --local-embeddings/--cloud-embeddings wiki-ops.sh flags). UNVERIFIED for
@@ -53,19 +60,19 @@ COPY src ./src
 COPY tests ./tests
 COPY cross ./cross
 
-RUN cd vcpkg && ./vcpkg install --classic --triplet arm-musl \
-      --overlay-triplets=../cross/arm-musl --overlay-ports=../cross/overlay-ports \
+RUN cd vcpkg && ./vcpkg install --classic --triplet "${WIKI_CROSS_TRIPLET}" \
+      --overlay-triplets="../cross/${WIKI_CROSS_TRIPLET}" --overlay-ports=../cross/overlay-ports \
       --x-install-root=../vcpkg_installed_arm \
       drogon sqlite3[core,fts5,json1] libargon2 nlohmann-json md4c yaml-cpp \
       tomlplusplus catch2
 
-ENV PKG_CONFIG_LIBDIR=/src/vcpkg_installed_arm/arm-musl/lib/pkgconfig:/src/vcpkg_installed_arm/arm-musl/share/pkgconfig
+ENV PKG_CONFIG_LIBDIR=/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}/lib/pkgconfig:/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}/share/pkgconfig
 ENV PKG_CONFIG_SYSROOT_DIR=""
 
 RUN cmake -S . -B build-arm -G Ninja \
-      -DCMAKE_TOOLCHAIN_FILE=cross/arm-musl/toolchain.cmake \
-      -DCMAKE_PREFIX_PATH=/src/vcpkg_installed_arm/arm-musl \
-      -DCMAKE_FIND_ROOT_PATH=/src/vcpkg_installed_arm/arm-musl \
+      -DCMAKE_TOOLCHAIN_FILE="cross/${WIKI_CROSS_TRIPLET}/toolchain.cmake" \
+      -DCMAKE_PREFIX_PATH="/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}" \
+      -DCMAKE_FIND_ROOT_PATH="/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}" \
       -DDROGON_CTL_COMMAND=/src/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo \
       ${WIKI_CMAKE_EXTRA_ARGS} \

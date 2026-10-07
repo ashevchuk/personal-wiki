@@ -111,26 +111,36 @@ just a flag that's now possible to pass.
 
 - **`native`** — `cmake configure+build(+ctest)` into `build/`, exactly
   `docs/sbc-deployment.md`'s Path A. `--skip-tests` skips the `ctest` run.
-- **`cross`** — Path B, into `build-arm/`. Requires a native `build/` to already exist
+- **`cross`** — Path B. Requires a native `build/` to already exist
   (specifically `build/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl` — run `build
   native` at least once first; classic-mode cross builds reuse this host tool instead
-  of cross-building Drogon's `ctl` code-generator). `--triplet=NAME`/`--cross-dir=PATH`
-  pick a different `cross/<name>/` toolchain — default `arm-musl`/`cross/arm-musl`
-  (armv7). For a true ARMv6 target (Raspberry Pi 1/Zero/Zero W):
+  of cross-building Drogon's `ctl` code-generator). `--triplet=NAME` picks a different
+  `cross/<name>/` toolchain — default `arm-musl` (armv7); `--cross-dir=PATH` overrides
+  which directory to read it from, but defaults to `cross/$triplet` automatically (the
+  established convention — every `cross/<name>/` directory is named after its own
+  triplet), so you only ever need to pass `--triplet` alone. For a true ARMv6 target
+  (Raspberry Pi 1/Zero/Zero W):
   ```sh
-  ./tools/wiki-ops.sh build cross --triplet=armv6-musl --cross-dir=cross/armv6-musl
+  ./tools/wiki-ops.sh build cross --triplet=armv6-musl
   ```
-  **Known limitation**: the output directory is always `build-arm/`, regardless of
-  `--triplet`. Building `arm-musl` then `armv6-musl` (or vice versa) overwrites the
-  previous target's binaries in place — fine for a one-off switch, not for keeping two
-  cross targets' artifacts side by side. Rename `build-arm/` out of the way first if
-  you need both.
+  **Output directory tracks the triplet**: `build-arm/` for the default `arm-musl`
+  (preserving the long-documented name so nothing that already assumes it breaks),
+  `build-$triplet/` for anything else (e.g. `build-armv6-musl/`) — switching triplets
+  never overwrites a different target's own build output. `verify`/`deploy` compute
+  the same directory name the same way, from the same `--triplet` (or
+  `WIKI_DEPLOY_TRIPLET` in `deploy.local.env`) — see `deploy` below.
 - **`container`** — `docker compose build`, the existing x86_64/arm64 image, unchanged.
 - **`cross-container`** — builds `cross/Dockerfile.builder` (zig + vcpkg + the
-  `cross/arm-musl` toolchain, entirely inside the image — no local zig/vcpkg install
-  needed) and extracts `wiki-server`/`wiki-mcp`/`unit_tests` into
-  `build-arm-container/`. **Hardcoded to `arm-musl`/armv7** — `--triplet`/`--cross-dir`
-  have no effect here; this path does not (yet) generalize to `armv6-musl`.
+  `cross/<name>/` toolchain `--triplet` names — default `arm-musl` — entirely inside
+  the image, no local zig/vcpkg install needed) and extracts
+  `wiki-server`/`wiki-mcp`/`unit_tests` into `build-arm-container/` (or
+  `build-$triplet-container/` for a non-default triplet, same naming rule as `cross`
+  above). `--cross-dir` has no effect here (the Dockerfile always derives
+  `cross/${triplet}` itself, matching the one real convention this repo uses) —
+  only `--triplet` matters:
+  ```sh
+  ./tools/wiki-ops.sh build cross-container --triplet=armv6-musl
+  ```
 - **`container-arm`** — `docker buildx build --platform <platform> --load .` against
   the main `Dockerfile` (parameterized by `TARGETARCH`/`TARGETVARIANT` — see its own
   header comment). `--platform` defaults to `linux/arm/v7`; `linux/arm64` and
@@ -166,7 +176,7 @@ just a flag that's now possible to pass.
 
 ```
 verify cross|container|cross-container|container-arm|container-native
-       [--platform=linux/arm/v7] [--qemu-cpu=NAME]
+       [--triplet=NAME] [--platform=linux/arm/v7] [--qemu-cpu=NAME]
 ```
 
 Run this before a binary/image ever reaches real hardware — "compiling cleanly is not
@@ -174,8 +184,10 @@ the same as working."
 
 - **`cross`** / **`cross-container`** — `qemu-arm-static` runs `unit_tests` (must
   report every case passed, not just exit 0) then `wiki-server --create-admin` as a
-  real smoke test, against `build-arm/`/`build-arm-container/` respectively. Needs
-  `qemu-user-static` installed on the dev machine.
+  real smoke test, against whichever directory `build`'s own `--triplet`-derived
+  naming produced (`build-arm/` for the default, `build-$triplet/` otherwise — pass
+  the same `--triplet` here that you built with). Needs `qemu-user-static` installed
+  on the dev machine.
   **`--qemu-cpu=NAME` matters more than it looks.** qemu's *default* CPU model (no
   `-cpu` flag) emulates a broader instruction set than some real cores — confirmed:
   the stock armv7 `arm-musl` binary passes clean under the bare default, then SIGILLs
@@ -199,9 +211,9 @@ the same as working."
 ## `deploy`
 
 ```
-deploy [--target=HOST] [--variant=V] [--first-time] [--with-backup-timer]
-       [--static-only] [--skip-verify] [--qemu-cpu=NAME] [--port=N]
-       [--yes] [--dry-run]
+deploy [--target=HOST] [--variant=V] [--triplet=NAME] [--first-time]
+       [--with-backup-timer] [--static-only] [--skip-verify]
+       [--qemu-cpu=NAME] [--port=N] [--yes] [--dry-run]
 ```
 
 Never builds implicitly — run the matching `build` first. `--target` empty means
@@ -232,32 +244,41 @@ install on this machine, no ssh involved; otherwise every mutating step runs ove
    (password entry needs its echo disabled — this is never piped or captured).
 5. Installs/enables the `wiki.service` systemd unit (restarts it, with a `[y/N]`
    confirmation unless `--yes`, if it's already running); `--with-backup-timer`
-   additionally installs `wiki-backup.{service,timer}` and, if absent, a fresh
-   `wiki-backup.env` from the example (**edit `BACKUP_DIR` on the target before
-   trusting it** — point it at a different disk/mount than the vault).
+   additionally ships `wiki-backup.sh`+its unit/timer/env fresh from this repo's own
+   `systemd/` directory (see `cmd_backup_timer_install`) and enables the timer —
+   **edit `BACKUP_DIR` on the target before trusting it** unless
+   `WIKI_DEPLOY_BACKUP_DIR` in `deploy.local.env` already pre-filled it, point it at a
+   different disk/mount than the vault.
 
-**Container variants (`container`/`container-arm`)**: a completely different path —
-`docker save`+`scp`+`docker load`+`docker compose up -d` for a remote target, or just
-`docker compose up -d` locally (which builds on the fly if the image doesn't exist yet
-— remote deploys need an explicit `build container`/`build container-arm` first,
-since there's nothing local to `docker save` otherwise). `--port=N` here sets
-`WIKI_HOST_PORT`, remapping only the **host**-side Docker port mapping — the
-container's own internal port stays 8080 regardless (`docker/config.docker.toml` and
-the `Dockerfile`'s `HEALTHCHECK`/`EXPOSE` both assume that internally).
+`--triplet=NAME` (or `WIKI_DEPLOY_TRIPLET` in `deploy.local.env`) picks which
+`build-*`/`build-*-container` directory `cross`/`cross-container` deploy from —
+matters once you've ever built more than one cross target; ignored for every other
+variant.
 
-**Neither `--first-time` nor `--with-backup-timer` does anything for container
-variants** (fixed as of this doc — an earlier version wrongly tried to install a
-systemd unit that's never staged for a Docker deployment; `--with-backup-timer` now
-just logs that it has no effect instead). For a container deployment:
+**Container variants (`container`/`container-arm`)**: a completely different path for
+the app itself — `docker save`+`scp`+`docker load`+`docker compose up -d` for a remote
+target, or just `docker compose up -d` locally (which builds on the fly if the image
+doesn't exist yet — remote deploys need an explicit `build container`/`build
+container-arm` first, since there's nothing local to `docker save` otherwise).
+`--port=N` here sets `WIKI_HOST_PORT`, remapping only the **host**-side Docker port
+mapping — the container's own internal port stays 8080 regardless
+(`docker/config.docker.toml` and the `Dockerfile`'s `HEALTHCHECK`/`EXPOSE` both assume
+that internally).
+
+**`--with-backup-timer` now works identically to every other variant** — the same
+`cmd_backup_timer_install` ships `wiki-backup.sh`+unit/timer/env fresh from this
+repo's `systemd/` directory regardless of how the app itself runs; `VAULT_PATH`
+defaults to `$install_root/vault_data`, which is also exactly where
+`docker-compose.yml`'s bind mount puts the real vault on the host. `--first-time`
+still does nothing for these two variants (no `config.toml`/admin-account step exists
+to run — see below). For a container deployment:
 - Admin account: `docker compose exec wiki wiki-server --create-admin` yourself
   (needs the real TTY `exec` gives you — `-T`/detached would break the password
   prompt's echo-disabling, same note as `docker-compose.yml`'s own header comment).
+  `setup-admin`/`deploy --first-time` refuse outright rather than attempting this —
+  see `setup-admin` below.
 - Config: baked at build time from `docker/config.docker.toml`, not editable through
   this script at all.
-- Backup: `wiki-backup.sh` never ships inside the container image's runtime stage; back
-  up the host's bind-mounted `vault_data/` directory directly (a plain `tar`, a host
-  cron job, restic, whatever you'd use for any other bind-mounted directory) — nothing
-  here automates that yet.
 
 **`--port=N` for binary variants** sets `config.toml`'s `[server].port` directly
 (only takes effect with `--first-time`, since that's the only time this script
@@ -280,15 +301,16 @@ touches `config.toml` at all).
 
 ```sh
 ./tools/wiki-ops.sh build native --skip-tests
-./tools/wiki-ops.sh build cross --triplet=armv6-musl --cross-dir=cross/armv6-musl
-./tools/wiki-ops.sh verify cross --qemu-cpu=arm1176
-./tools/wiki-ops.sh deploy --target=root@192.0.2.20 --variant=cross \
+./tools/wiki-ops.sh build cross --triplet=armv6-musl
+./tools/wiki-ops.sh verify cross --triplet=armv6-musl --qemu-cpu=arm1176
+./tools/wiki-ops.sh deploy --target=root@192.0.2.20 --variant=cross --triplet=armv6-musl \
     --first-time --qemu-cpu=arm1176
 ```
 
 (`deploy` re-verifies before shipping unless `--skip-verify` — pass the same
-`--qemu-cpu` here too, or the re-verify falls back to the default, too-permissive
-qemu CPU model.)
+`--triplet`/`--qemu-cpu` here too, or the re-verify falls back to the default armv7
+directory/too-permissive qemu CPU model. Put `WIKI_DEPLOY_TRIPLET=armv6-musl` in
+`deploy.local.env` instead of repeating `--triplet` on every call.)
 
 ### Example: local Docker Compose test run
 
@@ -322,10 +344,22 @@ No vcpkg/cmake/ninja/zig needed on the dev machine — only Docker. The target n
 Docker at all, same as `native`/`cross`. Remember the glibc caveat under `build`
 above before pointing this at anything other than a reasonably current target distro.
 
+### Example: adding the backup timer to an existing container deployment
+
+```sh
+./tools/wiki-ops.sh systemd install --target=root@192.0.2.10 --variant=container --with-backup-timer
+```
+
+Works whether `wiki-server` itself runs natively or in a container — this only ever
+touches `wiki-backup.sh`/its unit/timer/env, shipped fresh from this repo, never
+anything a previous deploy step staged. `--variant=container` here only matters to
+correctly *skip* the (nonexistent, for this variant) `wiki.service` part — the backup
+install itself doesn't change shape.
+
 ## `static-redeploy`
 
 ```
-static-redeploy [--target=HOST] [--dry-run]
+static-redeploy [--target=HOST] [--variant=V] [--dry-run]
 ```
 
 The whole "Static-assets-only redeploy" recipe, automatically: tar the **entire**
@@ -340,42 +374,53 @@ changed.
 ```
 
 **Assumes a binary-style install** (`$install_root/static` as a plain directory,
-`systemctl restart wiki.service` as the real restart mechanism) — do not point this at
-a container deployment; `static/` lives inside the image there, not at that path on
-the host. Rebuild and `docker compose up -d` again instead.
+`systemctl restart wiki.service` as the real restart mechanism) — `static/` lives
+inside the image for a container deployment, not at that path on the host. If
+`--variant`/`WIKI_DEPLOY_VARIANT` resolves to `container`/`container-arm`, this
+refuses outright with a clear error instead of attempting it (silent if the variant
+is simply unknown — blank never errors, matching every other optional resolver
+value). Rebuild and `docker compose up -d` again for a container deployment instead.
 
 ## `setup-admin`
 
 ```
-setup-admin [--target=HOST]
+setup-admin [--target=HOST] [--variant=V]
 ```
 
 Just the `--create-admin` step on its own, same real-TTY discipline as `deploy
 --first-time`. Useful to re-run standalone if you ever need to reset the single admin
 row (overwrites both username and password together — there's no partial-recovery
 path, same as the manual doc says). **Binary-style installs only** — assumes
-`$install_root/bin/wiki-server` exists directly; for a container deployment use
-`docker compose exec wiki wiki-server --create-admin` instead.
+`$install_root/bin/wiki-server` exists directly; refuses outright (same as
+`static-redeploy` above) if `--variant`/`WIKI_DEPLOY_VARIANT` resolves to
+`container`/`container-arm` — use `docker compose exec wiki wiki-server
+--create-admin` for those instead.
 
 ## `systemd`
 
 ```
-systemd install [--target=HOST] [--with-backup-timer] [--yes] [--dry-run]
+systemd install [--target=HOST] [--variant=V] [--with-backup-timer] [--yes] [--dry-run]
 systemd status  [--target=HOST]
 ```
 
 `install` is the standalone form of what `deploy` already does for the unit files —
 useful to re-run idempotently (e.g. after hand-editing the shipped `wiki.service`) or
-to add `--with-backup-timer` to an existing deployment that didn't opt in at first:
+to add `--with-backup-timer` to an existing deployment that didn't opt in at first.
+Unlike `static-redeploy`/`setup-admin`, this one doesn't refuse for
+`container`/`container-arm` — it just *skips* the `wiki.service` part for them (logged,
+not silent) since Docker's own `restart: unless-stopped` already owns that process;
+`--with-backup-timer` works identically for every variant, see the container-backup
+example under `deploy` above:
 
 ```sh
 ./tools/wiki-ops.sh systemd install --target=root@192.0.2.10 --with-backup-timer
 ```
 
 `status` prints `systemctl status wiki.service` plus `systemctl list-timers
-wiki-backup.timer` (or says it isn't installed). **Binary-style installs only** —
-same reasoning as `static-redeploy` above; there's no `wiki.service` unit for a
-container deployment at all.
+wiki-backup.timer` (or says it isn't installed) — meaningful for any variant now:
+`wiki.service` legitimately reports "not found" for a container deployment, and
+`wiki-backup.timer` legitimately exists if you've set it up via `systemd install
+--with-backup-timer` above.
 
 ## `nginx-config`
 
@@ -421,20 +466,23 @@ because today's rules need adding to.
   one by hand (`mv` it back over the current one, `systemctl restart wiki.service`),
   same as `docs/sbc-deployment.md` already documents. Nothing here automates that walk
   back yet.
-- **`cross`'s output directory doesn't vary with `--triplet`.** See `build` above —
-  switching between `arm-musl` and `armv6-musl` reuses (overwrites) `build-arm/`.
-- **`cross-container` is hardcoded to `arm-musl`/armv7.** `--triplet`/`--cross-dir`
-  have no effect on it; `armv6-musl` is reachable only via the bare `cross` variant.
-- **`static-redeploy`, `setup-admin`, `systemd install|status`, and `deploy
-  --static-only` all assume a binary-style install.** None of them check
-  `WIKI_DEPLOY_VARIANT` first — pointing one at a container deployment's install root
-  fails or does something meaningless rather than erroring clearly. Stick to
-  `docker compose`/`docker compose exec` directly for container deployments' admin
-  account, static assets, and process management.
-- **`cmd_systemd_install`'s brace expansion** (`wiki-backup.{service,timer}`) assumes
-  the target's default shell is bash (or another shell with brace expansion) — same
-  assumption `docs/sbc-deployment.md`'s own manual recipe already makes, not a
-  regression introduced here.
+- **`remote_sh`'s own preamble (`set -euo pipefail; ...`) assumes the target's login
+  shell is bash-compatible.** `pipefail` isn't a POSIX option — a target whose
+  `ssh user@host` login shell is `dash`/plain `sh` would fail this `set` call itself,
+  before `$script` ever runs. Debian/Ubuntu's default root/admin shell is bash (true
+  for every real target this project has actually been deployed to), so this is
+  unverified rather than confirmed-broken — but genuinely untested against a
+  non-bash login shell.
+- **`wiki-backup.service`'s `ReadOnlyPaths=` is hardcoded to `/opt/wiki/vault_data`**
+  in the shipped unit file itself (`systemd/wiki-backup.service`) — if your
+  `--target`'s install root isn't `/opt/wiki`, the timer's own sandboxing won't permit
+  reading the real vault path even though `cmd_backup_timer_install` correctly points
+  `VAULT_PATH` at it. `systemd install --with-backup-timer` logs a warning when this
+  applies; fixing it means either always deploying to `/opt/wiki`, or adding a
+  `ReadWritePaths=`/`ReadOnlyPaths=` override in
+  `/etc/systemd/system/wiki-backup.service.d/` on the target by hand — this script
+  doesn't do that for you.
 - **No multi-host inventory.** One `deploy.local.env` holds exactly one target; manage
-  several real deployments with separate env files and `--target=`/`--port=` flags
-  overriding per invocation, or several copies of `deploy.local.env` swapped in by hand.
+  several real deployments with separate env files and `--target=`/`--port=`/
+  `--triplet=` flags overriding per invocation, or several copies of
+  `deploy.local.env` swapped in by hand.
