@@ -13,9 +13,11 @@ that's `docs/mcp.md`.
 Everything from "Install" through "Static-assets-only redeploy" below can be driven by
 `tools/wiki-ops.sh` instead of typed by hand — one script, flags take priority over
 `deploy.local.env` (gitignored, never committed — copy `deploy.local.env.example` to
-start one) over an interactive prompt over a hard default. `./tools/wiki-ops.sh help`
-lists every subcommand and flag; the manual steps below stay the reference for what
-each one actually does under the hood, and for anyone without the script:
+start one) over an interactive prompt over a hard default. `docs/wiki-ops.md` is the
+full reference (every flag, worked examples, known limitations); `./tools/wiki-ops.sh
+help` always reflects the current flag set fastest. The manual steps below stay the
+reference for what each one actually does under the hood, and for anyone without the
+script:
 
 - `build native|cross|container|cross-container|container-arm` — Path A, Path B, the
   Docker image below, a containerized zig cross-toolchain (no local zig/vcpkg install
