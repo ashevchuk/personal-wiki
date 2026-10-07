@@ -64,15 +64,15 @@ all — everything it needs is already answered.
 Same decision as `docs/sbc-deployment.md`'s own table, mapped onto `build`/`deploy
 --variant=`:
 
-| Target | Variant | Needs on the dev machine | Needs on the target |
-|---|---|---|---|
-| Modern 64-bit SBC (Pi 4/5 Bookworm+) | `native` (build *on* the device) | — | C++20 compiler, CMake, Ninja |
-| Old/weak/32-bit SBC (Pi 2/3 armhf, generic armv7) | `cross` | zig, a native `build/` already done once | nothing but the shipped binary |
-| True ARMv6 (Pi 1/Zero/Zero W) | `cross --triplet=armv6-musl --cross-dir=cross/armv6-musl` | same as `cross` | nothing |
-| Same as `cross`, but no local zig/vcpkg wanted | `cross-container` | only Docker | nothing |
-| x86_64/arm64 desktop, NAS, cloud VM with modern Docker | `container` | Docker | Docker |
-| Pi 4/5 (or any arm64/armv7 box) you'd rather not cross-compile for, via Docker | `container-arm` | Docker + buildx (+ QEMU binfmt for cross-arch) | Docker |
-| x86_64 (or arm64 via `--platform`) target that should run a bare binary, but you'd rather not install vcpkg/cmake/ninja locally | `container-native` | Docker (+ buildx only if `--platform` overrides this host's own arch) | nothing — no Docker needed |
+| Target | Variant | Needs on the dev machine | Needs on the target | Build time |
+|---|---|---|---|---|
+| Modern 64-bit SBC (Pi 4/5 Bookworm+) | `native` (build *on* the device) | — | C++20 compiler, CMake, Ninja | Short (host-speed compile) |
+| Old/weak/32-bit SBC (Pi 2/3 armhf, generic armv7) | `cross` | zig, a native `build/` already done once | nothing but the shipped binary | Short — zig cross-compiles at host speed, no emulation involved |
+| True ARMv6 (Pi 1/Zero/Zero W) | `cross --triplet=armv6-musl --cross-dir=cross/armv6-musl` | same as `cross` | nothing | Short, same reason as `cross` |
+| Same as `cross`, but no local zig/vcpkg wanted | `cross-container` | only Docker | nothing | Short, same reason as `cross` |
+| x86_64/arm64 desktop, NAS, cloud VM with modern Docker | `container` | Docker | Docker | Short if built for the host's own architecture (no `--platform` override) |
+| Pi 4/5 (or any arm64/armv7 box) you'd rather not cross-compile for, via Docker | `container-arm` | Docker + buildx (+ QEMU binfmt for cross-arch) | Docker | **Very long — see the `container-arm` note below** |
+| x86_64 (or arm64 via `--platform`) target that should run a bare binary, but you'd rather not install vcpkg/cmake/ninja locally | `container-native` | Docker (+ buildx only if `--platform` overrides this host's own arch) | nothing — no Docker needed | Short with no `--platform`; with `--platform` targeting a non-host arch, same cost as `container-arm` (very long) |
 
 ## `build`
 
@@ -150,6 +150,15 @@ just a flag that's now possible to pass.
   builder (`docker buildx create --use`) and, for an architecture that isn't this
   host's own, QEMU binfmt registered (`docker run --privileged --rm tonistiigi/binfmt
   --install all`, one-time per host).
+  **Expect this to run very long for `--platform=linux/arm/v7` (or any architecture
+  other than this host's own) — this is not a fluke, every step genuinely runs under
+  QEMU emulation**, including the apt package installs, vcpkg's own dependency builds
+  (Drogon, OpenSSL, trantor, ...), and the project's own compile. `linux/arm/v7`
+  specifically has no prebuilt `vcpkg-tool` binary upstream, so vcpkg builds its own
+  tool from source under emulation before installing a single dependency — confirmed
+  to take a large chunk of that time by itself. `cross`/`cross-container` exist as the
+  fast alternative for exactly this target: zig cross-compiles at native host speed
+  with no emulation anywhere in the pipeline, which is why those variants stay short.
 - **`container-native`** — build inside Docker, deploy a bare binary with no Docker on
   the target. `docker build --target build .` stops at the main `Dockerfile`'s first
   stage, which already ran a full `cmake --install build --prefix /opt/wiki` (same
@@ -171,6 +180,10 @@ just a flag that's now possible to pass.
   `cross/`'s static-musl path exists to sidestep. Fine for a target on Debian
   bookworm+ (or any distro with glibc at least that new); for an old or unknown
   target, use `cross` instead, not this.
+  **`--platform=linux/arm64`/`linux/arm/v7` (anything other than this host's own
+  architecture) hits the same QEMU-emulation cost as `container-arm` above, and runs
+  just as long** — this variant's short build time only applies with no `--platform`
+  override.
 
 ## `verify`
 
@@ -202,7 +215,11 @@ the same as working."
   `/healthz` curl check, torn down after.
 - **`container-arm`** — same idea under `--platform` (default `linux/arm/v7`, QEMU
   emulation unless it happens to match the host's own architecture), port `18081`.
-  Needs the same buildx/binfmt prerequisites as `build container-arm`.
+  Needs the same buildx/binfmt prerequisites as `build container-arm`. This runs a
+  full `docker build` from scratch, same as `build container-arm` — if `--platform`
+  isn't the host's own architecture, this takes just as long (very long; see the
+  `container-arm` note under `build` above). **`verify` never respects `--dry-run`,
+  on any variant** — it's a real smoke test, not a plan.
 - **`container-native`** — runs `wiki-server --create-admin` directly, no qemu (it's a
   native-architecture binary, assuming `--platform` wasn't used to cross-build it with
   buildx — that combination has no local smoke test available beyond the full `ctest`
