@@ -470,7 +470,16 @@ Unlike `static-redeploy`/`setup-admin`, this one doesn't refuse for
 `container`/`container-arm` — it just *skips* the `wiki.service` part for them (logged,
 not silent) since Docker's own `restart: unless-stopped` already owns that process;
 `--with-backup-timer` works identically for every variant, see the container-backup
-example under `deploy` above:
+example under `deploy` above.
+
+**Always backs up the target's existing `wiki.service` to `wiki.service.bak-$STAMP`
+before overwriting it, and asks for confirmation first (`--yes` bypasses it, same as
+the adjacent restart-confirmation) if that existing unit's `EnvironmentFile=` path
+differs from the one this repo's own `systemd/wiki.service` ships** — a customized
+target (a different env-file location than the documented
+`/etc/opt/wiki/wiki.env`) silently reverting to this repo's default on a routine
+`deploy`/`update` is exactly what caused a real production outage before this check
+existed:
 
 ```sh
 ./tools/wiki-ops.sh systemd install --target=root@192.0.2.10 --with-backup-timer
