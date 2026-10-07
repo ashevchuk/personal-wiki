@@ -951,6 +951,12 @@ removes the hand-typing and enforces the order).
   deploy  [--target=HOST] [--variant=V] [--first-time] [--with-backup-timer]
           [--static-only] [--skip-verify] [--qemu-cpu=NAME] [--port=N]
           [--yes] [--dry-run]
+  update  [--target=HOST] [--variant=V] [--triplet=NAME] [--platform=P]
+          [--static-only] [--with-backup-timer] [--skip-verify]
+          [--qemu-cpu=NAME] [--port=N] [--yes] [--dry-run]
+          (git pull, then build V, then a non-first-time deploy to an
+           EXISTING deployment — config.toml/vault/admin account untouched;
+           --static-only skips straight to static-redeploy instead)
   static-redeploy [--target=HOST] [--variant=V] [--dry-run]
   setup-admin [--target=HOST] [--variant=V]
   systemd install [--target=HOST] [--variant=V] [--with-backup-timer] [--yes] [--dry-run]
@@ -1015,6 +1021,41 @@ parse_flags() {
   done
 }
 
+# dispatch_build VARIANT — runs the matching cmd_build_* using the current
+# FLAG_* globals. Shared by the `build` and `update` subcommands so picking
+# the right build function for a variant lives in exactly one place.
+dispatch_build() {
+  local sub=$1
+  case "$sub" in
+    native) cmd_build_native "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+    cross)
+      local resolved_triplet="${FLAG_TRIPLET:-arm-musl}"
+      cmd_build_cross "$resolved_triplet" "${FLAG_CROSS_DIR:-cross/$resolved_triplet}" "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS"
+      ;;
+    container) cmd_build_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+    cross-container) cmd_build_cross_container "${FLAG_TRIPLET:-arm-musl}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+    container-arm) cmd_build_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+    container-native) cmd_build_container_native "$FLAG_PLATFORM" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+    *) die "build: variant must be one of native|cross|container|cross-container|container-arm|container-native" ;;
+  esac
+}
+
+# cmd_update VARIANT TARGET — `git pull` then the matching build and a
+# non-first-time deploy, for picking up new commits on an existing
+# deployment without re-typing the usual build+deploy pair by hand.
+# --static-only skips the build+full-deploy entirely in favor of
+# static-redeploy, for a pull that only touched static/.
+cmd_update() {
+  local variant=$1 target=$2 static_only=$3 with_backup_timer=$4 skip_verify=$5 qemu_cpu=$6 port=$7 triplet=$8
+  run git pull
+  if [ "$static_only" = 1 ]; then
+    cmd_static_redeploy "${WIKI_DEPLOY_INSTALL_ROOT:-/opt/wiki}" "$variant"
+  else
+    dispatch_build "$variant"
+    cmd_deploy "$target" "$variant" 0 "$with_backup_timer" 0 "$skip_verify" "$qemu_cpu" "$port" "$triplet"
+  fi
+}
+
 main() {
   local cmd=${1:-help}
   [ $# -gt 0 ] && shift
@@ -1027,18 +1068,22 @@ main() {
       [ $# -gt 0 ] && shift
       parse_flags "$@"
       load_deploy_config
-      case "$sub" in
-        native) cmd_build_native "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        cross)
-          local resolved_triplet="${FLAG_TRIPLET:-arm-musl}"
-          cmd_build_cross "$resolved_triplet" "${FLAG_CROSS_DIR:-cross/$resolved_triplet}" "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS"
-          ;;
-        container) cmd_build_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        cross-container) cmd_build_cross_container "${FLAG_TRIPLET:-arm-musl}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        container-arm) cmd_build_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        container-native) cmd_build_container_native "$FLAG_PLATFORM" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        *) die "build: variant must be one of native|cross|container|cross-container|container-arm|container-native" ;;
-      esac
+      dispatch_build "$sub"
+      ;;
+
+    update)
+      parse_flags "$@"
+      load_deploy_config
+      # Resolved here (not left to cmd_deploy's own resolve) because the
+      # --static-only branch calls cmd_static_redeploy directly, bypassing
+      # cmd_deploy entirely — it still needs WIKI_DEPLOY_HOST/INSTALL_ROOT
+      # set correctly, same as the dedicated static-redeploy subcommand.
+      resolve_optional WIKI_DEPLOY_HOST "$FLAG_TARGET" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
+      resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
+      resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
+      resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
+      resolve WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to update (native|cross|container|cross-container|container-arm|container-native)"
+      cmd_update "$WIKI_DEPLOY_VARIANT" "$FLAG_TARGET" "$FLAG_STATIC_ONLY" "$FLAG_WITH_BACKUP_TIMER" "$FLAG_SKIP_VERIFY" "$FLAG_QEMU_CPU" "$FLAG_PORT" "$FLAG_TRIPLET"
       ;;
 
     verify)
