@@ -525,7 +525,7 @@ int main(int argc, char** argv) {
   // (`ProtectSystem=strict` + `ReadWritePaths=/opt/wiki/vault_data` only):
   // a spray of "Read-only file system" errors at startup, harmless for
   // small JSON requests but fatal for actual file uploads (see
-  // docs/deployment.md). Point it at a dot-prefixed directory INSIDE the vault (like
+  // docs/sbc-deployment.md). Point it at a dot-prefixed directory INSIDE the vault (like
   // `.trash`), so it's covered by the SAME ReadWritePaths=/opt/wiki/vault_data
   // entry the systemd unit already grants, and IndexBuilder's existing
   // "skip .git/.trash/anything-dot entirely" rule (see IndexBuilder.cpp)

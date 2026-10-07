@@ -55,7 +55,7 @@ class VaultRepository {
     // file's content. std::filesystem has no portable ctime accessor
     // (only last_write_time, i.e. mtime, which reflects the document's
     // last EDIT, not when it was deleted) -- this project is Linux-only
-    // (see docs/deployment.md), so a raw ::stat() for st_ctime is the
+    // (see docs/sbc-deployment.md), so a raw ::stat() for st_ctime is the
     // honest value instead of mislabeling mtime as "deleted at".
     int64_t deletedAtUnix = 0;
   };

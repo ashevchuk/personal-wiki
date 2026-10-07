@@ -12,7 +12,7 @@ namespace wikicore::auth {
 //
 // `req->getPeerAddr()` (used by /login's own rate limiter today) is the
 // raw TCP peer — behind the reverse proxy this app is documented to run
-// behind for any public exposure (docs/deployment.md), that's ALWAYS the
+// behind for any public exposure (docs/sbc-deployment.md), that's ALWAYS the
 // proxy's own loopback address, never the actual client. An IP allowlist
 // checked against that would either allow everyone (if the proxy's
 // address happens to be in the list) or nobody, and a rate limiter keyed
@@ -23,7 +23,7 @@ namespace wikicore::auth {
 // Reads X-Real-IP FIRST, falling back to X-Forwarded-For's LAST entry,
 // falling back to the raw peer address when neither header is present
 // (hit directly, no proxy) — verified against this app's own real,
-// deployed nginx config (docs/deployment.md), not assumed:
+// deployed nginx config (docs/sbc-deployment.md), not assumed:
 //
 //   proxy_set_header X-Real-IP $remote_addr;
 //   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

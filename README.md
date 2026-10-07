@@ -167,8 +167,8 @@ config.toml option for it, since that would just be a second, potentially
 conflicting source of truth for a value SQLite already owns).
 
 Deploying somewhere real (systemd unit, reverse proxy for TLS, native vs. cross-
-compiled build for a weak/old SBC, backup timer): [`docs/deployment.md`](docs/deployment.md)
-and the self-contained [`docs/sbc-deployment.md`](docs/sbc-deployment.md) runbook.
+compiled build for a weak/old SBC, backup timer): the self-contained
+[`docs/sbc-deployment.md`](docs/sbc-deployment.md) runbook.
 
 **Or, on a normal x86_64/arm64 machine (not a weak/old ARM SBC — see
 [`docs/docker.md`](docs/docker.md) for why):**
@@ -287,7 +287,7 @@ startup. Full architecture rationale lives in
 Feature-complete: auth, CRUD/WYSIWYG editing, search/nav, MCP (stdio + remote),
 hardening, deployment, document versioning, `[[wiki-links]]` backlinks, vault backup,
 and semantic search are all implemented. Cross-compiled builds run natively on ARM —
-see [`docs/deployment.md`](docs/deployment.md). Semantic search configuration is in
+see [`docs/sbc-deployment.md`](docs/sbc-deployment.md). Semantic search configuration is in
 [`docs/embeddings.md`](docs/embeddings.md); the Draft agent and sidebar Chat panel are
 documented in [`docs/llm.md`](docs/llm.md).
 

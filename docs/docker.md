@@ -4,7 +4,7 @@
 modern kernel/glibc — the actual verified-on-real-hardware target this project targets
 (Debian 9 stretch, armv7, glibc 2.24, EOL) is too old to run a modern Docker Engine at
 all. For that class of device, use the zig cross-compile path instead —
-see `docs/deployment.md` and `docs/sbc-deployment.md`. Native on-device
+see `docs/sbc-deployment.md`. Native on-device
 compilation needs a C++20 toolchain the old distro does not have. This
 Dockerfile is for the "I want to try this right now" path: a desktop, a
 NAS, a cloud VM, or a Pi 4/5 on a 64-bit OS new enough to run Docker
@@ -99,7 +99,7 @@ on the same `8080` port already published.
 ## Backup
 
 `docker compose exec wiki wiki-server --reindex` works the same as the native path.
-The one-click Web UI backup button (Account page — see `docs/deployment.md`'s
+The one-click Web UI backup button (Account page — see `docs/sbc-deployment.md`'s
 "Backup" section) works unmodified too. The opt-in `systemd` timer
 (`systemd/wiki-backup.*`) is systemd-specific and doesn't apply here — since
 `./vault_data` is a plain host directory, back it up with whatever the host already

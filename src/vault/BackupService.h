@@ -15,7 +15,7 @@ struct BackupResult {
 // .tar.gz, purely read-only — no filesystem mutation, nothing written
 // anywhere. Includes `.trash/` (soft-deleted documents belong in a backup
 // too) and `.index.db*` (harmless to include even though the index is
-// disposable per docs/deployment.md's "Backup" section — a restored copy
+// disposable per docs/sbc-deployment.md's "Backup" section — a restored copy
 // just means a faster startup than a full rescan, not a correctness
 // requirement; a torn snapshot of the db mid-write is possible if this
 // runs while the server is live, but the unconditional startup rescan
@@ -33,7 +33,7 @@ struct BackupResult {
 // nothing about vaultPath's actual content matters beyond being a valid
 // path. `tar` is assumed present — true of every mainstream Linux
 // distribution this app targets, including the real deployed Debian 9
-// stretch SBC (see docs/deployment.md's cross-compilation section).
+// stretch SBC (see docs/sbc-deployment.md's cross-compilation section).
 // Rolling a hand-written tar+gzip writer, or pulling in a new vcpkg
 // archive dependency, isn't worth it for one rarely-used, admin-only
 // button when a well-tested system tool already does exactly this.

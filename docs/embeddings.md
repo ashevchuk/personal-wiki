@@ -14,7 +14,7 @@ project whose documents are fail-safe-private by default:
   (Ollama, LM Studio) nothing leaves the box at all; against `api.openai.com` it does.
 - **Local** (a small quantized model run in-process via llama.cpp) keeps every
   document on the machine, at the cost of a heavier binary and a real
-  cross-compilation story for the ARM/SBC deployment path (see `deployment.md`,
+  cross-compilation story for the ARM/SBC deployment path (see
   `sbc-deployment.md`).
 
 Both are build-time-optional and mutually independent; a running binary is then

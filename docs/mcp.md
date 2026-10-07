@@ -195,7 +195,7 @@ below is managed live from the Account page (SQLite-backed via `McpRemoteConfig`
   no IP restriction. Accepts IPv4 and IPv6, CIDR or a bare address (treated as `/32` or
   `/128`) — see `src/auth/CidrMatch.h`.
 
-**Requires TLS in front of this app** (a reverse proxy — see `docs/deployment.md`'s
+**Requires TLS in front of this app** (a reverse proxy — see `docs/sbc-deployment.md`'s
 "Remote MCP" section for the exact nginx directives this needs, including the ones the
 IP allowlist depends on to see the real client address rather than the proxy's own).
 The token travels in a plain header; without TLS between the client and that proxy,

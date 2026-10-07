@@ -1,17 +1,48 @@
 # Single-Board Computer Deployment Runbook
 
-Everything needed to get `wiki-server`/`wiki-mcp` running on a real single-board
-computer (Raspberry Pi or similar ARM/x86_64 SBC), start to finish, in one place. This
-is the practical runbook; `docs/deployment.md` and `docs/architecture.md` carry the
-broader design rationale — this file exists so a deployment doesn't require reading
-either of them first. What it does NOT cover: connecting an MCP client to `wiki-mcp`
-once it's built and installed (tool schemas, `claude_desktop_config.json`, the remote
-HTTP transport) — that's `docs/mcp.md`.
+Everything needed to get `wiki-server`/`wiki-mcp` running on a real device (Raspberry
+Pi or similar ARM/x86_64 SBC, or any other Linux host) — build, install, systemd, TLS,
+backup, remote MCP, redeploys — start to finish, in one place. `docs/architecture.md`
+carries the broader design rationale; this is the operational runbook. What it does
+NOT cover: connecting an MCP client to `wiki-mcp` once it's built and installed (tool
+schemas, `claude_desktop_config.json`, the remote HTTP transport's own protocol) —
+that's `docs/mcp.md`.
 
-See `docs/deployment.md`'s "Real-hardware verification status" for exactly what has
-and hasn't been verified live: cross-compiled binaries have been deployed to and
-verified running natively on a real armv7 (Debian 9 stretch) target; a full native
-build compiled on-device has not been done.
+## Real-hardware verification status
+
+A full native build (`cmake --build` from scratch, not cross-compilation) is verified
+on x86_64 Linux (Arch) only — `cmake --install`, running the installed tree, the full
+`ctest` security/E2E pass, a live VaultWatcher. A native build on a Raspberry Pi itself
+(compiling on the device, as described below under "Path A") has not been done.
+
+Cross-compiled binaries have been deployed to and verified on a live target device —
+armv7l, Debian 9 (stretch, EOL, glibc 2.24) — via `arm-linux-musleabihf`+musl+static
+(see "Path B" below): `wiki-server` and `wiki-mcp` run natively (not emulated) on the
+device, `unit_tests` passes under `qemu-arm-static`, and the full login → CSRF →
+document creation → atomic disk write → FTS5 search with snippet highlighting cycle
+works over live HTTP against a real systemd unit (hardening as described below),
+alongside live nginx/Samba/NFS/ProFTPD/mosquitto/munin on the same box with no impact
+on any of them. The code has no x86-specific assumptions.
+
+## Recording your own live deployment target
+
+Keep the host/IP, install root, public URL (and reverse-proxy subpath, if any), and
+the systemd unit/user running it in a private note outside this repo — not in version
+control, since a public git history is the wrong place for a real deployment's
+identifying details. Example shape, with placeholder values (RFC 5737 documentation
+IP, `.example.com`):
+
+- Host: `root@192.0.2.10` (`wiki.example.com`, armv7l/sunxi, Debian 9 stretch).
+- Install root: `/opt/wiki` (`bin/`, `static/`, `config.toml`, `vault_data/`).
+- Public URL: `http://192.0.2.10/wiki/` (nginx `default` vhost, prefix-stripping
+  `proxy_pass` to `127.0.0.1:8080` — see "Reverse proxy" below; check directly on the
+  instance whether `[server].base_path` is set — it's optional, closes one specific
+  edge case).
+- systemd unit: `wiki.service`, `User=wiki`.
+
+An old/weak target device's toolchain is the reason to cross-compile from a dev
+machine rather than run `cmake --install` natively on the device — see "Update" below
+for the native-build path on a device capable of it.
 
 ## Three ways to get this running on the device
 
@@ -20,7 +51,7 @@ build compiled on-device has not been done.
 | When to use | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device | Capable, modern-enough device (Pi 4/5, 64-bit OS) where you'd rather not manage a toolchain at all |
 | Toolchain | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ | Whatever `docker build` pulls in, entirely inside the image |
 | Output | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc | A container image; the device's own userland is untouched |
-| Verified live | Not yet (no on-device compile has been run to completion) | Yes — see `docs/deployment.md` | Not on real ARM SBC hardware specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
+| Verified live | Not yet (no on-device compile has been run to completion) | Yes — see "Real-hardware verification status" above | Not on real ARM SBC hardware specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
 
 Pick native if the device is reasonably capable and current (Raspberry Pi OS Bookworm+,
 a recent Debian/Ubuntu ARM64). Pick cross-compile if the target is old/weak/EOL (e.g.
@@ -165,6 +196,68 @@ Only after both of those pass cleanly should the binaries get copied to the targ
   `<string>`/`<vector>`/etc. "file not found" errors even though normal compilation
   finds them fine. Fixed (already applied): `set(CMAKE_CXX_SCAN_FOR_MODULES OFF)`.
 
+### Porting to a different board (different CPU architecture)
+
+**First, check whether you need this section at all.** The existing
+`cross/arm-musl` target is armv7 (32-bit ARM, Cortex-A7-class or newer,
+hardfloat) — if your board is ALSO armv7/armhf, the already-built binary
+(or your own build from the exact recipe above, unmodified) just runs, no
+porting needed. If your board is x86_64, skip cross-compilation entirely —
+use the plain native build recipe under "Path A"; `cross/` isn't
+involved. This section is only for a genuinely different CPU architecture
+(most commonly aarch64/arm64 — the 64-bit mode most current-generation
+SBCs, including newer Raspberry Pi boards, actually ship by default).
+
+**Everything target-specific lives in exactly four files**, all under
+`cross/arm-musl/` — copy that whole directory to `cross/<your-triplet-name>/`
+and edit only what's below (`ar`/`ranlib` need no changes at all — they're
+architecture-agnostic wrappers around `zig ar`/`zig ranlib`):
+
+1. **`cc`/`c++`** — change the `-target` string to your architecture's zig
+   target triple (`zig targets` lists what your installed zig supports).
+   `arm-linux-musleabihf` becomes, for example, `aarch64-linux-musl` for a
+   64-bit ARM board. Drop `-mcpu=generic+v7a` unless your new target has an
+   equivalent reason to pin a baseline CPU feature set — that flag exists
+   specifically for armv7's own fragmented Cortex-A/ARMv7 feature story, it
+   isn't a generic requirement.
+2. **`toolchain.cmake`** — change `CMAKE_SYSTEM_PROCESSOR` and both
+   `CMAKE_C_COMPILER_TARGET`/`CMAKE_CXX_COMPILER_TARGET` to match. Leave
+   `CMAKE_LINK_DEPENDS_USE_LINKER OFF` and `CMAKE_CXX_SCAN_FOR_MODULES OFF`
+   in place for your first attempt — both work around zig 0.16.0 bugs found
+   on armv7 that are plausibly generic to zig's cross-linking path, though
+   unverified against a second architecture. If your build links cleanly
+   without them, drop them; if it SIGSEGVs identically to the documented
+   armv7 bug above, the fix is the same one line.
+3. **The vcpkg triplet file** (`arm-musl.cmake` → `<your-name>.cmake`) —
+   change `VCPKG_TARGET_ARCHITECTURE` to vcpkg's own name for your
+   architecture (`arm64` for aarch64, `x64` for x86_64, `riscv64` for
+   RISC-V — see vcpkg's own triplet docs for the authoritative list). Keep
+   `VCPKG_CRT_LINKAGE`/`VCPKG_LIBRARY_LINKAGE` `static` and the
+   `VCPKG_CHAINLOAD_TOOLCHAIN_FILE` line pointing at your new
+   `toolchain.cmake`.
+4. **`cross/overlay-ports/`** (brotli, libuuid, md4c) — these are not
+   triplet-specific; the same `--overlay-ports=cross/overlay-ports` flag
+   applies regardless of which triplet you build. Whether the specific
+   patches in them (a brotli CLI-binary link crash, a libuuid CLI/test
+   build issue) are still necessary for your new architecture is unverified
+   — they were found on armv7, not derived from a spec. Try building
+   without them first; patch further only on a matching crash.
+
+Then run the same recipe as the armv7 instructions above, pointed at your
+new triplet/toolchain file instead. The same mandatory step applies:
+`qemu-<your-arch>-static ./build-<name>/tests/unit_tests` must pass every
+case, not just avoid crashing, before the binary goes near real hardware.
+
+**One alternative worth considering before cross-compiling at all**: the
+musl+static approach exists specifically to dodge `GLIBC_2.XX not found`
+against an old target OS (Debian 9 stretch, glibc 2.24, in this project's
+real deployment). If your board runs a reasonably current Linux distro, a
+plain glibc cross-toolchain — or a native on-device build, if the board has
+enough RAM/storage/patience for an hours-long Drogon+OpenSSL build — may
+work and sidesteps the whole `cross/` mechanism. A native on-device build
+has not been tried for this project (see "Real-hardware verification
+status" above).
+
 ## Install (Path A or B — Docker doesn't use this step, see `docs/docker.md`)
 
 ```sh
@@ -198,7 +291,10 @@ Edit `config.toml` as needed — the fields that actually matter for a real depl
 listen_addr = "127.0.0.1"   # keep on loopback; a reverse proxy handles TLS/public exposure
 port = 8080
 threads = 2
-# base_path = "/wiki"       # OPTIONAL — see "Under a subpath of an existing site" below
+# base_path = "/wiki"       # OPTIONAL — see "Reverse proxy" below
+# theme = "classic"         # OPTIONAL — which of classic/dark/green a fresh browser
+                             # (nothing picked yet) lands on; see config.example.toml's
+                             # own comment.
 
 [vault]
 path = "./vault_data"       # relative to the working directory (WorkingDirectory= in the unit)
@@ -207,6 +303,8 @@ path = "./vault_data"       # relative to the working directory (WorkingDirector
 scope = "admin"             # "admin" sees public+private (local spawn by the owner); "public" for any future remote transport
 ```
 
+Restart the service after changing either `base_path` or `theme`.
+
 Create the admin account:
 
 ```sh
@@ -214,10 +312,11 @@ sudo -u wiki ./bin/wiki-server --create-admin
 ```
 
 This prompts for a username and password interactively (echo disabled, nothing gets
-logged). Save the password before closing the terminal — running this again overwrites
-the same single admin row, which is the only recovery path if the password is lost,
-but there is no "show me the current password" escape hatch; losing it locks the
-account out until this exact command is rerun.
+logged). The username isn't fixed to "admin" — it's whatever gets typed here. Save the
+password before closing the terminal — running this command again overwrites BOTH the
+username and password together, which is also the only recovery path if the password
+is lost (SQLite's single enforced admin row, id=1, is the one source of truth for it;
+there's no config.toml knob and no "show me the current password" escape hatch).
 
 ## systemd
 
@@ -228,31 +327,42 @@ sudo systemctl enable --now wiki.service
 sudo systemctl status wiki.service
 ```
 
-The shipped unit is already hardened:
+The shipped unit is already hardened — `ProtectSystem=strict`, `NoNewPrivileges=yes`,
+`ProtectHome=yes`, `PrivateTmp=yes`, `ReadWritePaths=/opt/wiki/vault_data` (the only
+place the service writes), plus `CapabilityBoundingSet=` empty, `RestrictAddressFamilies`,
+`SystemCallFilter=@system-service`, `MemoryDenyWriteExecute`, and the other
+`Protect*`/`Restrict*` directives (see `systemd/wiki.service`'s own comments for what
+each covers). With `CapabilityBoundingSet=` empty the process loses `CAP_DAC_OVERRIDE`
+even running as `root` — file ownership/permissions under `ReadWritePaths` must be
+exactly right; the capability bounding set does not fall back to privilege. Run
+`systemd-analyze security wiki.service` to see its score, and exercise the app once
+after any change to this unit's hardening (login, create a document, search, upload an
+attachment) — a hardening regression here fails at runtime (a specific route breaks),
+not at `daemon-reload` time.
 
-```
-NoNewPrivileges=yes
-ProtectSystem=strict
-ProtectHome=yes
-PrivateTmp=yes
-ReadWritePaths=/opt/wiki/vault_data
-```
+`ReadWritePaths=/opt/wiki/vault_data` already covers Drogon's own internal
+upload-buffering directory too (used to stage large multipart request bodies to disk,
+independent of the app's own attachment storage): it's pointed at
+`<vault_path>/.uploads-tmp` (an absolute path, computed at startup), which falls under
+the same `ReadWritePaths` entry and is skipped by `IndexBuilder`'s existing "skip
+`.git`/`.trash`/anything-dot" rule, so it's never mistaken for a document. Nothing to
+configure manually for this.
 
-`ReadWritePaths=/opt/wiki/vault_data` is the only path the service can write to —
-everything else under `ProtectSystem=strict` is read-only to it. This already covers
-Drogon's own internal upload-buffering directory (used to stage large multipart
-request bodies to disk, independent of the app's own attachment storage): it's pointed
-at `<vault_path>/.uploads-tmp` (an absolute path, computed at startup), which falls
-under the same `ReadWritePaths` entry and is skipped by `IndexBuilder`'s existing
-"skip `.git`/`.trash`/anything-dot" rule, so it's never mistaken for a document.
-Nothing to configure manually for this.
+`EnvironmentFile=-/etc/opt/wiki/wiki.env` is optional (note the leading `-`) — the file
+is allowed to simply not exist. The runtime secret readers are `CloudEmbeddingProvider`
+and `CloudChatClient`: each `getenv()`s the variable named by `[embeddings].api_key_env`
+/ `[llm].api_key_env` in `config.toml` (see `systemd/wiki.env.example`,
+`docs/embeddings.md`, `docs/llm.md`). For embeddings `provider = "none"` / `"local"`
+and llm `provider = "none"`, or a loopback OpenAI-compatible server that doesn't
+authenticate, the file can stay absent. Admin credentials live in SQLite; sessions are
+unsigned random tokens with no secret-based signature.
 
-`EnvironmentFile=-/etc/opt/wiki/wiki.env` is optional (note the leading `-`) —
-the file is allowed to simply not exist. The runtime secret readers are
-`CloudEmbeddingProvider` and `CloudChatClient` (`getenv` of whatever
-`[embeddings].api_key_env` / `[llm].api_key_env` name; see
-`systemd/wiki.env.example`, `docs/embeddings.md`, `docs/llm.md`). Admin
-credentials still live in SQLite; sessions are unsigned random tokens.
+## TLS / public internet access
+
+`wiki-server` doesn't terminate TLS itself. For access outside the local network, put a
+reverse proxy (nginx/Caddy/traefik) in front of it to handle TLS and proxy to
+`127.0.0.1:8080` (or whatever `config.toml` specifies). Without that step, keep
+`listen_addr = "127.0.0.1"` and don't expose the port directly.
 
 ## Reverse proxy
 
@@ -272,14 +382,21 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/wiki.example.com/privkey.pem;
 
     location / {
+        client_max_body_size 0;  # unlimited; wiki-server's own 2 GiB request cap still applies
         proxy_pass http://127.0.0.1:8080/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        # Draft / Chat agent SSE (`GET /api/agent/sessions/{id}/stream`) sets
+        # X-Accel-Buffering: no so this location does not have to turn
+        # proxy_buffering off for every other response.
     }
 }
 ```
+
+`client_max_body_size 0` is required for large attachment uploads (a 120 MB PDF,
+etc.) — nginx's default is 1m and would 413 before `wiki-server` ever saw the body.
 
 ### Under a subpath of an existing site (e.g. `/wiki`)
 
@@ -289,7 +406,11 @@ matter what path it's requested from — see `docs/architecture.md`); its own in
 bootstrap script infers the mount prefix itself on load, by matching
 `location.pathname` against this app's known route shapes (`/d/...`, `/edit/...`,
 `/search`, ...) and setting a `<base href>` from whatever came before that match —
-works correctly under any subpath, or none, automatically:
+works correctly under any subpath, or none, automatically. Stylesheets in
+`shell.html` itself are created in that same inline script *after* `<base>` exists,
+not as static `<link href="css/...">` tags — the HTML preload scanner otherwise
+fetches them against the document URL (`/wiki/edit/css/edit.css`) and gets this SPA
+shell (`text/html`) instead of CSS.
 
 ```nginx
 location = /wiki {
@@ -297,11 +418,15 @@ location = /wiki {
 }
 
 location /wiki/ {
+    client_max_body_size 0;  # unlimited; wiki-server's own 2 GiB request cap still applies
     proxy_pass http://127.0.0.1:8080/;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
+    # Draft / Chat agent SSE (`GET /api/agent/sessions/{id}/stream`) sets
+    # X-Accel-Buffering: no so this location does not have to turn
+    # proxy_buffering off for every other response.
 }
 ```
 
@@ -326,26 +451,103 @@ Skip it for a deployment on its own (sub)domain, or if that one cold-start edge 
 acceptable to leave unstyled. Full reasoning in `shell.html`'s own inline script
 comment and `src/config/AppConfig.h`'s comment on `basePath`.
 
+## Remote MCP
+
+Phase 2 feature — an admin-toggleable, bearer-token-protected `POST /mcp` HTTP
+endpoint (see `docs/mcp.md`), letting an MCP client reach this wiki over the network
+instead of only a local stdio spawn. Enable/disable, write access, the token, and the
+IP allowlist are all managed live from the Account page — no config.toml edit, no
+restart.
+
+**Requires TLS in front of this app.** The bearer token travels in a plain
+`Authorization` header on every request — over plain HTTP that's readable by anything
+between the client and this box. `wiki-server` deliberately doesn't terminate TLS
+itself (see "TLS / public internet access" above) — put the same reverse proxy this
+app already needs for any public exposure in front of `/mcp` too; there's no separate
+listener to configure, it's one more route on the existing `127.0.0.1:8080` upstream.
+
+**The IP allowlist depends on the proxy setting the right headers correctly** — the
+exact nginx directives already shown above for the subpath case are what this needs:
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+```
+
+`auth::clientIp()` (`src/auth/ClientIp.h`) reads `X-Real-IP` first, falling back to
+`X-Forwarded-For`'s last entry. Both matter for the same reason: `proxy_set_header`
+overwrites a header before forwarding it upstream (no client-supplied `X-Real-IP`
+survives that — `$remote_addr` is nginx's own view of the TCP connection, not
+spoofable from the client side), while `$proxy_add_x_forwarded_for` appends
+`$remote_addr` to whatever `X-Forwarded-For` the client already sent — so that
+header's first entry is exactly what the client claimed (trivially spoofable: a
+request with `X-Forwarded-For: <an-allowlisted-ip>` would walk straight past an
+allowlist that trusted the first entry), while the last is always nginx's own append.
+
+A deployment with a different proxy chain (more than one hop, or a proxy that doesn't
+set `X-Real-IP`/doesn't use `$proxy_add_x_forwarded_for` the same way) needs to verify
+its own directives produce the same guarantee — a misconfigured proxy here doesn't
+break the bearer-token check, only the IP allowlist's own guarantee on top of it. The
+token is still the actual gate; treat the allowlist as a defense-in-depth layer, not
+the only thing standing between the internet and this vault.
+
+Whether remote MCP is currently enabled, and with what settings, is not tracked in
+this doc — check the Account page's Remote MCP section directly; that's also the only
+place the raw bearer token is ever shown, exactly once, on generation
+(`McpRemoteConfig::regenerateToken()`). To rotate it: Account page → Remote MCP
+section → Regenerate (invalidates the old value immediately), or
+`POST /api/admin/mcp-remote-config/regenerate-token` as admin.
+
 ## Backup
 
-The vault directory (`[vault].path`, plus its `.trash/`) is the entire source of truth.
-The SQLite index (`[index].db_path`) is fully disposable — `wiki-server --reindex`
-rebuilds it from scratch — backing it up is optional (saves a rescan on restore for a
-very large vault, nothing more). Minimum viable backup: the vault directory, regularly
-— two ways to actually make that happen, full detail in `docs/deployment.md`'s own
-"Backup" section:
+The vault directory (`[vault].path`, plus its `.trash/`) is the entire source of
+truth. The SQLite index (`[index].db_path`) is fully disposable — `wiki-server
+--reindex` rebuilds it from scratch — backing it up is optional (saves a rescan on
+restore for a very large vault, nothing more). Minimum viable backup: the vault
+directory, regularly. Two ways to actually do that:
 
-- **Ad hoc**: Account page (admin, Web UI) → "Download backup" — streams a `.tar.gz` of
-  the whole vault on demand. Only useful while the box and its disk are both still
-  alive, which is exactly the case a dead SD card is not.
-- **Automated, unattended**: an opt-in `systemd` timer
-  (`share/wiki/systemd/wiki-backup.{service,timer}`, installed the same way `wiki.service`
-  itself was above — not enabled by a plain `cmake --install`). Tars `VAULT_PATH`
-  straight off disk, independent of `wiki-server` entirely — keeps working whether the
-  service is healthy, crashed, or mid-restart. Point its `BACKUP_DIR` at a different
-  disk/mount than the SD card the vault itself lives on (a USB drive, a network share,
-  another machine over sshfs/NFS) — a backup on the same card it's meant to protect
-  against doesn't survive that card dying.
+**Ad hoc, from the Web UI**: Account page (admin only) → "Download backup" — hits
+`GET /api/admin/backup` (`src/vault/BackupService.h`), which shells out to the system
+`tar` binary (`fork()`+`execlp()` with an explicit argv, never `system()`/`popen()`,
+so nothing about the vault path's own content can be interpreted as shell syntax) and
+streams back a `.tar.gz` of the whole vault, `.trash/` and the index db included,
+`.uploads-tmp/` (Drogon's own transient upload-staging buffer) and `.mcp-uploads/`
+(remote-MCP large-file tickets) excluded. Useful for a quick snapshot before a risky
+change; not a substitute for the automated path below, since it only works while the
+server and its disk are both still alive.
+
+**Automated, via systemd timer** (`systemd/wiki-backup.{service,timer}`,
+`systemd/wiki-backup.sh`) — not installed/enabled by a plain `cmake --install`;
+opt in explicitly:
+
+```sh
+sudo cp /opt/wiki/share/wiki/systemd/wiki-backup.{service,timer} /etc/systemd/system/
+sudo mkdir -p /etc/opt/wiki
+sudo cp /opt/wiki/share/wiki/systemd/wiki-backup.env.example /etc/opt/wiki/wiki-backup.env
+sudo "$EDITOR" /etc/opt/wiki/wiki-backup.env   # set BACKUP_DIR to a DIFFERENT disk/mount, see below
+sudo systemctl daemon-reload
+sudo systemctl enable --now wiki-backup.timer
+```
+
+`wiki-backup.sh` tars `VAULT_PATH` straight off disk (same `.uploads-tmp/` and
+`.mcp-uploads/` exclusion as the Web UI button, same atomic temp-file-then-rename
+discipline as `VaultRepository`'s own document writes), then prunes down to
+`RETENTION_COUNT` (default 14), oldest first, only after a new backup has landed. It
+deliberately does not go through `wiki-server`/the HTTP endpoint above — no admin
+session or credentials needed, and it keeps working whether the server is healthy,
+crashed, or mid-restart.
+
+**Point `BACKUP_DIR` at a disk/mount other than the one `VAULT_PATH` lives on** — an
+external USB drive, a network share, another machine over sshfs/NFS, anything that
+doesn't share the SD card's own failure mode. `wiki-backup.service`'s
+`ProtectSystem=strict` only grants read access to `/opt/wiki/vault_data` by default
+(see the unit file's own comment) — an unusual `BACKUP_DIR` outside the paths systemd
+hardening normally allows needs a `ReadWritePaths=` override in
+`/etc/systemd/system/wiki-backup.service.d/`, not a loosening of the shipped unit.
+
+The timer defaults to `OnCalendar=daily`, `Persistent=true` (a missed run — e.g. the
+device was off — fires as soon as it's back up). Check it landed with
+`systemctl list-timers wiki-backup.timer` and `journalctl -u wiki-backup.service`.
 
 ## Update
 
@@ -357,11 +559,121 @@ sudo cmake --install build --prefix /opt/wiki             # or transfer a cross-
 sudo systemctl restart wiki.service
 ```
 
-For a cross-compiled deployment, "install" means: rebuild `build-arm`, re-verify under
-`qemu-arm-static`, transfer the new `bin/wiki-server`/`bin/wiki-mcp` to the target
-(`scp` is fine — they're fully static, single files, no dependency tree to sync),
-`systemctl stop wiki.service` → replace the binary → `chown wiki:wiki` → `chmod 755` →
-`systemctl start wiki.service`.
+For a cross-compiled deployment, rebuild `build-arm`, re-verify under
+`qemu-arm-static` (see "Verify BEFORE shipping anything to real hardware" above), then
+ship just the two binaries plus `static/` rather than running `cmake --install` on the
+target itself:
+
+```sh
+# 1. incremental cross-build (vcpkg_installed_arm/ and build-arm/ are both reused,
+#    not recreated, on every subsequent deploy)
+export PKG_CONFIG_LIBDIR="$PWD/vcpkg_installed_arm/arm-musl/lib/pkgconfig:$PWD/vcpkg_installed_arm/arm-musl/share/pkgconfig"
+export PKG_CONFIG_SYSROOT_DIR=""
+cmake --build build-arm -j"$(nproc)"
+qemu-arm-static ./build-arm/tests/unit_tests   # must pass every case before shipping
+
+# 2. ship the new binaries + static assets alongside the live ones (never
+#    overwrite in place — an scp that dies mid-transfer must not leave a
+#    half-written binary where systemd will find it on next restart)
+scp build-arm/wiki-server build-arm/wiki-mcp root@<target>:/tmp/
+scp -r static root@<target>:/tmp/static-new
+
+# 3. on the target: back up what's live, strip + swap the new files in, restart, verify
+ssh root@<target> '
+  set -e
+  STAMP=$(date +%Y%m%d-%H%M%S)
+  cp /opt/wiki/bin/wiki-server /opt/wiki/bin/wiki-server.bak-$STAMP
+  cp /opt/wiki/bin/wiki-mcp /opt/wiki/bin/wiki-mcp.bak-$STAMP
+  mv /opt/wiki/static /opt/wiki/static.bak-$STAMP
+  chmod +x /tmp/wiki-server /tmp/wiki-mcp
+  strip --strip-all /tmp/wiki-server /tmp/wiki-mcp
+  mv /tmp/wiki-server /opt/wiki/bin/wiki-server
+  mv /tmp/wiki-mcp /opt/wiki/bin/wiki-mcp
+  mv /tmp/static-new /opt/wiki/static
+  chown -R wiki:wiki /opt/wiki/bin /opt/wiki/static
+  systemctl restart wiki.service
+  sleep 1
+  systemctl is-active wiki.service
+  curl -s -o /dev/null -w "healthz: %{http_code}\n" http://127.0.0.1:8080/healthz
+'
+```
+
+**Strip the binaries on the target device itself, never on the dev machine.**
+`CMAKE_BUILD_TYPE=RelWithDebInfo` keeps debug symbols in the statically-linked ELF —
+`wiki-server` ships at ~116M, `wiki-mcp` at ~61M; `strip --strip-all` drops that to
+~14M for `wiki-server` (roughly 8x) with no behavior change. The dev machine's own
+`strip` doesn't recognize this cross-compiled ARM ELF's architecture, and
+`zig objcopy --strip-all` errors `unimplemented` for this static-musl-ARM shape — the
+target's own native `strip` (real GNU binutils, correct architecture) is what works.
+The unstripped `build-arm/wiki-server`/`wiki-mcp` stay on the dev machine, kept around
+for `addr2line`/`gdb` if a crash ever needs symbols.
+
+The `.bak-$STAMP` copies are never cleaned up automatically — sweep old ones by hand
+occasionally on a long-lived deployment.
+
+## Static-assets-only redeploy (frontend change, no rebuild needed)
+
+When the only thing that changed is under `static/` (CSS, JS, `shell.html`) — no
+`src/` touched, nothing to recompile or cross-compile — the full "Update" flow above is
+overkill. From a dev machine that isn't the target itself (the normal case for this
+project: cross-compiled ARM binaries built on x86_64), push just the `static/` tree
+over SSH instead:
+
+```sh
+# 1. tar the WHOLE static/ tree, never a selective "the files I believe
+#    changed" scp — see below for why that shortcut is unsafe.
+tar -czf static-deploy.tar.gz -C static .
+scp static-deploy.tar.gz root@<target>:/tmp/static-deploy.tar.gz
+
+# 2. on the target: extract to a STAGING directory first, never straight
+#    over the live one — a tar that dies mid-extract must not leave a
+#    half-written static/ tree where the running server can see it.
+ssh root@<target> '
+  set -e
+  rm -rf /tmp/static-new && mkdir -p /tmp/static-new
+  tar -xzf /tmp/static-deploy.tar.gz -C /tmp/static-new
+  chown -R wiki:wiki /tmp/static-new
+  cd /opt/wiki
+  rm -rf static.old
+  mv static static.old && mv /tmp/static-new static
+  systemctl restart wiki.service
+  rm -rf static.old /tmp/static-deploy.tar.gz
+'
+```
+
+**Never selectively `scp` "the files I changed"** — a partial sync can miss a file
+that also changed, and a stale JS/CSS file doesn't fail loudly; nothing about the
+running site looks broken until someone goes looking for a feature that should
+already be live. Tar and swap the entire directory every time; the cost difference at
+this project's size is a couple of seconds.
+
+**A restart is mandatory, not optional, even though it's "just static files."** Most
+of `static/` is served fresh from disk on every request (Drogon's own static-file
+handler). `shell.html` is the one exception: `PageRoutes.cpp` reads it once at process
+startup and caches the built HTML in memory (`buildShellHtml`/`g_shellHtml`) —
+swapping the file on disk without restarting the process means every request keeps
+getting the old cached `shell.html` indefinitely, silently.
+
+**Verify by md5-summing every single file after, not the ones you think changed:**
+
+```sh
+find static -type f -exec md5sum {} \; | sed 's|static/||' | sort > /tmp/local.md5
+ssh root@<target> 'cd /opt/wiki/static && find . -type f -exec md5sum {} \;' \
+  | sed 's|  \./|  |' | sort > /tmp/remote.md5
+diff /tmp/local.md5 /tmp/remote.md5 && echo "identical" || echo "MISMATCH"
+```
+
+Use `s|  \./|  |`, not `s|^\./|  |` — `md5sum`'s own output separator is two spaces
+before the path, and `^\./` anchors at the start of the line (the hash column), so it
+matches nothing and the diff silently shows a bogus per-path mismatch instead of
+catching real content differences.
+
+**When testing a redeploy against a local throwaway instance**, kill the old process
+by an exact, verified PID (`ps aux | grep wiki-server`, then `kill -9 <pid>`), not
+`pkill -f wiki-server` trusting its exit code alone. A surviving old process keeps
+serving its own cached state (including a stale `shell.html`) while the new
+`wiki-server` fails to bind and exits immediately — check its log for
+`FATAL Address already in use` if a change appears to have no effect.
 
 ## Troubleshooting checklist
 
@@ -375,12 +687,12 @@ For a cross-compiled deployment, "install" means: rebuild `build-arm`, re-verify
   router renders search in place there (no bounce). Confirm `/healthz` and
   `/search` both return `200` before suspecting anything is actually broken.
 - **CSS/JS 404 or the login form posts to the wrong path when reverse-proxied under a
-  subpath** — set `[server].base_path` (see "Under a subpath of an existing site"
-  above) and restart; that closes this permanently. Without it, an unmatched path
-  falls back to the last known-good prefix cached in `localStorage`, empty on a
-  genuinely cold start (first-ever visit in that browser landing directly on a
-  subpath'd URL with nothing cached yet) — load `/search` (or any known route) first
-  to warm the cache as a one-off workaround if setting `base_path` isn't an option.
+  subpath** — set `[server].base_path` (see "Reverse proxy" above) and restart; that
+  closes this permanently. Without it, an unmatched path falls back to the last
+  known-good prefix cached in `localStorage`, empty on a genuinely cold start
+  (first-ever visit in that browser landing directly on a subpath'd URL with nothing
+  cached yet) — load `/search` (or any known route) first to warm the cache as a
+  one-off workaround if setting `base_path` isn't an option.
 - **A static cross-compiled link crashes with `code=139`** — see "Known issues" above;
   almost certainly the `-Xlinker --dependency-file=...` / `CMAKE_LINK_DEPENDS_USE_LINKER`
   issue if the toolchain file has drifted from `cross/arm-musl/toolchain.cmake`.
