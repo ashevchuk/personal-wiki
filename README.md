@@ -202,8 +202,8 @@ exist behind `[mcp].write_access` in `config.toml` (off by default), and every w
 success or failure — lands in an audit log. Want Claude to reach the same tools over the network instead of a local
 spawn? Turn on **Remote MCP** in the admin panel — bearer token, optional CIDR
 allowlist, its own rate limiter, independent write-access toggle. Full protocol
-details, tool schemas, and the remote-transport security model:
-[`docs/mcp.md`](docs/mcp.md).
+details, tool schemas, the remote-transport security model, and a client config
+example: [`docs/mcp.md`](docs/mcp.md#connecting-a-client).
 
 ## Writing ` ```query ` blocks
 

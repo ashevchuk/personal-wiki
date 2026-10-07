@@ -201,6 +201,30 @@ IP allowlist depends on to see the real client address rather than the proxy's o
 The token travels in a plain header; without TLS between the client and that proxy,
 it's readable by anything in between.
 
+### Connecting a client
+
+Claude Code/Desktop's `mcpServers` config takes an HTTP transport with a static
+header, same file as the stdio example above:
+
+```json
+{
+  "mcpServers": {
+    "personal-wiki-remote": {
+      "type": "http",
+      "url": "https://wiki.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <token from the Account page>"
+      }
+    }
+  }
+}
+```
+
+The token sits in this file as plain text — not a secret baked into the repo, but
+still a live credential; keep the file out of version control and readable only by
+whoever is meant to run this client. Regenerating the token on the Account page
+invalidates whatever's pasted here; update the file to match.
+
 **Every write through the remote tools is recorded in the same `mcp_audit_log` table
 the local stdio write tools use** (see "Write tools" above), with tool names prefixed
 `"remote:"` (`remote:create_document`, `remote:update_document`,
