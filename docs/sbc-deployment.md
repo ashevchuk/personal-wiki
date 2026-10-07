@@ -8,6 +8,39 @@ NOT cover: connecting an MCP client to `wiki-mcp` once it's built and installed 
 schemas, `claude_desktop_config.json`, the remote HTTP transport's own protocol) —
 that's `docs/mcp.md`.
 
+## Automating this with tools/wiki-ops.sh
+
+Everything from "Install" through "Static-assets-only redeploy" below can be driven by
+`tools/wiki-ops.sh` instead of typed by hand — one script, flags take priority over
+`deploy.local.env` (gitignored, never committed — copy `deploy.local.env.example` to
+start one) over an interactive prompt over a hard default. `./tools/wiki-ops.sh help`
+lists every subcommand and flag; the manual steps below stay the reference for what
+each one actually does under the hood, and for anyone without the script:
+
+- `build native|cross|container|cross-container|container-arm` — Path A, Path B, the
+  Docker image below, a containerized zig cross-toolchain (no local zig/vcpkg install
+  needed), or a multi-arch Docker image (amd64/arm64/armv7 via `--platform`).
+- `verify cross|container|cross-container|container-arm` — the qemu-arm-static /
+  `docker run` checks "Verify BEFORE shipping anything to real hardware" below
+  requires, before anything touches a target. `--qemu-cpu=NAME` pins the emulated
+  core explicitly — needed for a narrower target than the default armv7 path (see
+  `cross/armv6-musl/` for Raspberry Pi 1/Zero/Zero W).
+- `deploy --target=HOST --first-time --with-backup-timer` — Install, First-time setup
+  (including the `config.toml` fields below and `--create-admin`), systemd, and the
+  opt-in backup timer, in one atomic `bin/`+`static/` swap with a `.bak-$STAMP` safety
+  copy on the target. `--port=N` sets `[server].port` (binary variants) or remaps only
+  the container's host-side port via `WIKI_HOST_PORT` (container variants).
+- `static-redeploy --target=HOST` — the whole "Static-assets-only redeploy" section
+  below: tar the whole tree, stage, swap, restart, md5-verify every file, automatically.
+- `nginx-config root --domain=D` / `nginx-config subpath --base-path=/wiki` — renders
+  the matching block from "Reverse proxy" below to a file. TLS certificate issuance
+  itself (certbot etc.) stays manual — this only writes the proxy config that expects
+  the cert to already exist at the path it references.
+- `systemd install --target=HOST --with-backup-timer` / `systemd status` — the
+  "systemd" and "Backup" sections below as a standalone, re-runnable, idempotent step.
+- `setup-admin --target=HOST` — just `--create-admin`, keeping the real interactive
+  TTY (never piped or scripted) for the password prompt.
+
 ## Real-hardware verification status
 
 A full native build (`cmake --build` from scratch, not cross-compilation) is verified
