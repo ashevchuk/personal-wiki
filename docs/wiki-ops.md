@@ -400,13 +400,21 @@ pick the variant's build target, `--with-backup-timer`/`--port`/`--qemu-cpu` rea
 `deploy`. `--first-time` has no effect here on purpose — `update` is for an existing
 deployment; use `deploy --first-time` for the first one.
 
+**Unless `--skip-verify`, the inherited re-verify step always skips its
+`--create-admin` smoke test specifically** — that sub-step needs a real interactive
+TTY (password entry with echo disabled), which an automated `update` run never has.
+`unit_tests` under `qemu-arm-static` (for `cross`/`cross-container`) still runs
+normally; only the admin-creation half is skipped. `verify cross`/`deploy` run
+standalone are unaffected — they still run the full smoke test, admin-creation
+included.
+
 **`--dry-run` is not a full no-op here, same as it already isn't for plain `deploy`**:
-the build step's own commands are properly skipped, but `deploy`'s inherited re-verify
-step (unless `--skip-verify`) and its read-only `systemctl is-active` probe both still
-run for real — the probe exists specifically so the dry-run preview can truthfully
-report which branch (`restart` vs. `enable --now`) a real run would take. Nothing
-mutating runs under `--dry-run`; that probe is read-only by design — it never
-restarts or reconfigures anything.
+the build step's own commands are properly skipped, but `deploy`'s inherited
+re-verify step (unless `--skip-verify`) and its read-only `systemctl is-active` probe
+both still run for real — the probe exists specifically so the dry-run preview can
+truthfully report which branch (`restart` vs. `enable --now`) a real run would take.
+Nothing mutating runs under `--dry-run`; that probe is read-only by design — it
+never restarts or reconfigures anything.
 
 ## `static-redeploy`
 
