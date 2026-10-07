@@ -35,6 +35,10 @@ script:
   opt-in backup timer, in one atomic `bin/`+`static/` swap with a `.bak-$STAMP` safety
   copy on the target. `--port=N` sets `[server].port` (binary variants) or remaps only
   the container's host-side port via `WIKI_HOST_PORT` (container variants).
+- `update --target=HOST` — the whole "Update" section below in one command: `git
+  pull`, then the same variant's `build`, then a non-`--first-time` `deploy` (so
+  `config.toml`/the vault/the admin account stay untouched). `--static-only` skips
+  straight to `static-redeploy` instead, for a pull that only touched `static/`.
 - `static-redeploy --target=HOST` — the whole "Static-assets-only redeploy" section
   below: tar the whole tree, stage, swap, restart, md5-verify every file, automatically.
 - `nginx-config root --domain=D` / `nginx-config subpath --base-path=/wiki` — renders
@@ -588,6 +592,10 @@ device was off — fires as soon as it's back up). Check it landed with
 `systemctl list-timers wiki-backup.timer` and `journalctl -u wiki-backup.service`.
 
 ## Update
+
+`./tools/wiki-ops.sh update --target=HOST` runs this whole section in one command —
+`git pull`, the matching `build`, then a non-`--first-time` `deploy` — see
+`docs/wiki-ops.md`'s `update` section. What follows is the same sequence done by hand.
 
 ```sh
 cd wiki && git pull

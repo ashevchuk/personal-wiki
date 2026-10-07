@@ -345,12 +345,13 @@ docker compose exec wiki wiki-server --create-admin
 ### Example: updating an existing binary deployment after a code change
 
 ```sh
-./tools/wiki-ops.sh build cross
-./tools/wiki-ops.sh deploy --target=root@192.0.2.10 --variant=cross
+./tools/wiki-ops.sh update --target=root@192.0.2.10 --variant=cross
 ```
 
-(no `--first-time` — `config.toml` and the admin account are left untouched, matching
-`docs/sbc-deployment.md`'s "Update" section.)
+Equivalent to, and replaces, the three-step `git pull` + `build cross` + `deploy
+--target=root@192.0.2.10 --variant=cross` sequence by hand — see `update` below.
+`deploy` here never gets `--first-time`, so `config.toml` and the admin account are
+left untouched, matching `docs/sbc-deployment.md`'s "Update" section.
 
 ### Example: build in Docker, deploy a bare binary (no Docker on the target)
 
@@ -376,6 +377,36 @@ touches `wiki-backup.sh`/its unit/timer/env, shipped fresh from this repo, never
 anything a previous deploy step staged. `--variant=container` here only matters to
 correctly *skip* the (nonexistent, for this variant) `wiki.service` part — the backup
 install itself doesn't change shape.
+
+## `update`
+
+```
+update [--target=HOST] [--variant=V] [--triplet=NAME] [--platform=P]
+       [--static-only] [--with-backup-timer] [--skip-verify]
+       [--qemu-cpu=NAME] [--port=N] [--yes] [--dry-run]
+```
+
+`git pull`, then the matching `build $variant`, then a non-`--first-time` `deploy` —
+the exact sequence the "updating an existing binary deployment" example above used to
+spell out as two separate commands, now one. `git pull` always runs in the current
+working directory (the dev machine's own checkout) — never on the target itself, which
+never needs its own git checkout for any variant.
+
+`--static-only` skips both `build` and the full `deploy` swap, going straight to
+`static-redeploy` instead — for a pull that only touched `static/` (CSS/JS/
+`shell.html`), there's no C++ to rebuild. Every other flag `build`/`deploy` accept
+individually also applies here (one shared flag parser) — `--triplet`/`--platform`
+pick the variant's build target, `--with-backup-timer`/`--port`/`--qemu-cpu` reach
+`deploy`. `--first-time` has no effect here on purpose — `update` is for an existing
+deployment; use `deploy --first-time` for the first one.
+
+**`--dry-run` is not a full no-op here, same as it already isn't for plain `deploy`**:
+the build step's own commands are properly skipped, but `deploy`'s inherited re-verify
+step (unless `--skip-verify`) and its read-only `systemctl is-active` probe both still
+run for real — the probe exists specifically so the dry-run preview can truthfully
+report which branch (`restart` vs. `enable --now`) a real run would take. Nothing
+mutating runs under `--dry-run`; that probe is read-only by design — it never
+restarts or reconfigures anything.
 
 ## `static-redeploy`
 
