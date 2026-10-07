@@ -227,6 +227,25 @@ platform_build_args() {
   [ -n "$variant" ] && printf -- '--build-arg\nTARGETVARIANT=%s\n' "$variant"
 }
 
+# container_arm_tag PLATFORM — the image tag `build container-arm` produces
+# for this platform, shared with `verify container-arm` so verify tests that
+# exact image instead of running its own second `docker build` under a
+# "-verify" tag. container-arm's build is the "very long" variant for any
+# non-host --platform (see docs/wiki-ops.md) — paying that QEMU cost twice
+# per verify defeats the point of build and verify being separate steps.
+container_arm_tag() {
+  local platform=$1
+  if [ "$platform" = linux/arm/v7 ]; then
+    # Matches docker-compose.arm.yml's own 'image: personal-wiki:arm' and
+    # cmd_deploy_container's hardcoded tag for the documented armv7-on-a-Pi
+    # target — keep this exact tag for the default platform so
+    # `deploy --variant=container-arm` still finds the image it expects.
+    printf 'personal-wiki:arm'
+  else
+    printf 'personal-wiki:%s' "$(platform_tag_suffix "$platform")"
+  fi
+}
+
 # triplet_build_dir TRIPLET SUFFIX — "build-arm"/"build-arm-container" for the
 # default triplet (arm-musl, preserving the long-documented directory name so
 # nothing that already assumes it breaks), "build-$TRIPLET"/
@@ -340,17 +359,10 @@ cmd_build_cross_container() {
 }
 
 cmd_build_container_arm() {
-  local platform=$1 local_embeddings=$2 cloud_embeddings=$3 tag
-  if [ "$platform" = linux/arm/v7 ]; then
-    # Matches docker-compose.arm.yml's own 'image: personal-wiki:arm' and
-    # cmd_deploy_container's hardcoded tag for the documented armv7-on-a-Pi
-    # target — keep this exact tag for the default platform so
-    # `deploy --variant=container-arm` still finds the image it expects.
-    tag="personal-wiki:arm"
-  else
-    tag="personal-wiki:$(platform_tag_suffix "$platform")"
-    log "non-default platform ($platform) — tagged $tag, not personal-wiki:arm; deploy's container-arm path won't pick this up automatically"
-  fi
+  local platform=$1 local_embeddings=$2 cloud_embeddings=$3
+  local tag
+  tag=$(container_arm_tag "$platform")
+  [ "$platform" = linux/arm/v7 ] || log "non-default platform ($platform) — tagged $tag, not personal-wiki:arm; deploy's container-arm path won't pick this up automatically"
   local extra_args
   extra_args=$(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
   local arch_args
@@ -468,11 +480,10 @@ cmd_verify_container() {
 cmd_verify_container_arm() {
   local platform=$1
   command -v docker >/dev/null || die "docker not found"
-  docker buildx inspect >/dev/null 2>&1 || die "no buildx builder available — 'docker buildx create --use' first"
-  local tag="personal-wiki:$(platform_tag_suffix "$platform")-verify"
-  local arch_args
-  mapfile -t arch_args < <(platform_build_args "$platform")
-  docker build --platform "$platform" "${arch_args[@]}" -t "$tag" --load .
+  local tag
+  tag=$(container_arm_tag "$platform")
+  docker image inspect "$tag" >/dev/null 2>&1 \
+    || die "no image $tag found — run 'build container-arm --platform=$platform' first (verify never builds it itself, same as the cross/cross-container/container-native variants)"
   local cid
   cid=$(docker run -d --platform "$platform" -p 18081:8080 "$tag")
   sleep 5

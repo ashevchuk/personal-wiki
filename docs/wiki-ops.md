@@ -215,11 +215,15 @@ the same as working."
   `/healthz` curl check, torn down after.
 - **`container-arm`** — same idea under `--platform` (default `linux/arm/v7`, QEMU
   emulation unless it happens to match the host's own architecture), port `18081`.
-  Needs the same buildx/binfmt prerequisites as `build container-arm`. This runs a
-  full `docker build` from scratch, same as `build container-arm` — if `--platform`
-  isn't the host's own architecture, this takes just as long (very long; see the
-  `container-arm` note under `build` above). **`verify` never respects `--dry-run`,
-  on any variant** — it's a real smoke test, not a plan.
+  Unlike `container`, this does **not** build anything itself — same convention as
+  `cross`/`cross-container`/`container-native` below: it tests the exact image
+  `build container-arm` already produced (`personal-wiki:arm`, or
+  `personal-wiki:$(platform suffix)` for a non-default `--platform`), and dies with a
+  clear message if that image doesn't exist yet. Run `build container-arm` first —
+  verify paying the "very long" QEMU cost a second time, on top of build already
+  having paid it once, would defeat the point of the two being separate steps.
+  **`verify` never respects `--dry-run`, on any variant** — it's a real smoke test,
+  not a plan.
 - **`container-native`** — runs `wiki-server --create-admin` directly, no qemu (it's a
   native-architecture binary, assuming `--platform` wasn't used to cross-build it with
   buildx — that combination has no local smoke test available beyond the full `ctest`
