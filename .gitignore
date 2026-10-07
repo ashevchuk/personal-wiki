@@ -3,6 +3,15 @@ build/
 build-arm/
 build-fuzz/
 build-asan/
+# cross-container/container-native extraction dirs (tools/wiki-ops.sh) —
+# build-arm/build-arm-container stay the names for the default arm-musl
+# triplet; build-<other-triplet>(-container)/ for anything else (see
+# triplet_build_dir in tools/wiki-ops.sh) — the glob covers any triplet
+# name without needing a new entry here every time one is added.
+build-arm-container/
+build-container-native/
+build-*-musl/
+build-*-musl-container/
 # Scratch trees used to verify WIKI_ENABLE_LOCAL_EMBEDDINGS/
 # WIKI_ENABLE_CLOUD_EMBEDDINGS builds (see docs/embeddings.md) — not the
 # project's own canonical build/, just parallel configs for testing the

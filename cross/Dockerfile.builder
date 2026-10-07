@@ -33,10 +33,10 @@ ARG WIKI_CROSS_TRIPLET=arm-musl
 # llama.cpp's own CMake has never been exercised against zig's
 # cross-compilation path here; see docs/wiki-ops.md.
 ARG WIKI_CMAKE_EXTRA_ARGS=
-RUN curl -sSfL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" \
+RUN curl -sSfL "https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz" \
       -o /tmp/zig.tar.xz \
     && tar -C /usr/local -xJf /tmp/zig.tar.xz \
-    && ln -s "/usr/local/zig-linux-x86_64-${ZIG_VERSION}/zig" /usr/local/bin/zig \
+    && ln -s "/usr/local/zig-x86_64-linux-${ZIG_VERSION}/zig" /usr/local/bin/zig \
     && rm /tmp/zig.tar.xz
 
 WORKDIR /src
@@ -63,7 +63,7 @@ COPY cross ./cross
 RUN cd vcpkg && ./vcpkg install --classic --triplet "${WIKI_CROSS_TRIPLET}" \
       --overlay-triplets="../cross/${WIKI_CROSS_TRIPLET}" --overlay-ports=../cross/overlay-ports \
       --x-install-root=../vcpkg_installed_arm \
-      drogon sqlite3[core,fts5,json1] libargon2 nlohmann-json md4c yaml-cpp \
+      drogon sqlite3[core,fts5,json1] argon2 nlohmann-json md4c yaml-cpp \
       tomlplusplus catch2
 
 ENV PKG_CONFIG_LIBDIR=/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}/lib/pkgconfig:/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}/share/pkgconfig

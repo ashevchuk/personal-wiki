@@ -259,7 +259,7 @@ cmd_build_cross() {
   run bash -c "cd '$SCRIPT_DIR/vcpkg' && ./vcpkg install --classic --triplet '$triplet' \
     --overlay-triplets='$SCRIPT_DIR/$cross_dir' --overlay-ports='$SCRIPT_DIR/cross/overlay-ports' \
     --x-install-root='$SCRIPT_DIR/vcpkg_installed_arm' \
-    drogon sqlite3[core,fts5,json1] libargon2 nlohmann-json md4c yaml-cpp tomlplusplus catch2"
+    drogon sqlite3[core,fts5,json1] argon2 nlohmann-json md4c yaml-cpp tomlplusplus catch2"
 
   export PKG_CONFIG_LIBDIR="$SCRIPT_DIR/vcpkg_installed_arm/$triplet/lib/pkgconfig:$SCRIPT_DIR/vcpkg_installed_arm/$triplet/share/pkgconfig"
   export PKG_CONFIG_SYSROOT_DIR=""
@@ -558,7 +558,16 @@ cmd_systemd_install() {
       else
         remote_sh "sudo systemctl enable --now wiki.service"
       fi
-      remote_sh "sleep 1; sudo systemctl is-active wiki.service; curl -s -o /dev/null -w 'healthz: %{http_code}\n' http://127.0.0.1:8080/healthz"
+      # Confirmed live (2026-10-07): `sleep 1` is nowhere near enough for a
+      # binary that loads a local-embeddings model at startup, and a bare
+      # `systemctl is-active` exits 3 for the normal "activating" transient
+      # state — under remote_sh's own `set -e` preamble that killed this
+      # whole health-check (and the deploy) before the curl line ever ran,
+      # even though the service went on to start up fine seconds later.
+      # Poll instead of guessing one fixed delay, and never let a
+      # non-"active" status abort the script — report what's actually
+      # there either way.
+      remote_sh "st=unknown; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 2; st=\$(sudo systemctl is-active wiki.service 2>/dev/null || true); [ \"\$st\" = active ] && break; done; echo \"wiki.service: \$st\"; curl -s -o /dev/null -w 'healthz: %{http_code}\n' http://127.0.0.1:8080/healthz || true"
       ;;
   esac
 

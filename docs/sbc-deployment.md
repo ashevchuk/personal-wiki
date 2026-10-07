@@ -161,7 +161,7 @@ cd vcpkg
 ./vcpkg install --classic --triplet arm-musl \
   --overlay-triplets=../cross/arm-musl --overlay-ports=../cross/overlay-ports \
   --x-install-root=../vcpkg_installed_arm \
-  drogon sqlite3[core,fts5,json1] libargon2 nlohmann-json md4c yaml-cpp \
+  drogon sqlite3[core,fts5,json1] argon2 nlohmann-json md4c yaml-cpp \
   tomlplusplus catch2
 cd ..
 ```
