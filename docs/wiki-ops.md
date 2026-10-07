@@ -77,8 +77,36 @@ Same decision as `docs/sbc-deployment.md`'s own table, mapped onto `build`/`depl
 
 ```
 build native|cross|container|cross-container|container-arm [--skip-tests]
-      [--triplet=NAME] [--cross-dir=PATH] [--platform=linux/arm/v7] [--dry-run]
+      [--triplet=NAME] [--cross-dir=PATH] [--platform=linux/arm/v7]
+      [--local-embeddings] [--cloud-embeddings] [--dry-run]
 ```
+
+**`--local-embeddings`/`--cloud-embeddings`** toggle the only two real build-time
+feature flags that exist (`CMakeLists.txt`'s `WIKI_ENABLE_LOCAL_EMBEDDINGS`/
+`WIKI_ENABLE_CLOUD_EMBEDDINGS`, both `OFF` by default — see `docs/embeddings.md`).
+They're independent, not mutually exclusive — pass either, both, or neither. **There
+is no LLM/chat build flag** — the Draft panel and sidebar Chat are always compiled in,
+toggled purely at runtime via `config.toml`'s `[llm]` section (`provider = "none"`
+hides them); see `docs/llm.md`. `WIKI_ENABLE_FUZZING` (the one other `option()` in
+`CMakeLists.txt`) is a dev-only `tests/fuzz/` flag, needs Clang specifically, and has
+no place in a build/deploy flow — not exposed here.
+
+For `native`/`cross`, these just append the matching `-DWIKI_ENABLE_...=ON` to the
+existing `cmake` configure line. For `container`/`container-arm`/`cross-container`,
+Docker has no equivalent of a cache flag — `wiki-ops.sh` passes
+`--build-arg WIKI_CMAKE_EXTRA_ARGS="-DWIKI_ENABLE_...=ON ..."`, and both `Dockerfile`
+and `cross/Dockerfile.builder` declare a matching `ARG WIKI_CMAKE_EXTRA_ARGS=`
+appended verbatim to their own `cmake` configure line.
+
+**Real asymmetry in risk, not just a formality**: `--cloud-embeddings` is just an
+HTTP client (OpenSSL, already a transitive Drogon dependency on every triplet/
+toolchain this project uses) — low-risk anywhere. **`--local-embeddings` pulls
+llama.cpp via CMake `FetchContent` and builds it from source — UNVERIFIED under the
+zig toolchain (`cross`/`cross-container`)**: llama.cpp's own CMake has hardware-
+feature-detection assumptions that have never been exercised against zig's
+cross-compilation path here. `build cross`/`build cross-container
+--local-embeddings` print a warning saying exactly this; it is not a solved problem,
+just a flag that's now possible to pass.
 
 - **`native`** — `cmake configure+build(+ctest)` into `build/`, exactly
   `docs/sbc-deployment.md`'s Path A. `--skip-tests` skips the `ctest` run.

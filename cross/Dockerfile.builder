@@ -19,6 +19,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # zig bundles its own libc/libc++ for the target — no separate ARM
 # cross-toolchain package needed beyond this one tarball.
 ARG ZIG_VERSION=0.16.0
+# Extra -D... CMake cache flags (see the main Dockerfile's own
+# WIKI_CMAKE_EXTRA_ARGS comment — same mechanism, same
+# --local-embeddings/--cloud-embeddings wiki-ops.sh flags). UNVERIFIED for
+# WIKI_ENABLE_LOCAL_EMBEDDINGS specifically under this zig toolchain —
+# llama.cpp's own CMake has never been exercised against zig's
+# cross-compilation path here; see docs/wiki-ops.md.
+ARG WIKI_CMAKE_EXTRA_ARGS=
 RUN curl -sSfL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" \
       -o /tmp/zig.tar.xz \
     && tar -C /usr/local -xJf /tmp/zig.tar.xz \
@@ -61,6 +68,7 @@ RUN cmake -S . -B build-arm -G Ninja \
       -DCMAKE_FIND_ROOT_PATH=/src/vcpkg_installed_arm/arm-musl \
       -DDROGON_CTL_COMMAND=/src/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      ${WIKI_CMAKE_EXTRA_ARGS} \
     && cmake --build build-arm -j"$(nproc)"
 
 RUN mkdir -p /out && cp build-arm/wiki-server build-arm/wiki-mcp build-arm/tests/unit_tests /out/

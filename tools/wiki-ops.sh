@@ -205,11 +205,24 @@ platform_tag_suffix() {
   printf '%s' "$1" | sed -e 's#^linux/##' -e 's#/#-#'
 }
 
+# embeddings_cmake_args LOCAL_EMBEDDINGS CLOUD_EMBEDDINGS — the only two real
+# WIKI_ENABLE_* flags that belong on a build/deploy command (CMakeLists.txt's
+# third one, WIKI_ENABLE_FUZZING, is a dev-only tests/fuzz/ flag, needs Clang,
+# and has no place here). Both OFF by default, matching CMakeLists.txt's own
+# option() defaults — see docs/embeddings.md for what each actually requires.
+embeddings_cmake_args() {
+  local local_embeddings=$1 cloud_embeddings=$2 args=""
+  [ "$local_embeddings" = 1 ] && args="$args -DWIKI_ENABLE_LOCAL_EMBEDDINGS=ON"
+  [ "$cloud_embeddings" = 1 ] && args="$args -DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON"
+  printf '%s' "${args# }"
+}
+
 cmd_build_native() {
-  local skip_tests=$1
+  local skip_tests=$1 local_embeddings=$2 cloud_embeddings=$3
   run cmake -S . -B build -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    $(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
   run cmake --build build -j"$(nproc)"
   if [ "$skip_tests" != 1 ]; then
     run ctest --test-dir build --output-on-failure
@@ -217,9 +230,12 @@ cmd_build_native() {
 }
 
 cmd_build_cross() {
-  local triplet=$1 cross_dir=$2 skip_tests=$3
+  local triplet=$1 cross_dir=$2 skip_tests=$3 local_embeddings=$4 cloud_embeddings=$5
   local drogon_ctl="$SCRIPT_DIR/build/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl"
   [ -x "$drogon_ctl" ] || die "native drogon_ctl not found at $drogon_ctl — run '$0 build native' first (classic-mode cross builds reuse the host's own drogon_ctl, see docs/sbc-deployment.md's Path B)"
+  if [ "$local_embeddings" = 1 ]; then
+    log "WIKI_ENABLE_LOCAL_EMBEDDINGS under zig/$triplet is UNVERIFIED — llama.cpp's own CMake has never been exercised against this cross-compilation path, see docs/wiki-ops.md"
+  fi
 
   run bash -c "cd '$SCRIPT_DIR/vcpkg' && ./vcpkg install --classic --triplet '$triplet' \
     --overlay-triplets='$SCRIPT_DIR/$cross_dir' --overlay-ports='$SCRIPT_DIR/cross/overlay-ports' \
@@ -234,7 +250,8 @@ cmd_build_cross() {
     -DCMAKE_PREFIX_PATH="$SCRIPT_DIR/vcpkg_installed_arm/$triplet" \
     -DCMAKE_FIND_ROOT_PATH="$SCRIPT_DIR/vcpkg_installed_arm/$triplet" \
     -DDROGON_CTL_COMMAND="$drogon_ctl" \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    $(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
   run cmake --build build-arm -j"$(nproc)"
 
   if [ "$skip_tests" != 1 ]; then
@@ -243,12 +260,29 @@ cmd_build_cross() {
 }
 
 cmd_build_container() {
-  run docker compose build
+  local local_embeddings=$1 cloud_embeddings=$2
+  local extra_args
+  extra_args=$(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
+  if [ -n "$extra_args" ]; then
+    run docker compose build --build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args"
+  else
+    run docker compose build
+  fi
 }
 
 cmd_build_cross_container() {
+  local local_embeddings=$1 cloud_embeddings=$2
   local out_dir="$SCRIPT_DIR/build-arm-container"
-  run docker build -f cross/Dockerfile.builder -t wiki-cross-builder .
+  if [ "$local_embeddings" = 1 ]; then
+    log "WIKI_ENABLE_LOCAL_EMBEDDINGS under this zig toolchain is UNVERIFIED — see docs/wiki-ops.md"
+  fi
+  local extra_args
+  extra_args=$(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
+  if [ -n "$extra_args" ]; then
+    run docker build -f cross/Dockerfile.builder --build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args" -t wiki-cross-builder .
+  else
+    run docker build -f cross/Dockerfile.builder -t wiki-cross-builder .
+  fi
   if [ "$DRY_RUN" = 1 ]; then
     log "(dry-run) would extract wiki-server/wiki-mcp/unit_tests from wiki-cross-builder into $out_dir/"
     return 0
@@ -264,7 +298,7 @@ cmd_build_cross_container() {
 }
 
 cmd_build_container_arm() {
-  local platform=$1 tag
+  local platform=$1 local_embeddings=$2 cloud_embeddings=$3 tag
   if [ "$platform" = linux/arm/v7 ]; then
     # Matches docker-compose.arm.yml's own 'image: personal-wiki:arm' and
     # cmd_deploy_container's hardcoded tag for the documented armv7-on-a-Pi
@@ -275,7 +309,13 @@ cmd_build_container_arm() {
     tag="personal-wiki:$(platform_tag_suffix "$platform")"
     log "non-default platform ($platform) — tagged $tag, not personal-wiki:arm; deploy's container-arm path won't pick this up automatically"
   fi
-  run docker buildx build --platform "$platform" -t "$tag" --load .
+  local extra_args
+  extra_args=$(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
+  if [ -n "$extra_args" ]; then
+    run docker buildx build --platform "$platform" --build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args" -t "$tag" --load .
+  else
+    run docker buildx build --platform "$platform" -t "$tag" --load .
+  fi
   log "built $tag"
 }
 
@@ -724,7 +764,8 @@ for the manual steps this wraps; this script doesn't change what happens, just
 removes the hand-typing and enforces the order).
 
   build   native|cross|container|cross-container|container-arm [--skip-tests]
-          [--triplet=NAME] [--cross-dir=PATH] [--platform=linux/arm/v7] [--dry-run]
+          [--triplet=NAME] [--cross-dir=PATH] [--platform=linux/arm/v7]
+          [--local-embeddings] [--cloud-embeddings] [--dry-run]
   verify  cross|container|cross-container|container-arm
           [--platform=linux/arm/v7] [--qemu-cpu=NAME]
   deploy  [--target=HOST] [--variant=V] [--first-time] [--with-backup-timer]
@@ -759,6 +800,8 @@ FLAG_PLATFORM=""
 FLAG_QEMU_CPU=""
 FLAG_PORT=""
 FLAG_SKIP_TESTS=0
+FLAG_LOCAL_EMBEDDINGS=0
+FLAG_CLOUD_EMBEDDINGS=0
 FLAG_FIRST_TIME=0
 FLAG_WITH_BACKUP_TIMER=0
 FLAG_STATIC_ONLY=0
@@ -778,6 +821,8 @@ parse_flags() {
       --qemu-cpu=*) FLAG_QEMU_CPU=${1#*=} ;;
       --port=*) FLAG_PORT=${1#*=} ;;
       --skip-tests) FLAG_SKIP_TESTS=1 ;;
+      --local-embeddings) FLAG_LOCAL_EMBEDDINGS=1 ;;
+      --cloud-embeddings) FLAG_CLOUD_EMBEDDINGS=1 ;;
       --first-time) FLAG_FIRST_TIME=1 ;;
       --with-backup-timer) FLAG_WITH_BACKUP_TIMER=1 ;;
       --static-only) FLAG_STATIC_ONLY=1 ;;
@@ -803,11 +848,11 @@ main() {
       parse_flags "$@"
       load_deploy_config
       case "$sub" in
-        native) cmd_build_native "$FLAG_SKIP_TESTS" ;;
-        cross) cmd_build_cross "$FLAG_TRIPLET" "$FLAG_CROSS_DIR" "$FLAG_SKIP_TESTS" ;;
-        container) cmd_build_container ;;
-        cross-container) cmd_build_cross_container ;;
-        container-arm) cmd_build_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" ;;
+        native) cmd_build_native "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+        cross) cmd_build_cross "$FLAG_TRIPLET" "$FLAG_CROSS_DIR" "$FLAG_SKIP_TESTS" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+        container) cmd_build_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+        cross-container) cmd_build_cross_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+        container-arm) cmd_build_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
         *) die "build: variant must be one of native|cross|container|cross-container|container-arm" ;;
       esac
       ;;

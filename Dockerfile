@@ -37,6 +37,11 @@ FROM debian:bookworm-slim AS build
 # is only auto-populated by BuildKit/buildx, never by the legacy builder.
 ARG TARGETARCH=amd64
 ARG TARGETVARIANT=
+# Extra -D... CMake cache flags, e.g. "-DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON" — passed
+# through from `docker build --build-arg WIKI_CMAKE_EXTRA_ARGS=...` (see
+# tools/wiki-ops.sh's --local-embeddings/--cloud-embeddings build flags). Empty by
+# default, word-splits to nothing in the RUN line below.
+ARG WIKI_CMAKE_EXTRA_ARGS=
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build git curl zip unzip tar pkg-config \
@@ -98,6 +103,7 @@ RUN cmake -S . -B build -G Ninja \
       -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
       -DVCPKG_TARGET_TRIPLET="$(cat /tmp/vcpkg-triplet)" \
       -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      ${WIKI_CMAKE_EXTRA_ARGS} \
     && cmake --build build -j"$(nproc)"
 
 # Same discipline as every other deployment path in this repo — don't
