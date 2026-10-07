@@ -1,0 +1,20 @@
+# Override for the ARM/v7 target — layers on top of docker-compose.yml:
+# `docker compose -f docker-compose.yml -f docker-compose.arm.yml build`
+# (or `up -d`, on the target device itself once the image is loaded).
+# Same Dockerfile as the base file (it's parameterized by TARGETARCH/
+# TARGETVARIANT — see its own header comment); only `platforms:` and the
+# image tag differ, so there's nothing to keep in sync between two
+# Dockerfiles or two full service definitions. See
+# docs/sbc-deployment.md for how this differs from the cross/ (zig/musl)
+# static-binary deployment path.
+#
+# Building this (not just running an already-built image) needs a buildx
+# builder that supports the target platform — `docker buildx create --use`
+# once, plus `docker run --privileged --rm tonistiigi/binfmt --install all`
+# if linux/arm/v7 under QEMU isn't already registered on this host.
+services:
+  wiki:
+    build:
+      platforms:
+        - linux/arm/v7
+    image: personal-wiki:arm

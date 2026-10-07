@@ -3,6 +3,14 @@
 # needs the real TTY `docker compose exec` gives you — `-T`/detached exec
 # would break the password prompt's echo-disabling).
 #
+# WIKI_HOST_PORT (env var, default 8080 below) remaps only the HOST side
+# of the port mapping — e.g. `WIKI_HOST_PORT=9090 docker compose up -d`,
+# or `wiki-ops.sh deploy --variant=container --port=9090`. The
+# CONTAINER-side port stays 8080 always: that's what docker/config.docker.toml's
+# [server].port and this file's own HEALTHCHECK/Dockerfile EXPOSE already
+# assume internally: changing it would mean editing those too, for no
+# benefit — only the host-visible port needs to ever differ.
+#
 # ./vault_data on the HOST is bind-mounted straight into the container —
 # same markdown-files-are-the-source-of-truth principle as every other
 # deployment path in this repo (docs/architecture.md); the vault stays a
@@ -20,7 +28,7 @@ services:
     build: .
     image: personal-wiki:latest
     ports:
-      - "8080:8080"
+      - "${WIKI_HOST_PORT:-8080}:8080"
     volumes:
       - ./vault_data:/data/vault
     restart: unless-stopped
