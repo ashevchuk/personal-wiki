@@ -72,6 +72,7 @@ Same decision as `docs/sbc-deployment.md`'s own table, mapped onto `build`/`depl
 | Same as `cross`, but no local zig/vcpkg wanted | `cross-container` | only Docker | nothing |
 | x86_64/arm64 desktop, NAS, cloud VM with modern Docker | `container` | Docker | Docker |
 | Pi 4/5 (or any arm64/armv7 box) you'd rather not cross-compile for, via Docker | `container-arm` | Docker + buildx (+ QEMU binfmt for cross-arch) | Docker |
+| x86_64 (or arm64 via `--platform`) target that should run a bare binary, but you'd rather not install vcpkg/cmake/ninja locally | `container-native` | Docker (+ buildx only if `--platform` overrides this host's own arch) | nothing — no Docker needed |
 
 ## `build`
 
@@ -139,11 +140,32 @@ just a flag that's now possible to pass.
   builder (`docker buildx create --use`) and, for an architecture that isn't this
   host's own, QEMU binfmt registered (`docker run --privileged --rm tonistiigi/binfmt
   --install all`, one-time per host).
+- **`container-native`** — build inside Docker, deploy a bare binary with no Docker on
+  the target. `docker build --target build .` stops at the main `Dockerfile`'s first
+  stage, which already ran a full `cmake --install build --prefix /opt/wiki` (same
+  install() rules `native` itself runs) — `wiki-ops.sh` extracts that whole tree via
+  `docker create`+`docker cp`, no `--output`/buildx needed for the default case. No
+  `--platform` given: builds for whatever architecture this Docker daemon's own host
+  is (plain legacy builder, matches `Dockerfile`'s `TARGETARCH=amd64` default on a
+  typical amd64 dev machine). `--platform=linux/arm64` (needs buildx) targets a
+  *different* architecture than this host's own — a real alternative to `cross`/
+  `cross-container` for arm64 specifically, with no zig and no musl involved at all.
+  ```sh
+  ./tools/wiki-ops.sh build container-native          # no Docker needed on the target
+  ./tools/wiki-ops.sh verify container-native
+  ./tools/wiki-ops.sh deploy --target=root@192.0.2.30 --variant=container-native --first-time
+  ```
+  **The real caveat, not a formality**: the extracted binary is dynamically linked
+  against the *build image's* glibc (`debian:bookworm-slim`). Deploying it to a target
+  with an **older** glibc fails with `GLIBC_2.XX not found` — the exact problem
+  `cross/`'s static-musl path exists to sidestep. Fine for a target on Debian
+  bookworm+ (or any distro with glibc at least that new); for an old or unknown
+  target, use `cross` instead, not this.
 
 ## `verify`
 
 ```
-verify cross|container|cross-container|container-arm
+verify cross|container|cross-container|container-arm|container-native
        [--platform=linux/arm/v7] [--qemu-cpu=NAME]
 ```
 
@@ -169,6 +191,10 @@ the same as working."
 - **`container-arm`** — same idea under `--platform` (default `linux/arm/v7`, QEMU
   emulation unless it happens to match the host's own architecture), port `18081`.
   Needs the same buildx/binfmt prerequisites as `build container-arm`.
+- **`container-native`** — runs `wiki-server --create-admin` directly, no qemu (it's a
+  native-architecture binary, assuming `--platform` wasn't used to cross-build it with
+  buildx — that combination has no local smoke test available beyond the full `ctest`
+  run that already happened *inside* the `docker build` itself).
 
 ## `deploy`
 
@@ -182,16 +208,22 @@ Never builds implicitly — run the matching `build` first. `--target` empty mea
 install on this machine, no ssh involved; otherwise every mutating step runs over one
 `ssh`/`scp` session per command, using `WIKI_DEPLOY_SSH_PORT`.
 
-**Binary variants (`native`/`cross`/`cross-container`)**:
-1. Refuses to continue if `build`/`build-arm`/`build-arm-container` doesn't exist yet.
+**Binary variants (`native`/`cross`/`cross-container`/`container-native`)**:
+1. Refuses to continue if `build`/`build-arm`/`build-arm-container`/
+   `build-container-native` doesn't exist yet.
 2. Unless `--skip-verify`, runs the equivalent of `verify cross`/`verify
-   cross-container` first (native has no such step — nothing to emulate).
+   cross-container`/`verify container-native` first (native has no such step —
+   nothing to emulate or re-run locally).
 3. Stages the install tree (`cmake --install` for native; a hand-assembled
    bin/+static/+systemd-files tree for cross/cross-container, matching what `cmake
-   --install` would have produced) into a local temp dir, ships it to the target, then
-   does the atomic swap: `.bak-$STAMP` the live `bin/`/`static/`, `strip --strip-all`
-   **on the target itself** (cross/cross-container only — the dev machine's own
-   `strip` can't read a cross ARM ELF), move the new files in, `chown`.
+   --install` would have produced; a plain copy of the already-extracted tree for
+   `container-native`, which is already install()-shaped) into a local temp dir, ships
+   it to the target, then does the atomic swap: `.bak-$STAMP` the live
+   `bin/`/`static/`, `strip --strip-all` **on the target itself** (cross/
+   cross-container/container-native — the dev machine's own `strip` can't always read
+   a cross ARM ELF, and stripping on the target is simplest to keep uniform even for
+   `container-native`'s native-arch binary, which the dev machine's `strip` *can*
+   read), move the new files in, `chown`.
 4. `--first-time`: also edits `config.toml`'s `listen_addr`/`port`/`threads`/
    `[vault].path`/`[mcp].scope` (anchored `sed`, never a real TOML parser — the
    multi-line `[embeddings]`/`[llm]` blocks are left for you to hand-edit, same as the
@@ -276,6 +308,19 @@ docker compose exec wiki wiki-server --create-admin
 
 (no `--first-time` — `config.toml` and the admin account are left untouched, matching
 `docs/sbc-deployment.md`'s "Update" section.)
+
+### Example: build in Docker, deploy a bare binary (no Docker on the target)
+
+```sh
+./tools/wiki-ops.sh build container-native
+./tools/wiki-ops.sh verify container-native
+./tools/wiki-ops.sh deploy --target=root@192.0.2.30 --variant=container-native \
+    --first-time --with-backup-timer
+```
+
+No vcpkg/cmake/ninja/zig needed on the dev machine — only Docker. The target needs no
+Docker at all, same as `native`/`cross`. Remember the glibc caveat under `build`
+above before pointing this at anything other than a reasonably current target distro.
 
 ## `static-redeploy`
 

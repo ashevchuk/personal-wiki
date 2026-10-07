@@ -19,10 +19,13 @@ help` always reflects the current flag set fastest. The manual steps below stay 
 reference for what each one actually does under the hood, and for anyone without the
 script:
 
-- `build native|cross|container|cross-container|container-arm` — Path A, Path B, the
-  Docker image below, a containerized zig cross-toolchain (no local zig/vcpkg install
-  needed), or a multi-arch Docker image (amd64/arm64/armv7 via `--platform`).
-- `verify cross|container|cross-container|container-arm` — the qemu-arm-static /
+- `build native|cross|container|cross-container|container-arm|container-native` —
+  Path A, Path B, the Docker image below, a containerized zig cross-toolchain (no
+  local zig/vcpkg install needed), a multi-arch Docker image (amd64/arm64/armv7 via
+  `--platform`), or a build done in Docker with the result deployed as a bare binary
+  (no Docker on the target — see `docs/wiki-ops.md`'s glibc-compatibility caveat
+  before pointing this at an old target).
+- `verify cross|container|cross-container|container-arm|container-native` — the qemu-arm-static /
   `docker run` checks "Verify BEFORE shipping anything to real hardware" below
   requires, before anything touches a target. `--qemu-cpu=NAME` pins the emulated
   core explicitly — needed for a narrower target than the default armv7 path (see

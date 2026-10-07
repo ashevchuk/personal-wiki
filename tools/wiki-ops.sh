@@ -193,7 +193,8 @@ copy_to_target() {
 }
 
 # ============================================================
-# SECTION: build — native / cross / container / cross-container / container-arm
+# SECTION: build — native / cross / container / cross-container /
+# container-arm / container-native
 # ============================================================
 
 # platform_tag_suffix PLATFORM — "linux/arm/v7" -> "arm-v7", "linux/arm64"
@@ -319,6 +320,47 @@ cmd_build_container_arm() {
   log "built $tag"
 }
 
+# Builds just the main Dockerfile's "build" stage (stops before the
+# runtime stage) and extracts /opt/wiki — already a complete
+# cmake-install tree (CMakeLists.txt's install() rules already ran
+# inside that stage, same as native's own `cmake --install`) — so the
+# target never needs Docker at all. Same containerized-build idea as
+# cross-container, but for a NATIVE (non-cross) build: no zig, and by
+# default no --platform (the plain legacy builder, no buildx required,
+# builds for whatever architecture this docker daemon's own host is —
+# amd64 on a typical dev machine, matching Dockerfile's TARGETARCH=amd64
+# default). An explicit --platform (needs buildx) can target a
+# DIFFERENT architecture than this host's own, e.g. arm64-native-via-
+# Docker with no zig and no musl — a real option alongside cross/
+# cross-container for anything the main Dockerfile's TARGETARCH mapping
+# already covers (amd64, arm64, armv7 — see Dockerfile's own header).
+cmd_build_container_native() {
+  local platform=$1 local_embeddings=$2 cloud_embeddings=$3
+  local out_dir="$SCRIPT_DIR/build-container-native"
+  local extra_args
+  extra_args=$(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
+  local build_args=()
+  [ -n "$extra_args" ] && build_args=(--build-arg "WIKI_CMAKE_EXTRA_ARGS=$extra_args")
+
+  if [ -n "$platform" ]; then
+    run docker buildx build --target build --platform "$platform" "${build_args[@]}" -t wiki-native-builder --load .
+  else
+    run docker build --target build "${build_args[@]}" -t wiki-native-builder .
+  fi
+
+  if [ "$DRY_RUN" = 1 ]; then
+    log "(dry-run) would extract /opt/wiki from wiki-native-builder into $out_dir/"
+    return 0
+  fi
+  rm -rf "$out_dir"
+  mkdir -p "$out_dir"
+  local cid
+  cid=$(docker create wiki-native-builder)
+  docker cp "$cid:/opt/wiki/." "$out_dir/"
+  docker rm "$cid" >/dev/null
+  log "container-native build artifacts in $out_dir/ — dynamically linked against the build image's own glibc (debian:bookworm-slim); a target with an OLDER glibc can fail with 'GLIBC_2.XX not found', the same class of problem cross/'s static musl path exists to avoid. Fine for a target running Debian bookworm+ (or anything with glibc >= that); use 'cross' instead for an old/unknown target."
+}
+
 # ============================================================
 # SECTION: verify — qemu for bare-ARM binaries, docker run for images
 # ============================================================
@@ -349,6 +391,18 @@ cmd_verify_cross() {
   qemu-arm-static "${qemu_cpu_args[@]}" "$unit_tests_bin"
   log "running wiki-server --create-admin under qemu-arm-static as a real smoke test"
   qemu-arm-static "${qemu_cpu_args[@]}" "$build_dir/wiki-server" --create-admin
+}
+
+cmd_verify_container_native() {
+  local build_dir=$1
+  [ -x "$build_dir/bin/wiki-server" ] || die "no wiki-server binary found under $build_dir/bin — run 'build container-native' first"
+  # No qemu here — this is a native-architecture binary (unless --platform
+  # was used to cross-build it with buildx, in which case it won't even
+  # execute on this host at all; that combination has no local smoke test
+  # available, only the full ctest run that already happened INSIDE the
+  # docker build itself).
+  log "running wiki-server --create-admin directly (native binary, no emulation) as a real smoke test"
+  "$build_dir/bin/wiki-server" --create-admin
 }
 
 cmd_verify_container() {
@@ -690,7 +744,7 @@ cmd_deploy() {
   local flag_target=$1 flag_variant=$2 first_time=$3 with_backup_timer=$4 static_only=$5 skip_verify=$6 qemu_cpu=$7 port_flag=$8
 
   resolve_optional WIKI_DEPLOY_HOST "$flag_target" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
-  resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm)"
+  resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm|container-native)"
   resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
   resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
   resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
@@ -701,7 +755,7 @@ cmd_deploy() {
   fi
 
   case "$WIKI_DEPLOY_VARIANT" in
-    native|cross|cross-container) ;;
+    native|cross|cross-container|container-native) ;;
     container|container-arm)
       # Docker owns this process's lifecycle (docker-compose.yml's own
       # restart: unless-stopped) — there is no $install_root/share/wiki/
@@ -719,25 +773,29 @@ cmd_deploy() {
     *) die "deploy: unknown variant '$WIKI_DEPLOY_VARIANT'" ;;
   esac
 
-  local build_dir strip_bins=0
+  local build_dir strip_bins=0 verify_kind=""
   case "$WIKI_DEPLOY_VARIANT" in
     native) build_dir=build ;;
-    cross) build_dir=build-arm; strip_bins=1 ;;
-    cross-container) build_dir=build-arm-container; strip_bins=1 ;;
+    cross) build_dir=build-arm; strip_bins=1; verify_kind=cross ;;
+    cross-container) build_dir=build-arm-container; strip_bins=1; verify_kind=cross ;;
+    container-native) build_dir=build-container-native; strip_bins=1; verify_kind=container-native ;;
   esac
   [ -d "$build_dir" ] || die "no $build_dir/ found — run 'build $WIKI_DEPLOY_VARIANT' first"
 
-  if [ "$skip_verify" != 1 ] && [ "$strip_bins" = 1 ]; then
-    cmd_verify_cross "$build_dir" "$qemu_cpu"
+  if [ "$skip_verify" != 1 ]; then
+    case "$verify_kind" in
+      cross) cmd_verify_cross "$build_dir" "$qemu_cpu" ;;
+      container-native) cmd_verify_container_native "$build_dir" ;;
+    esac
   fi
 
   local staging
   staging=$(mktemp -d /tmp/wiki-ops-stage-XXXXXX)
-  if [ "$WIKI_DEPLOY_VARIANT" = native ]; then
-    run cmake --install "$build_dir" --prefix "$staging"
-  else
-    stage_bare_binary_tree "$build_dir" "$staging"
-  fi
+  case "$WIKI_DEPLOY_VARIANT" in
+    native) run cmake --install "$build_dir" --prefix "$staging" ;;
+    container-native) cp -r "$build_dir"/. "$staging"/ ;;
+    *) stage_bare_binary_tree "$build_dir" "$staging" ;;
+  esac
 
   deploy_swap_tree "$staging" "$WIKI_DEPLOY_INSTALL_ROOT" "$strip_bins"
   rm -rf "$staging"
@@ -763,10 +821,12 @@ wiki-ops.sh — build+deploy orchestration for this repo (see docs/sbc-deploymen
 for the manual steps this wraps; this script doesn't change what happens, just
 removes the hand-typing and enforces the order).
 
-  build   native|cross|container|cross-container|container-arm [--skip-tests]
-          [--triplet=NAME] [--cross-dir=PATH] [--platform=linux/arm/v7]
-          [--local-embeddings] [--cloud-embeddings] [--dry-run]
-  verify  cross|container|cross-container|container-arm
+  build   native|cross|container|cross-container|container-arm|container-native
+          [--skip-tests] [--triplet=NAME] [--cross-dir=PATH]
+          [--platform=P] [--local-embeddings] [--cloud-embeddings] [--dry-run]
+          (--platform default: linux/arm/v7 for container-arm, this host's own
+           architecture for container-native)
+  verify  cross|container|cross-container|container-arm|container-native
           [--platform=linux/arm/v7] [--qemu-cpu=NAME]
   deploy  [--target=HOST] [--variant=V] [--first-time] [--with-backup-timer]
           [--static-only] [--skip-verify] [--qemu-cpu=NAME] [--port=N]
@@ -853,7 +913,8 @@ main() {
         container) cmd_build_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
         cross-container) cmd_build_cross_container "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
         container-arm) cmd_build_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-        *) die "build: variant must be one of native|cross|container|cross-container|container-arm" ;;
+        container-native) cmd_build_container_native "$FLAG_PLATFORM" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+        *) die "build: variant must be one of native|cross|container|cross-container|container-arm|container-native" ;;
       esac
       ;;
 
@@ -866,7 +927,8 @@ main() {
         cross-container) cmd_verify_cross build-arm-container "$FLAG_QEMU_CPU" ;;
         container) cmd_verify_container ;;
         container-arm) cmd_verify_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" ;;
-        *) die "verify: variant must be one of cross|cross-container|container|container-arm" ;;
+        container-native) cmd_verify_container_native build-container-native ;;
+        *) die "verify: variant must be one of cross|cross-container|container|container-arm|container-native" ;;
       esac
       ;;
 
