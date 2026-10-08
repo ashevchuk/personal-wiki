@@ -25,11 +25,13 @@ window.WikiQueryBlock = (function () {
   // show recency (the `sort: updated` key this same DSL already has), and
   // a relative label is what that's actually for; the exact timestamp
   // isn't lost, just demoted to a hover (`title`) for whoever wants it.
-  // Falls back to a bare date once a row is old enough that "14d ago"
-  // stops being more useful than just naming the day.
+  // Always relative, all the way up through years -- a bare-date fallback
+  // for old rows made the column mix two formats depending on row age.
   var MINUTE_MS = 60 * 1000;
   var HOUR_MS = 60 * MINUTE_MS;
   var DAY_MS = 24 * HOUR_MS;
+  var MONTH_MS = 30 * DAY_MS;
+  var YEAR_MS = 365 * DAY_MS;
   function formatUpdated(iso) {
     if (!iso) return "";
     var then = new Date(iso);
@@ -42,10 +44,12 @@ window.WikiQueryBlock = (function () {
       label = Math.floor(diffMs / MINUTE_MS) + "m ago";
     } else if (diffMs < DAY_MS) {
       label = Math.floor(diffMs / HOUR_MS) + "h ago";
-    } else if (diffMs < 30 * DAY_MS) {
+    } else if (diffMs < MONTH_MS) {
       label = Math.floor(diffMs / DAY_MS) + "d ago";
+    } else if (diffMs < YEAR_MS) {
+      label = Math.floor(diffMs / MONTH_MS) + "mo ago";
     } else {
-      label = iso.slice(0, 10);
+      label = Math.floor(diffMs / YEAR_MS) + "y ago";
     }
     return (
       '<span title="' + escapeHtml(iso) + '">' + escapeHtml(label) + "</span>"
