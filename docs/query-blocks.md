@@ -103,16 +103,17 @@ folder: projects/wiki-app/
 
 ## Embedded bookmarks with `links:`
 
-`links:` finds external `[label](https://...)` links embedded ANYWHERE in a
-document's body — one row per link, not per document. This is the third
-way to keep bookmarks in this app, alongside a dedicated `type: bookmark`
-document per link (see the sidebar's "+ Bookmark" quick-add) and a plain
-hand-written list article: write a normal document (say, "C++ Tutorials")
-with a short description next to each link, and `links: true` still
-surfaces every one of them vault-wide, from inside that one article.
-`![alt](url)` image syntax is never counted — only an actual link. The
-table's title column links straight to the external site, not back to the
-document that mentioned it (opens in a new tab).
+`links:` finds external `[label](https://...)` links embedded anywhere in
+a document's body — one row per link, not per document. This is the
+third way to keep bookmarks in this app, alongside a dedicated
+`type: bookmark` document per link (see the sidebar's "+ Bookmark"
+quick-add) and a plain hand-written list article. You can write a normal
+document (say, "C++ Tutorials") with a short description next to each
+link, and `links: true` will still surface every one of them vault-wide
+from inside that one article. `![alt](url)` image syntax is never
+counted — only an actual link. The table's title column links straight
+to the external site (opening in a new tab), not back to the document
+that mentioned it.
 
 ````
 ```query
@@ -182,16 +183,18 @@ order: asc
 - **No pagination yet.** `limit` caps at 100; if you need more, narrow the
   filter instead. See `docs/architecture.md` if this ever becomes a real
   problem for a large vault — it's an easy follow-up, just not built yet.
-- **The block only renders on the document VIEW page — never in the editor
-  at all, currently.** While writing one, both the WYSIWYG canvas and the
-  Markdown Preview panel show it as a plain, unrendered code block with a
-  "query" language badge; save the document and open its view page to see
-  the real table. Mermaid diagrams, by contrast, DO get a live preview in
-  the editor's Markdown Preview panel (see `docs/architecture.md`'s mermaid
-  section) — that's a deliberate scope choice made when that feature shipped,
-  not something query blocks are structurally incapable of; the same
-  customHTMLRenderer + fetch approach mermaid preview uses would work here
-  too, it just hasn't been built yet.
+- **The block only renders on the document view page — never in the
+  editor itself, currently.** While you're writing one, both the WYSIWYG
+  canvas and the Markdown Preview panel show it as a plain, unrendered
+  code block with a "query" language badge. Save the document and open
+  its view page to see the real table.
+
+  Mermaid diagrams, by contrast, do get a live preview in the editor's
+  Markdown Preview panel (see `docs/architecture.md`'s mermaid section).
+  That's a deliberate scope choice made when that feature shipped, not
+  something query blocks are structurally incapable of — the same
+  approach mermaid preview uses would work here too, it just hasn't been
+  built yet.
 
 ## Draft / Chat
 

@@ -1,11 +1,14 @@
 # Personal Wiki
 
-A personal knowledge base that's just markdown files on disk — full-text search, a
-clean WYSIWYG/markdown editor, public/private visibility per document, and an MCP
-server so Claude (or any MCP client) can search, read, and — if you let it — write
-your notes directly. One C++ binary, no database server, no runtime dependency beyond
-what ships with it. Built to run comfortably on a Raspberry Pi or similar ARM/x86_64
-SBC.
+A personal knowledge base where plain markdown files on disk are the only
+source of truth. On top of that you get full-text search, a WYSIWYG/markdown
+editor, public/private visibility per document, and an MCP server so Claude
+(or any MCP client) can search, read, and — if you allow it — write your
+notes directly.
+
+It ships as one C++ binary with no database server and no runtime dependency
+beyond what's already bundled in. It's built to run comfortably on a
+Raspberry Pi or similar ARM/x86_64 single-board computer.
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)
@@ -18,17 +21,18 @@ SBC.
 
 | | |
 |---|---|
-| ![Document view](docs/screenshots/document-view.png) **Document view** — filterable, namespace-grouped tags (`lang/cpp`, `lang/python`…), resizable document tree, print/export | ![Backlinks](docs/screenshots/backlinks.png) **`[[wiki-links]]` + backlinks** — "Linked from" section, generated automatically |
+| ![Document view](docs/screenshots/document-view.png) **Document view** — filterable, namespace-grouped tags (`lang/cpp`, `lang/python`…), resizable document tree, print/export | ![Backlinks](docs/screenshots/backlinks.png) **`[[wiki-links]]` + backlinks** — a "Linked from" section is generated automatically |
 | ![Search](docs/screenshots/search.png) **Full-text search** — FTS5 with prefix matching, `bm25()` ranking, tag/type filters | ![Editor](docs/screenshots/editor.png) **WYSIWYG editor** — Toast UI Editor, undo/redo, syntax-highlighted code blocks |
 | ![Graph view](docs/screenshots/graph.png) **Graph view** — every `[[wiki-link]]` as an edge, force-directed layout, filter by title/content | ![Account page](docs/screenshots/account-mcp.png) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
-| ![Calendar](docs/screenshots/calendar.png) **Calendar** — admin-only month/week/day view of every document's Due date, recurring events included | ![Calendar event picker](docs/screenshots/calendar-picker.png) **Custom date/time/recurrence picker** — no native `<input type="date">`, every control themeable |
+| ![Calendar](docs/screenshots/calendar.png) **Calendar** — admin-only month/week/day view of every document's due date, recurring events included | ![Calendar event picker](docs/screenshots/calendar-picker.png) **Custom date/time/recurrence picker** — no native `<input type="date">`, every control themeable |
 
 ### Themes
 
-Pick from a small 🎨 icon in the sidebar — the choice sticks per browser via
-`localStorage`, no server round-trip. Each theme is a complete, independent
-stylesheet (`static/css/themes/*.css`), not one palette with variables swapped
-underneath, so a fourth theme later is just a new file, not a refactor.
+Pick a theme from the small 🎨 icon in the sidebar. The choice is remembered
+per browser (`localStorage`), with no server round-trip. Each theme is a
+complete, independent stylesheet, not one shared palette with variables
+swapped underneath — so adding a fourth theme later means adding one file,
+not refactoring three.
 
 | Green (default) | Dark | Classic |
 |---|---|---|
@@ -37,118 +41,104 @@ underneath, so a fourth theme later is just a new file, not a refactor.
 
 ## Features
 
-- **Markdown on disk is the only source of truth.** Every document is a plain `.md`
-  file with YAML front-matter (`title`, `tags`, `visibility`, `type`). SQLite is a
-  disposable search index, never a second copy of the truth — delete it, it rebuilds
-  from the vault on the next start.
-- **Full-text search that's actually good.** FTS5 with prefix matching (`time` finds
-  "Systemd Timers"), `bm25()`-ranked column weighting, and multiselect tag/type
-  filters.
-- **Optional semantic search on top of FTS5, not instead of it.** Finds
-  `recipes/dinner/borscht.md` from a query like `beet soup` with zero words in common,
-  by blending FTS5's `bm25()` ranking with cosine similarity over embeddings
-  (Reciprocal Rank Fusion) — `sqlite-vec` storage, off by default
-  (`[embeddings].provider = "none"`), switchable at runtime to either a local
-  in-process model (`llama.cpp`, no document ever leaves the machine) or a cloud API
-  (any OpenAI-compatible `POST {api_base}/embeddings`; defaults are OpenAI
-  `text-embedding-3-small`), both build-time-optional so an SBC build stays
-  light unless you opt in. Admin panel exposes re-embed/re-embed-all with the same
-  audit trail as everything else. See [`docs/embeddings.md`](docs/embeddings.md) for
-  the full design and configuration.
-- **`[[wiki-links]]` and automatic backlinks**, Obsidian-style — link two notes,
-  see the connection from both ends without touching either file's `tags`.
-- **Namespaced tags, filterable.** A tag containing `/` (`lang/cpp`, `project/wiki`)
-  groups into a collapsible tree in the sidebar instead of one long flat list; a filter
-  box above it narrows by substring. Purely a client-side convention — the server
+**Storage and search**
+
+- Every document is a plain `.md` file with YAML front matter (`title`,
+  `tags`, `visibility`, `type`). SQLite is only a search index on top of
+  that — delete it and it rebuilds from the vault on the next start.
+- Full-text search is genuinely good: FTS5 with prefix matching (typing
+  `time` finds "Systemd Timers"), `bm25()`-ranked column weighting, and
+  multiselect tag/type filters.
+- Optional semantic search layers on top of full-text search, rather than
+  replacing it. A query like `beet soup` can find
+  `recipes/dinner/borscht.md` even with zero words in common, by blending
+  FTS5's `bm25()` ranking with cosine similarity over embeddings
+  (Reciprocal Rank Fusion). It's off by default and build-time-optional, so
+  an SBC build stays light unless you opt in; when enabled, embeddings can
+  run locally (`llama.cpp`, nothing ever leaves the machine) or against any
+  OpenAI-compatible API. See [`docs/embeddings.md`](docs/embeddings.md).
+
+**Writing and linking**
+
+- `[[wiki-links]]` with automatic backlinks, Obsidian-style — link two notes
+  and see the connection from both ends, without touching either file's
+  `tags`.
+- Namespaced, filterable tags: a tag containing `/` (`lang/cpp`,
+  `project/wiki`) groups into a collapsible tree in the sidebar instead of
+  one long flat list. This is purely a client-side convenience — the server
   treats `/` as just another character.
-- **A real editor, not a textarea.** Toast UI Editor (WYSIWYG + raw markdown), undo/
-  redo, drag-and-drop image upload routed through the same attachment pipeline as
-  everything else, and a list of the document's existing files (double-click a
-  name to insert a link). Optional **Draft** button (off until `[llm]` is
-  configured) fills the editor from an OpenAI-compatible chat API — wiki-server
-  is the client, tools run against the vault locally, the model never sees MCP,
-  and nothing is written until you hit Save. With `[llm]` on, a **Chat**
-  icon in the site sidebar opens a floating vault Q&A panel (read-only
-  tools, persisted threads). See [`docs/llm.md`](docs/llm.md).
-- **`![youtube](url)` embeds** that render as a real `<iframe>` — `youtu.be`,
-  `/watch?v=`, and `/shorts/` links all recognized, with a thumbnail preview right in
-  the editor.
-- **` ```mermaid ` fenced code blocks render as real diagrams**, not text —
-  flowcharts, sequence diagrams, anything [mermaid](https://mermaid.js.org/) supports.
-  Rendered entirely client-side, lazily: the ~5.3 MiB mermaid.js bundle only loads on
-  a document that actually contains one, never from every page load. Follows the
-  active site theme's light/dark palette, and shows a live preview right in the
-  editor's Markdown Preview panel too, not just after saving.
-- **Syntax-highlighted code blocks** on every document view (Prism.js, lazily
-  loaded, per-theme colors — not the editor; editing stays plain text on purpose).
-- **` ```query ` blocks — a live, auto-updating table of documents**, right inside a
-  page. `tag: cpp` / `type: recipe` / `folder: recipes/` / `orphans: true`, sorted and
-  limited — re-run server-side on every view, so a recipe index or project list never
-  goes stale. `search: <text>` embeds a real full-text (and, with embeddings
-  configured, hybrid semantic) search box instead, delegating to the same engine as
-  the site's own search page. No raw SQL: a small whitelisted DSL, every value a bound
-  parameter, never concatenated into a query string. An unknown key or bad value is a
-  clear error, never a silently empty result.
-- **Heading-level "zoom" / focus mode** *(experimental)* — click "Zoom" next to any h2-h6
-  to hide everything outside that section, useful on a long document; a shareable
-  `#zoom=<slug>` link lands already focused. Client-side only, no true block-level
-  reference model behind it (this app's content is plain markdown files, not
-  individually addressable blocks).
-- **Graph view** — every document as a node, every `[[wiki-link]]` as an edge.
-  Layout is a from-scratch Barnes-Hut simulation in a Worker (O(n log n);
-  a window resize scales cached coordinates instead of simulating again).
-  Paint falls through WebGL → canvas → SVG. Click-drag pans, wheel zooms.
-  A full `/graph` page for the whole vault (filter by title or content,
-  hide unlinked, label density), plus a "Local graph" widget on each
-  document (its connected component over `[[wiki-link]]`s) in a right rail.
-- **Calendar — admin-only, built from ordinary front matter.** Any document can
-  carry a `due` date and a recurrence rule (`weekly`, `;interval=2`,
-  `;until=`/`;count=` end conditions) — no separate "event" document type, a
-  calendar entry is just a document with `due` set. Month/week/day views at
-  `/calendar`, driven by a custom date-time-and-recurrence picker (every
-  control, including the calendar grid itself, is this app's own DOM — no
-  native `<input type="date">`/`<select>` anywhere, so no OS-chrome popup
-  that ignores the active theme). Deliberately NOT fail-safe-private like
-  every other read route: a schedule reveals more than "this document is
-  public," so `/calendar` and its API are gated to the admin outright,
-  regardless of any individual document's own `visibility`.
-- **Document history.** Every edit is snapshotted; diff any two versions, restore any
-  of them (which itself snapshots first — restoring is undoable too).
-- **Fail-safe-private visibility.** Missing or malformed front-matter defaults to
-  `private`, always. A private document returns a plain `404` to an anonymous
-  request — not `403` — so its existence isn't revealed either.
-- **One-click vault backup** from the admin panel, plus an opt-in `systemd` timer for
-  unattended, rotated, offsite backups.
-- **MCP server, both ways.** `wiki-mcp` (stdio) for a local Claude Desktop/Code
-  spawn — zero HTTP overhead, starts instantly. A separate, admin-toggleable **remote
-  MCP transport** (bearer token, optional IP allowlist, its own rate limiter) lets an
-  MCP client reach the same tools over HTTPS from anywhere. Read tools always on;
-  write tools (`create_document`/`update_document`) are an explicit opt-in, every call
-  audit-logged regardless of outcome.
-- **Three switchable visual themes** — green-on-black terminal, a plain neutral dark
-  UI, and a classic MediaWiki-style light theme — picked from a small icon in the
-  sidebar, remembered per browser. Each is a fully independent CSS file, not a shared
-  palette with variables swapped underneath.
-- **Built for ARM SBCs.** One static, cross-compiled binary — verified running
-  natively on real armv7 (Raspberry Pi-class) hardware, not just in theory.
+- A real editor, not a textarea: Toast UI Editor (WYSIWYG + raw markdown),
+  undo/redo, and drag-and-drop image upload. An optional **Draft** button
+  (hidden until `[llm]` is configured) fills the editor from an
+  OpenAI-compatible chat API — nothing is written until you hit Save. With
+  `[llm]` on, a **Chat** icon also opens a floating, read-only vault Q&A
+  panel. See [`docs/llm.md`](docs/llm.md).
+- `![youtube](url)` links render as a real `<iframe>`, with a thumbnail
+  preview right in the editor.
+- ` ```mermaid ` code blocks render as real diagrams (flowcharts, sequence
+  diagrams, anything [mermaid](https://mermaid.js.org/) supports), rendered
+  client-side and loaded only on documents that actually use one.
+- Syntax-highlighted code blocks on every document view (Prism.js, loaded
+  lazily, themed to match the active site theme).
+
+**Live, queryable pages**
+
+- ` ```query ` blocks turn a fenced code block into a live, auto-updating
+  table of documents right inside a page — filter by tag, type, or folder,
+  find orphaned documents, sort and limit. It re-runs on every view, so an
+  index or project list never goes stale. `search: <text>` embeds a real
+  search box using the same engine as the site's search page. There's no
+  raw SQL involved: a small whitelisted DSL, every value a bound parameter,
+  and an unknown key or bad value is a clear error rather than a silent
+  empty result.
+- Heading-level "zoom" *(experimental)*: click "Zoom" next to any h2–h6 to
+  hide everything outside that section. A shareable `#zoom=<slug>` link
+  lands already focused.
+- Graph view: every document is a node, every `[[wiki-link]]` is an edge.
+  There's a full `/graph` page for the whole vault (filter by title or
+  content, hide unlinked documents, adjust label density), plus a "local
+  graph" widget on each document showing just its own connected notes.
+- Calendar, admin-only: any document can carry a `due` date and a
+  recurrence rule — there's no separate "event" document type. Because a
+  schedule can reveal more than a single document's own visibility
+  setting, the calendar is gated to the admin regardless of what any
+  individual document is marked as.
+
+**Safety and operations**
+
+- Document history: every edit is snapshotted, any two versions can be
+  diffed, and restoring an old version is itself undoable.
+- Fail-safe-private visibility: missing or malformed front matter defaults
+  to `private`. A private document returns a plain `404` to an
+  unauthenticated request — never `403` — so its existence isn't revealed
+  either.
+- One-click vault backup from the admin panel, plus an opt-in `systemd`
+  timer for unattended, rotated, offsite backups.
+- MCP server, both ways: `wiki-mcp` (stdio) for a local Claude Desktop/Code
+  spawn with zero HTTP overhead, plus a separate, admin-toggleable remote
+  MCP transport (bearer token, optional IP allowlist, its own rate limiter)
+  for reaching the same tools over HTTPS. Read tools are always on; write
+  tools are an explicit opt-in, and every write attempt is audit-logged
+  regardless of outcome.
+- Built for ARM SBCs: one static, cross-compiled binary, verified running
+  natively on real armv7 (Raspberry Pi–class) hardware, not just in theory.
 
 ## Quick start
 
 ```sh
 git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 
-# vcpkg is bootstrapped locally, not vendored — one-time setup. A FULL
-# clone, not --depth 1 — a shallow clone can end up missing vcpkg.json's
-# pinned baseline commit once upstream has moved far enough past it (see
-# docs/architecture.md's "Build" section for exactly why).
+# vcpkg is bootstrapped locally, not vendored — one-time setup.
+# Use a FULL clone here, not --depth 1: vcpkg.json pins a specific baseline
+# commit, and a shallow clone can end up missing it once upstream has moved
+# on (see docs/architecture.md's "Build" section for the full reason).
 git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
-# vcpkg-configuration.json (committed) points vcpkg at overlay-ports/md4c/ --
-# a locally-patched md4c port backporting an unreleased upstream fix for
-# OSV-2022-126 (heap-buffer-overflow in table parsing); see
-# overlay-ports/md4c/portfile.cmake and docs/architecture.md for why. No
-# extra flags needed, vcpkg picks this up on its own.
+# vcpkg-configuration.json (committed) already points vcpkg at a locally
+# patched md4c port that backports a fix for OSV-2022-126 (a table-parsing
+# heap-buffer-overflow). No extra flags needed — vcpkg picks it up on its
+# own; see overlay-ports/md4c/portfile.cmake for details.
 cmake -S . -B build -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
   -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -161,19 +151,22 @@ cp config.example.toml config.toml
 ./build/wiki-server                  # listens on 127.0.0.1:8080 — GET /healthz
 ```
 
-The username prompted for isn't fixed to `admin` — it's whatever you type, stored
-as-is (there's still only ever ONE admin account; `--create-admin` overwrites
-username+password together, which is also how you change either one later — no
-config.toml option for it, since that would just be a second, potentially
-conflicting source of truth for a value SQLite already owns).
+The username you're prompted for isn't fixed to `admin` — it's whatever you
+type. There's still only ever one admin account; running `--create-admin`
+again overwrites the username and password together, and that's also how
+you change either one later (there's no `config.toml` setting for it, since
+that would just be a second source of truth competing with the one already
+in SQLite).
 
-Deploying somewhere real (systemd unit, reverse proxy for TLS, native vs. cross-
-compiled build for a weak/old SBC, backup timer): the self-contained
-[`docs/sbc-deployment.md`](docs/sbc-deployment.md) runbook — or `tools/wiki-ops.sh` to
-automate all of it, see [`docs/wiki-ops.md`](docs/wiki-ops.md).
+Deploying somewhere real — a systemd unit, a reverse proxy for TLS, choosing
+between a native and a cross-compiled build on a weak/old SBC, a backup
+timer — is covered end-to-end in
+[`docs/sbc-deployment.md`](docs/sbc-deployment.md), or automate the whole
+thing with `tools/wiki-ops.sh` (see [`docs/wiki-ops.md`](docs/wiki-ops.md)).
 
-**Or, on a normal x86_64/arm64 machine (not a weak/old ARM SBC — see
-[`docs/docker.md`](docs/docker.md) for why):**
+**On a normal x86_64/arm64 machine instead of a weak/old ARM SBC** (see
+[`docs/docker.md`](docs/docker.md) for why Docker isn't the recommended path
+on the SBC itself):
 
 ```sh
 mkdir -p vault_data
@@ -183,8 +176,9 @@ docker compose exec wiki wiki-server --create-admin
 
 ## Using it from Claude (MCP)
 
-`wiki-mcp` is a second, separate binary — stdio JSON-RPC, spawned by the MCP client
-itself, no server round-trip. Add it to `claude_desktop_config.json`:
+`wiki-mcp` is a second, separate binary that speaks stdio JSON-RPC — the MCP
+client spawns it directly, with no server round-trip involved. Add it to
+`claude_desktop_config.json`:
 
 ```json
 {
@@ -198,20 +192,24 @@ itself, no server round-trip. Add it to `claude_desktop_config.json`:
 }
 ```
 
-Six read tools are always available (`search_documents`, `get_document`, `list_tags`,
-`list_documents`, `run_query`, `get_calendar_events`); `create_document`/`update_document`
-exist behind `[mcp].write_access` in `config.toml` (off by default), and every write —
-success or failure — lands in an audit log. Want Claude to reach the same tools over the network instead of a local
-spawn? Turn on **Remote MCP** in the admin panel — bearer token, optional CIDR
-allowlist, its own rate limiter, independent write-access toggle. Full protocol
-details, tool schemas, the remote-transport security model, and a client config
-example: [`docs/mcp.md`](docs/mcp.md#connecting-a-client).
+Six read tools are always available: `search_documents`, `get_document`,
+`list_tags`, `list_documents`, `run_query`, `get_calendar_events`.
+`create_document`/`update_document` exist too, but only once
+`[mcp].write_access` is turned on in `config.toml` (off by default); every
+write attempt, successful or not, lands in an audit log.
+
+Want Claude to reach the same tools over the network instead of through a
+local spawn? Turn on **Remote MCP** in the admin panel — it has its own
+bearer token, an optional CIDR allowlist, its own rate limiter, and an
+independent write-access toggle. Full protocol details, tool schemas, and a
+client config example: [`docs/mcp.md`](docs/mcp.md#connecting-a-client).
 
 ## Writing ` ```query ` blocks
 
-A fenced code block with `query` as the language becomes a live, auto-updating
-table of documents right inside a page — filter by tag/type/folder, find
-orphaned documents, sort and limit — re-run on every view:
+A fenced code block with `query` as the language becomes a live,
+auto-updating table of documents right inside a page — filter by tag, type,
+or folder, find orphaned documents, sort and limit. It re-runs on every
+view:
 
 ````
 ```query
@@ -220,47 +218,51 @@ sort: title
 ```
 ````
 
-Full syntax, every key, and real worked examples (a recipe index, a "what
-changed recently" digest, a cleanup list of documents nothing links to yet):
-[`docs/query-blocks.md`](docs/query-blocks.md).
+For the full syntax, every key, and worked examples (a recipe index, a
+"what changed recently" digest, a list of documents nothing links to yet)
+see [`docs/query-blocks.md`](docs/query-blocks.md).
 
 ## A few things worth knowing about the security model
 
-- **Path traversal** is centralized in one place (`PathGuard`) that every vault read/
-  write goes through — canonicalized and checked against the vault root before
-  anything touches disk. Tested against `../../etc/passwd`, `%2e%2e`, symlink escapes.
-- **Sessions and the remote-MCP bearer token are hash-only in the database.** SHA-256,
-  never the raw value — a stolen copy of the SQLite file hands over nothing usable.
-  A raw token is shown exactly once, at generation time.
-- **CSRF tokens travel through a delivery-only cookie**; the server-side session value
-  is the actual source of truth, never the cookie by itself.
-- **Anything that mixes untrusted document content with generated markup** — FTS5
-  search snippets, the `![youtube]` embed substitution — uses a control-byte marker
-  swapped for real HTML only *after* the surrounding text is escaped, never a literal
-  tag baked into a query or an intermediate render step. The two orders of operation
-  are not interchangeable; get it backwards and either the markup breaks or the
-  document body becomes an XSS vector.
-- **A committed, `ctest`-run security suite** (`tests/integration/security_e2e.py`)
-  boots a real server against a temp vault and drives it over actual HTTP: every
-  mutating route rejects an unauthenticated caller, session fixation is rejected,
-  visibility gating is checked simultaneously across every read path, and a live
-  filesystem watcher's indexing is verified end to end — not just asserted in a unit
-  test in isolation.
+- **Path traversal** is handled in exactly one place (`PathGuard`), which
+  every vault read or write goes through: a path is canonicalized and
+  checked against the vault root before anything touches disk. It's tested
+  against payloads like `../../etc/passwd`, `%2e%2e`, and symlink escapes.
+- **Sessions and the remote-MCP bearer token are stored hashed, never raw.**
+  A stolen copy of the SQLite database hands over nothing directly usable.
+  A raw token is shown exactly once, at the moment it's generated.
+- **CSRF tokens are delivered through a cookie, but that cookie is never
+  the source of truth.** The server checks its own session-side value; the
+  cookie is only how that value reaches the browser.
+- **Anywhere untrusted document content gets mixed into generated markup**
+  — search snippets, `![youtube]` embeds — uses a control-byte marker that
+  gets swapped for real HTML only *after* the surrounding text has been
+  escaped. Doing this in the other order either breaks the markup or turns
+  the document body into an XSS vector; the two orders aren't
+  interchangeable.
+- **A real, automated security test suite** (`tests/integration/security_e2e.py`)
+  boots an actual server against a temp vault and drives it over real HTTP:
+  every mutating route is checked for rejecting unauthenticated callers,
+  session fixation is checked, visibility gating is checked across every
+  read path at once, and a live filesystem watcher's indexing is verified
+  end to end — not just asserted in an isolated unit test.
 
 ## Architecture, in short
 
-Two binaries share one static library (`libwikicore`) that has zero Drogon/OpenSSL
-dependency — `vault/`, `index/`, `config/`, `util/`:
+Two binaries share one static library, `libwikicore`, which has zero
+dependency on Drogon or OpenSSL:
 
-- **`wiki-server`** — the HTTP service (Drogon). A pure JSON API; every page is a
-  static shell + client-side JS that renders from `fetch()` responses, nothing
-  server-templated.
-- **`wiki-mcp`** — the stdio MCP entrypoint. Doesn't rescan the vault on every spawn
-  (an MCP client can spawn it often); trusts the index `wiki-server` already built.
+- **`wiki-server`** is the HTTP service (Drogon). It's a pure JSON API —
+  every page is a static shell plus client-side JS that renders from
+  `fetch()` responses; nothing is server-templated.
+- **`wiki-mcp`** is the stdio MCP entrypoint. It doesn't rescan the vault on
+  every spawn, since an MCP client may spawn it often — it trusts whatever
+  index `wiki-server` already built.
 
-The vault directory is the only thing that has to survive a disaster — the SQLite
-index is a disposable cache, rebuilt with `wiki-server --reindex` or on the next
-startup. Full architecture rationale lives in
+The vault directory — your actual markdown files — is the only thing that
+has to survive a disaster. The SQLite index is a disposable cache, rebuilt
+either on the next `wiki-server` startup or with `wiki-server --reindex`.
+The full design rationale lives in
 [`docs/architecture.md`](docs/architecture.md).
 
 ## Tech stack
@@ -269,8 +271,8 @@ startup. Full architecture rationale lives in
 |---|---|
 | HTTP | [Drogon](https://github.com/drogonframework/drogon) (C++17/20 async framework) |
 | Search index | SQLite + FTS5 |
-| Markdown → HTML | [md4c](https://github.com/mity/md4c) (raw HTML passthrough deliberately disabled — that flag *is* the sanitization) |
-| Front-matter | [yaml-cpp](https://github.com/jbeder/yaml-cpp) |
+| Markdown → HTML | [md4c](https://github.com/mity/md4c) (raw HTML passthrough is deliberately disabled — that flag *is* the sanitization) |
+| Front matter | [yaml-cpp](https://github.com/jbeder/yaml-cpp) |
 | Password hashing | argon2id ([libargon2](https://github.com/P-H-C/phc-winner-argon2)) |
 | Config | [toml++](https://github.com/marzer/tomlplusplus) |
 | WYSIWYG editor | [Toast UI Editor](https://github.com/nhn/tui.editor) (vendored, committed) |
@@ -286,13 +288,15 @@ startup. Full architecture rationale lives in
 
 ## Status
 
-Feature-complete: auth, CRUD/WYSIWYG editing, search/nav, MCP (stdio + remote),
-hardening, deployment, document versioning, `[[wiki-links]]` backlinks, vault backup,
-and semantic search are all implemented. Cross-compiled builds run natively on ARM —
-see [`docs/sbc-deployment.md`](docs/sbc-deployment.md), and
-[`docs/wiki-ops.md`](docs/wiki-ops.md) for the build+deploy automation script. Semantic
-search configuration is in [`docs/embeddings.md`](docs/embeddings.md); the Draft agent
-and sidebar Chat panel are documented in [`docs/llm.md`](docs/llm.md).
+Feature-complete: auth, CRUD/WYSIWYG editing, search/navigation, MCP (stdio
+and remote), hardening, deployment, document versioning, `[[wiki-links]]`
+backlinks, vault backup, and semantic search are all implemented.
+Cross-compiled builds run natively on ARM — see
+[`docs/sbc-deployment.md`](docs/sbc-deployment.md), and
+[`docs/wiki-ops.md`](docs/wiki-ops.md) for the build-and-deploy automation
+script. Semantic search configuration is in
+[`docs/embeddings.md`](docs/embeddings.md); the Draft agent and sidebar
+Chat panel are documented in [`docs/llm.md`](docs/llm.md).
 
 ## License
 
