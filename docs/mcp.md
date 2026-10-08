@@ -226,8 +226,8 @@ able to toggle this without restarting the server:
   request; the app itself has no attachment size cap of its own.
 - **Bearer token** — a 64-character random hex string, checked via
   `Authorization: Bearer <token>` on every `POST /mcp`. Only its SHA-256
-  hash is ever stored (the same discipline session cookies use — see
-  `docs/architecture.md`). Clicking "Regenerate token" shows the new raw
+  hash is ever stored — the raw value is never written to disk anywhere.
+  Clicking "Regenerate token" shows the new raw
   value exactly once, right there on the page, and immediately
   invalidates whatever token was issued before it. `PUT /mcp/uploads/{id}`
   doesn't send this header at all — the upload id itself is the
@@ -281,47 +281,5 @@ reviewing `GET /api/admin/mcp-audit-log` tell local and remote writes
 apart at a glance — it needed no schema change, just a naming convention
 at the call site.
 
-The remote endpoint is a single stateless `POST /mcp`, implementing
-MCP's Streamable HTTP transport minus the optional `Mcp-Session-Id`:
-every tool here is a fast, synchronous call with nothing to carry across
-requests, so there's no session state worth tracking, and each request
-is independently authenticated end to end.
-
-This is deliberately hand-built rather than built on cpp-mcp's own
-HTTP+SSE server. Reading `mcp_server.cpp` directly turned up that its
-`set_auth_handler()` is set but **never actually invoked** anywhere in
-that library's own request path — an unpatched, dead-code auth hook.
-Building on top of it and trusting that hook for a public endpoint would
-have shipped something that *looks* token-protected but isn't.
-`RemoteMcpRoutes.cpp` instead reuses only the underlying `wikicore`
-services (`FtsSearch`/`NavQueries`/`DocumentService`/`IndexUpdater`) that
-`McpServer.cpp` (the stdio transport) also calls, gated by this app's own
-real, tested Drogon session-adjacent machinery instead of cpp-mcp's. The
-stdio transport in `McpServer.cpp` itself is completely untouched by any
-of this — a separate, already-working code path.
-
-## Implementation notes
-
-- The protocol layer — JSON-RPC 2.0 framing over one-message-per-line
-  stdio, `initialize`, `tools/list`, `tools/call` — is hand-rolled in
-  `src/mcp/McpServer.cpp`, with no MCP library dependency. A JSON-RPC
-  notification (a message with no `id`, e.g. `notifications/initialized`)
-  never gets a response, not even an empty one — the dispatch loop
-  enforces this generically for any method, rather than as a special
-  case keyed on one method name.
-- `src/mcp/McpServer.cpp` registers the tools and wraps
-  `index::FtsSearch`, `index::NavQueries`,
-  `index::IndexUpdater::findPathByUuid`, and `vault::DocumentService::get`
-  — all of which already existed in `libwikicore` before this layer was
-  added. The MCP layer's own job is just translating their results into
-  `mcp::json`.
-- `mcp::json` is `nlohmann::ordered_json`, built from this project's own
-  vcpkg `nlohmann_json` dependency (already `PUBLIC`-linked into
-  `wikicore`, so `wiki-mcp` gets it for free — no extra dependency
-  needed).
-- `cpp-mcp` is pinned via `FetchContent` in `CMakeLists.txt`, using
-  `FetchContent_Populate` (its own `CMakeLists.txt`/`examples/` are never
-  configured or built). It's kept purely as a source for its vendored,
-  header-only `common/httplib.h`, which `CloudChatClient.cpp` and
-  `CloudEmbeddingProvider.cpp` use for outbound HTTPS. Nothing in this
-  project links against its actual `mcp` library target.
+The remote endpoint is a single stateless `POST /mcp`: every tool call
+is independently authenticated, with nothing carried across requests.

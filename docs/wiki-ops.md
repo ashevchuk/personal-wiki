@@ -105,15 +105,6 @@ purely at runtime via `config.toml`'s `[llm]` section
 a dev-only `tests/fuzz/` flag that needs Clang specifically, and has no
 place in a build/deploy flow — it isn't exposed here.
 
-For `native`/`cross`, these flags just append the matching
-`-DWIKI_ENABLE_...=ON` to the existing `cmake` configure line. For
-`container`/`container-arm`/`cross-container`, Docker has no equivalent
-of a cache flag, so `wiki-ops.sh` passes
-`--build-arg WIKI_CMAKE_EXTRA_ARGS="-DWIKI_ENABLE_...=ON ..."`, and both
-`Dockerfile` and `cross/Dockerfile.builder` declare a matching
-`ARG WIKI_CMAKE_EXTRA_ARGS=` appended verbatim to their own `cmake`
-configure line.
-
 There's a real asymmetry in risk between the two flags, not just a
 formality: `--cloud-embeddings` is just an HTTP client (OpenSSL, already
 a transitive Drogon dependency on every triplet/toolchain this project
@@ -297,19 +288,10 @@ command, using `WIKI_DEPLOY_SSH_PORT`.
    `verify cross`/`verify cross-container`/`verify container-native`
    first (native has no such step — nothing to emulate or re-run
    locally).
-3. Stages the install tree into a local temp dir, then ships it to the
-   target and does an atomic swap. "Staging the install tree" means:
-   `cmake --install` for native; a hand-assembled
-   bin/+static/+systemd-files tree for cross/cross-container, matching
-   what `cmake --install` would have produced; or a plain copy of the
-   already-extracted tree for `container-native`, which is already
-   install()-shaped. The swap itself: `.bak-$STAMP` the live
-   `bin/`/`static/`, `strip --strip-all` **on the target itself**
-   (cross/cross-container/container-native — the dev machine's own
-   `strip` can't always read a cross ARM ELF, and stripping on the
-   target is simplest to keep uniform even for `container-native`'s
-   native-arch binary, which the dev machine's `strip` *can* read),
-   move the new files in, `chown`.
+3. Stages the install tree into a local temp dir, ships it to the
+   target, and does an atomic swap: backs up the live `bin/`/`static/`
+   as `.bak-$STAMP`, strips the new binaries **on the target itself**,
+   moves the new files in, and `chown`s them.
 4. With `--first-time`: also edits `config.toml`'s
    `listen_addr`/`port`/`threads`/`[vault].path`/`[mcp].scope` (via an
    anchored `sed`, never a real TOML parser — the multi-line
@@ -500,12 +482,10 @@ half is skipped. `verify cross`/`deploy` run standalone are unaffected
 
 **`--dry-run` is not a full no-op here, same as it already isn't for
 plain `deploy`:** the build step's own commands are properly skipped,
-but `deploy`'s inherited re-verify step (unless `--skip-verify`) and its
-read-only `systemctl is-active` probe both still run for real. That
-probe exists specifically so the dry-run preview can truthfully report
-which branch (`restart` vs. `enable --now`) a real run would take.
-Nothing mutating runs under `--dry-run` — the probe is read-only by
-design, and never restarts or reconfigures anything.
+but a couple of read-only checks (the re-verify step, unless
+`--skip-verify`, and a `systemctl is-active` probe) still run for real so
+the preview can accurately describe what a real run would do. Nothing
+that actually changes anything runs under `--dry-run`.
 
 ## `static-redeploy`
 
@@ -574,8 +554,7 @@ that file, including ones you hand-added yourself, is left untouched.
 The value itself never appears in this script's own
 `--dry-run`/trace output either — it travels over the same ssh
 connection as everything else, but via stdin, never as part of a
-logged command string (see `remote_sh_secret()` in the script for the
-exact mechanism).
+logged command string.
 
 Leaving a prompt blank skips that name entirely — `wiki.env` stays
 whatever it already was for that line. **This does not touch
@@ -611,11 +590,9 @@ container-backup example under `deploy` above.
 `wiki.service.bak-$STAMP` before overwriting it, and asks for
 confirmation first** (`--yes` bypasses it, same as the adjacent
 restart-confirmation) **if that existing unit's `EnvironmentFile=` path
-differs from the one this repo's own `systemd/wiki.service` ships.** A
-customized target (a different env-file location than the documented
-`/etc/opt/wiki/wiki.env`) silently reverting to this repo's default on a
-routine `deploy`/`update` is exactly what caused a real production
-outage before this check existed:
+differs from the one this repo's own `systemd/wiki.service` ships** —
+protecting a target where you've customized the env-file location from
+silently reverting to the default on a routine `deploy`/`update`:
 
 ```sh
 ./tools/wiki-ops.sh systemd install --target=root@192.0.2.10 --with-backup-timer
@@ -683,14 +660,11 @@ adding to.
   one, `systemctl restart wiki.service`), same as
   `docs/sbc-deployment.md` already documents. Nothing here automates
   that walk back yet.
-- **`remote_sh`'s own preamble (`set -euo pipefail; ...`) assumes the
-  target's login shell is bash-compatible.** `pipefail` isn't a POSIX
-  option — a target whose `ssh user@host` login shell is `dash`/plain
-  `sh` would fail this `set` call itself, before `$script` ever runs.
-  Debian/Ubuntu's default root/admin shell is bash (true for every real
-  target this project has actually been deployed to), so this is
-  unverified rather than confirmed-broken — but genuinely untested
-  against a non-bash login shell.
+- **This script assumes the target's login shell is bash.** It's
+  verified against every real target this project has actually been
+  deployed to (Debian/Ubuntu's default root/admin shell is bash), but
+  genuinely untested against a target whose `ssh user@host` login shell
+  is `dash` or plain `sh`.
 - **`secrets` (and `deploy --first-time`'s automatic call into it) has
   no non-interactive path at all.** `resolve_secret()` deliberately has
   no flag and never reads `deploy.local.env`, so a `--yes`-only/CI run

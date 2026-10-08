@@ -130,8 +130,8 @@ git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 
 # vcpkg is bootstrapped locally, not vendored — one-time setup.
 # Use a FULL clone here, not --depth 1: vcpkg.json pins a specific baseline
-# commit, and a shallow clone can end up missing it once upstream has moved
-# on (see docs/architecture.md's "Build" section for the full reason).
+# commit, and a shallow clone can end up missing it once upstream has
+# moved on.
 git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
@@ -222,6 +222,10 @@ For the full syntax, every key, and worked examples (a recipe index, a
 "what changed recently" digest, a list of documents nothing links to yet)
 see [`docs/query-blocks.md`](docs/query-blocks.md).
 
+For more on how the app actually behaves day to day — soft deletes,
+how fast it notices external file changes, attachment size limits, what
+MCP can and can't touch — see [`docs/behavior.md`](docs/behavior.md).
+
 ## A few things worth knowing about the security model
 
 - **Path traversal** is handled in exactly one place (`PathGuard`), which
@@ -262,8 +266,6 @@ dependency on Drogon or OpenSSL:
 The vault directory — your actual markdown files — is the only thing that
 has to survive a disaster. The SQLite index is a disposable cache, rebuilt
 either on the next `wiki-server` startup or with `wiki-server --reindex`.
-The full design rationale lives in
-[`docs/architecture.md`](docs/architecture.md).
 
 ## Tech stack
 

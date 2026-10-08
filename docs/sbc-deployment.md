@@ -3,8 +3,7 @@
 Everything needed to get `wiki-server`/`wiki-mcp` running on a real
 device — a Raspberry Pi or similar ARM/x86_64 SBC, or any other Linux
 host — from build through install, systemd, TLS, backup, remote MCP, and
-redeploys, in one place. `docs/architecture.md` carries the broader
-design rationale; this is the operational runbook.
+redeploys, in one place.
 
 What this does **not** cover: connecting an MCP client to `wiki-mcp` once
 it's built and installed (tool schemas, `claude_desktop_config.json`, the
@@ -96,9 +95,9 @@ live devices:
   mosquitto/munin on the same box with no impact on any of them.
 - **aarch64, Armbian/Debian trixie, kernel 6.18 (the same Orange Pi One
   Plus, with `CONFIG_COMPAT` not set — a 32-bit binary can't even
-  `exec()` there)** — via a new `aarch64-linux-musl` target
-  (`cross/aarch64-musl/`, see "Porting to a different board" below). All
-  1619 unit test assertions pass running directly on the device, with no
+  `exec()` there)** — via a new, already-shipped `cross/aarch64-musl/`
+  target. All 1619 unit test assertions pass running directly on the
+  device, with no
   qemu needed at all — real hardware beats emulation when you have it.
   Both the nginx-fronted reverse-proxy shape *and* standalone TLS
   ([tls] in config.toml, self-signed cert, real `setfacl`-granted ACL
@@ -232,9 +231,9 @@ runbook covers only the native/cross-compile paths in detail; see
 ```sh
 git clone https://github.com/ashevchuk/personal-wiki.git wiki && cd wiki
 
-# FULL clone, not --depth 1 — see docs/architecture.md's "Build" section
-# for why a shallow clone can silently miss vcpkg.json's pinned baseline
-# commit (worse on a slow SBC network link, but no less necessary).
+# FULL clone, not --depth 1: vcpkg.json pins a specific baseline commit,
+# and a shallow clone can silently miss it once upstream has moved on
+# (worse on a slow SBC network link, but no less necessary).
 git clone https://github.com/microsoft/vcpkg.git vcpkg
 ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
@@ -268,8 +267,7 @@ ships the cross-compilation scaffolding under `cross/`:
 - `cross/arm-musl/arm-musl.cmake` — the vcpkg overlay triplet (static,
   release-only).
 - `cross/overlay-ports/{brotli,libuuid}` — patched vcpkg ports that skip
-  building CLI/test executables that hit a zig/lld linker bug (see
-  "Known issues" below).
+  building CLI/test executables that hit a zig/lld linker bug.
 
 ### Cross-build the dependencies
 
@@ -332,113 +330,12 @@ qemu-arm-static ./build-arm/wiki-server --create-admin
 
 Only copy the binaries to the target once both of those pass cleanly.
 
-### Known issues hit during cross-compilation (and their fixes)
-
-- **zig 0.16.0's bundled lld `SIGSEGV`s (`code=139`) when statically
-  linking many `.a` archives for `arm-linux-musleabihf`.** The root
-  cause isn't archive count or parallelism — it's one specific flag,
-  `-Xlinker --dependency-file=...`, which CMake's Ninja generator
-  (≥3.20) adds automatically for linker-level dependency tracking. That
-  flag crashes lld for this target 100% of the time, deterministically.
-  Already fixed in `cross/arm-musl/toolchain.cmake`:
-  `set(CMAKE_LINK_DEPENDS_USE_LINKER OFF)` makes CMake fall back to
-  non-linker-based dependency tracking, with no other effect.
-- **Linking a small executable against a single `.a` crashes the same
-  way**, for brotli's CLI tool and libuuid's `test_uuid` — the same
-  underlying lld bug, just a different trigger shape. Fixed via the two
-  overlay ports under `cross/overlay-ports/`, which skip building those
-  specific executables (neither is actually needed — only the libraries
-  are).
-- **CMake/Ninja auto-enable C++20 module dependency scanning**
-  (`clang-scan-deps -format=p1689`) whenever Clang+C++20+Ninja are all in
-  play, regardless of whether the project actually uses modules (it
-  doesn't). The *system* `clang-scan-deps` can't resolve zig's bundled
-  libc++ for a foreign `--target`, so it fails with false
-  `<string>`/`<vector>`/etc. "file not found" errors, even though normal
-  compilation finds those headers fine. Already fixed:
-  `set(CMAKE_CXX_SCAN_FOR_MODULES OFF)`.
-
-### Porting to a different board (different CPU architecture)
-
-**First, check whether you need this section at all.** The existing
-`cross/arm-musl` target is armv7 (32-bit ARM, Cortex-A7-class or newer,
-hardfloat) — if your board is *also* armv7/armhf, the already-built
-binary (or your own build from the exact recipe above, unmodified) just
-runs, no porting needed. If your board is x86_64, skip cross-compilation
-entirely and use the plain native build recipe under "Path A" — `cross/`
-isn't involved there at all. This section is only for a genuinely
-different CPU architecture — most commonly aarch64/arm64, the 64-bit
-mode most current-generation SBCs (including newer Raspberry Pi boards)
-actually ship by default.
-
-**Everything target-specific lives in exactly four files**, all under
-`cross/arm-musl/`. Copy that whole directory to
-`cross/<your-triplet-name>/` and edit only what's below —`ar`/`ranlib`
-need no changes at all, since they're architecture-agnostic wrappers
-around `zig ar`/`zig ranlib`:
-
-1. **`cc`/`c++`** — change the `-target` string to your architecture's
-   zig target triple (`zig targets` lists what your installed zig
-   supports). `arm-linux-musleabihf` becomes, for example,
-   `aarch64-linux-musl` for a 64-bit ARM board. Drop
-   `-mcpu=generic+v7a` unless your new target has an equivalent reason
-   to pin a baseline CPU feature set — that flag exists specifically for
-   armv7's own fragmented Cortex-A/ARMv7 feature story, it isn't a
-   generic requirement.
-2. **`toolchain.cmake`** — change `CMAKE_SYSTEM_PROCESSOR` and both
-   `CMAKE_C_COMPILER_TARGET`/`CMAKE_CXX_COMPILER_TARGET` to match. Leave
-   `CMAKE_LINK_DEPENDS_USE_LINKER OFF` and `CMAKE_CXX_SCAN_FOR_MODULES OFF`
-   in place for your first attempt — both work around zig 0.16.0 bugs
-   found on armv7 that are plausibly generic to zig's cross-linking
-   path, though unverified against a second architecture. If your build
-   links cleanly without them, drop them; if it `SIGSEGV`s identically
-   to the documented armv7 bug above, the fix is the same one line.
-3. **The vcpkg triplet file** (`arm-musl.cmake` → `<your-name>.cmake`) —
-   change `VCPKG_TARGET_ARCHITECTURE` to vcpkg's own name for your
-   architecture (`arm64` for aarch64, `x64` for x86_64, `riscv64` for
-   RISC-V — see vcpkg's own triplet docs for the authoritative list).
-   Keep `VCPKG_CRT_LINKAGE`/`VCPKG_LIBRARY_LINKAGE` as `static`, and
-   keep the `VCPKG_CHAINLOAD_TOOLCHAIN_FILE` line pointing at your new
-   `toolchain.cmake`.
-4. **`cross/overlay-ports/`** (brotli, libuuid, md4c) — these aren't
-   triplet-specific; the same `--overlay-ports=cross/overlay-ports` flag
-   applies regardless of which triplet you build. Whether the specific
-   patches in them (a brotli CLI-binary link crash, a libuuid CLI/test
-   build issue) are still necessary for your new architecture is
-   unverified — they were found on armv7, not derived from a spec. Try
-   building without them first, and patch further only if you hit a
-   matching crash.
-
-Then run the same recipe as the armv7 instructions above, pointed at
-your new triplet/toolchain file instead. The same mandatory step
-applies: `qemu-<your-arch>-static ./build-<name>/tests/unit_tests` must
-pass every case, not just avoid crashing, before the binary goes near
-real hardware — or, if you actually have the real board, skip qemu and
-run the test binary there directly. That's strictly better than
-emulation, and it's what verified the aarch64-musl target below.
-
-**`cross/aarch64-musl/` is exactly this recipe already done** — built
-and verified running natively (not under emulation) on a real aarch64
-target (the Orange Pi One Plus, Armbian/Debian trixie, kernel 6.18,
-`CONFIG_COMPAT` not set — meaning a 32-bit `arm-musl` binary can't
-execute there at all, `ENOEXEC`, not just "runs slower"). It uses
-`aarch64-linux-musl`, the exact target string this section already used
-as its own worked example above, with `-mcpu=generic` (no `+v7a`-style
-baseline needed) and `VCPKG_TARGET_ARCHITECTURE arm64`. All 1619 unit
-test assertions passed running directly on the device, with no qemu
-involved. Use `--triplet=aarch64-musl --cross-dir=cross/aarch64-musl`
-with `build cross`/`deploy`.
-
-**One alternative worth considering before cross-compiling at all:** the
-musl+static approach exists specifically to dodge `GLIBC_2.XX not found`
-against an old target OS (Debian 9 stretch, glibc 2.24, in this
-project's real deployment). If your board runs a reasonably current
-Linux distro, a plain glibc cross-toolchain — or even a native
-on-device build, if the board has enough RAM/storage/patience for an
-hours-long Drogon+OpenSSL build — may work and sidesteps the whole
-`cross/` mechanism entirely. A native on-device build on a weaker board
-hasn't been tried for this project specifically (see "Real-hardware
-verification status" above).
+If the cross-build hits a linker crash (`code=139`) or similar toolchain
+error, or if you need to target a CPU architecture other than armv7
+(`cross/arm-musl`, the shipped default) or aarch64
+(`cross/aarch64-musl`, also shipped and verified), that's an advanced,
+toolchain-level undertaking outside the scope of this guide — the
+`cross/` directory's own files are the place to start.
 
 ## Install (Path A or B — Docker doesn't use this step, see `docs/docker.md`)
 
@@ -513,22 +410,15 @@ sudo systemctl enable --now wiki.service
 sudo systemctl status wiki.service
 ```
 
-The shipped unit is already hardened: `ProtectSystem=strict`,
-`NoNewPrivileges=yes`, `ProtectHome=yes`, `PrivateTmp=yes`,
-`ReadWritePaths=/opt/wiki/vault_data` (the only place the service
-writes), plus an empty `CapabilityBoundingSet=`,
-`RestrictAddressFamilies`, `SystemCallFilter=@system-service`,
-`MemoryDenyWriteExecute`, and the other `Protect*`/`Restrict*`
-directives (see `systemd/wiki.service`'s own comments for what each one
-covers). With `CapabilityBoundingSet=` empty, the process loses
-`CAP_DAC_OVERRIDE` even running as `root` — file ownership and
-permissions under `ReadWritePaths` have to be exactly right, since the
-capability bounding set provides no privilege fallback here. Run
-`systemd-analyze security wiki.service` to see its score, and exercise
-the app once after any change to this unit's hardening (login, create a
-document, search, upload an attachment) — a hardening regression here
-fails at runtime, as a specific broken route, not at `daemon-reload`
-time.
+The shipped unit is already hardened (`ProtectSystem=strict`,
+`NoNewPrivileges=yes`, `ProtectHome=yes`, a locked-down capability set,
+and more — see `systemd/wiki.service`'s own comments for the full
+list), and it only has write access to `/opt/wiki/vault_data`. Run
+`systemd-analyze security wiki.service` to see its score. If you ever
+edit this unit's hardening directives yourself, exercise the app once
+afterward (login, create a document, search, upload an attachment) — a
+hardening regression shows up as a broken route at runtime, not as an
+error from `daemon-reload`.
 
 `ReadWritePaths=/opt/wiki/vault_data` already covers Drogon's own
 internal upload-buffering directory too (used to stage large multipart
@@ -585,14 +475,9 @@ cert_file = "/etc/letsencrypt/live/example.com/fullchain.pem"
 key_file = "/etc/letsencrypt/live/example.com/privkey.pem"
 ```
 
-A background watcher (`src/server/CertWatcher`) detects a certbot
-renewal (an atomic symlink swap inside that `live/<domain>/` directory)
-and reloads the cert/key into the already-running process, with no
-restart needed. It re-validates both files as parseable PEM *and* that
-the key actually matches the certificate before ever reloading them, so
-a transiently half-written file — or the two symlinks updating a moment
-apart from each other mid-renewal — gets skipped (logged, retried on the
-next change) rather than risking a crash.
+A background watcher detects a certbot renewal and reloads the cert/key
+into the already-running process automatically, with no restart needed
+and no downtime.
 
 **Permission gotcha:** `/etc/letsencrypt/{live,archive}` is root-only
 (`0700`) by default, and `wiki-server`'s own run-as user needs read
@@ -607,16 +492,10 @@ setfacl -R -m u:wiki:rx /etc/letsencrypt/live /etc/letsencrypt/archive
 
 (substitute the actual user `wiki-server` runs as for `wiki`.)
 
-`auth::clientIp()` (used by the remote-MCP rate limiter and IP
-allowlist, see "Remote MCP" below) automatically stops trusting
-`X-Real-IP`/`X-Forwarded-For` whenever `[tls].enabled` is true — there's
-no separate setting for this. It's derived rather than configurable,
-because there is by definition no reverse proxy in front in this mode:
-`wiki-server` is the direct, sole TCP endpoint, so nothing legitimate
-would ever send those headers, and `req->getPeerAddr()` is already
-correct. `X-Accel-Buffering: no` (set by `AgentRoutes.cpp` on the
-Draft/Chat SSE stream) is advisory to a reverse proxy only — it's simply
-unused and harmless here, with no proxy around to read it.
+In this mode, the remote-MCP rate limiter and IP allowlist (see "Remote
+MCP" below) automatically use the real connecting IP — there's nothing
+extra to configure for that; it's only the nginx-fronted mode below that
+needs explicit proxy header settings.
 
 ## Reverse proxy
 
@@ -662,19 +541,9 @@ server {
 
 ### Under a subpath of an existing site (e.g. `/wiki`)
 
-**No `config.toml` setting is needed for the common case.** The frontend
-is a client-rendered static shell (`static/shell.html`, served with the
-same body no matter what path it's requested from — see
-`docs/architecture.md`). Its own inline bootstrap script infers the
-mount prefix itself on load, by matching `location.pathname` against
-this app's known route shapes (`/d/...`, `/edit/...`, `/search`, …) and
-setting a `<base href>` from whatever came before that match. This works
-correctly under any subpath, or none, automatically. Stylesheets in
-`shell.html` itself are created by that same inline script *after*
-`<base>` exists, not as static `<link href="css/...">` tags — otherwise
-the HTML preload scanner would fetch them against the document URL
-(`/wiki/edit/css/edit.css`) and get this SPA shell (`text/html`) back
-instead of CSS.
+**No `config.toml` setting is needed for the common case.** The app
+figures out its own mount prefix automatically, so it works correctly
+under any subpath, or none, with no configuration.
 
 ```nginx
 location = /wiki {
@@ -711,14 +580,9 @@ start — landing directly on a stale link with nothing cached yet —
 still degrades to an unstyled (never crashing) page.
 
 **`[server].base_path = "/wiki"` in `config.toml` closes this
-completely, optionally** (restart the service after setting it) —
-`PageRoutes.cpp` then bakes that prefix into every served
-`shell.html`, matched route or not, as an authoritative
-`window.__WIKI_KNOWN_BASE_PATH__` that the bootstrap script trusts over
-its own guessing. Skip this setting for a deployment on its own
-(sub)domain, or if that one cold-start edge case is acceptable to leave
-unstyled. The full reasoning is in `shell.html`'s own inline script
-comment and `src/config/AppConfig.h`'s comment on `basePath`.
+completely, optionally** (restart the service after setting it). Skip
+this setting for a deployment on its own (sub)domain, or if that one
+cold-start edge case is acceptable to leave unstyled.
 
 ## Remote MCP
 
@@ -751,19 +615,9 @@ proxy_set_header X-Real-IP $remote_addr;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 ```
 
-Whenever `[tls].enabled = false`, `auth::clientIp()`
-(`src/auth/ClientIp.h`) reads `X-Real-IP` first, falling back to
-`X-Forwarded-For`'s *last* entry. Both of those details matter for the
-same reason: `proxy_set_header` overwrites a header before forwarding it
-upstream, so no client-supplied `X-Real-IP` survives that —
-`$remote_addr` is nginx's own view of the TCP connection, which isn't
-spoofable from the client side. `$proxy_add_x_forwarded_for`, on the
-other hand, *appends* `$remote_addr` to whatever `X-Forwarded-For` the
-client already sent — so that header's first entry is exactly what the
-client claimed (trivially spoofable: a request with
-`X-Forwarded-For: <an-allowlisted-ip>` would walk straight past an
-allowlist that trusted the first entry), while the last entry is always
-nginx's own append.
+Use these two directives exactly as shown — don't substitute a
+client-supplied header or a hand-rolled `X-Forwarded-For` value, since
+those are trivially spoofable and would defeat the allowlist entirely.
 
 A deployment with a different proxy chain — more than one hop, or a
 proxy that doesn't set `X-Real-IP`/doesn't use
@@ -968,11 +822,6 @@ ssh root@<target> 'cd /opt/wiki/static && find . -type f -exec md5sum {} \;' \
   | sed 's|  \./|  |' | sort > /tmp/remote.md5
 diff /tmp/local.md5 /tmp/remote.md5 && echo "identical" || echo "MISMATCH"
 ```
-
-Use `s|  \./|  |`, not `s|^\./|  |` — `md5sum`'s own output puts two
-spaces before the path, and `^\./` anchors at the start of the line (the
-hash column), so it matches nothing, and the diff would silently show a
-bogus per-path mismatch instead of catching real content differences.
 
 **When testing a redeploy against a local throwaway instance**, kill the
 old process by an exact, verified PID (`ps aux | grep wiki-server`, then

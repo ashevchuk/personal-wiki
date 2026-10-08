@@ -48,12 +48,6 @@ model = "claude-sonnet-4-6"
 
 Restart `wiki-server` after changing any of this.
 
-`CloudChatClient` (the HTTP client itself) lives only in `wiki-server`
-— it uses httplib + OpenSSL, the same vendored header
-`CloudEmbeddingProvider` already uses. `AgentRuntime`, which drives the
-tool-calling loop, lives in `libwikicore` instead, so that loop can be
-unit-tested with a scripted client and no real HTTP involved.
-
 ## What the model can do
 
 Both Draft and Chat get a set of read-only vault tools. Draft additionally
@@ -141,19 +135,13 @@ the edit page drops the session entirely.
 
 ### Streaming
 
-The panel streams the model's reply as it's generated.
-`CloudChatClient` sends `stream: true` and assembles the incoming
-tool-call deltas the same way it would assemble a single blocking
-response. Incremental assistant text is treated as one growing event in
-the session (flagged `data.streaming` while tokens are still arriving).
-The browser opens `GET /api/agent/sessions/{id}/stream`
-(`text/event-stream`, cookie auth, no CSRF needed) and paints those
-events as they arrive; if the stream can't start for some reason, the UI
-falls back to polling every 400ms. Tool JSON itself is never streamed
-into the editor — `propose_draft` and the surgical edit tools only apply
-once the tool call has actually finished. If `wiki-server` sits behind
-nginx in production, leave `X-Accel-Buffering: no` alone — the handler
-already sets it, specifically so the proxy doesn't buffer the stream.
+The panel streams the model's reply as it's generated, rather than
+waiting for the whole response. If the stream can't start for some
+reason, the UI falls back to polling every 400ms. Tool JSON itself is
+never streamed into the editor — `propose_draft` and the surgical edit
+tools only apply once the tool call has actually finished. If
+`wiki-server` sits behind nginx in production, leave `X-Accel-Buffering: no`
+alone — the app sets it itself so the proxy doesn't buffer the stream.
 
 ### Session lifetime
 
@@ -216,28 +204,13 @@ Remote MCP activity.
 
 ### Chat history and session storage
 
-This app does a full page reload on every navigation, so the panel can't
-simply keep a JS object alive across pages. Chat history is stored in
-SQLite, in a dedicated `agent_chats` table — not in the vault, and not in
-FTS. That's the same salvage path `mcp_audit_log` uses, so rebuilding the
-search index never wipes a chat thread. The in-memory map only ever holds
-the live, currently-streaming copy of a session; a plain `GET` hydrates
-a persisted chat on demand.
-
-The panel's left sidebar lists existing threads, with New chat, rename,
-and delete actions. "New chat" just clears the local session id without
-calling `DELETE`; deleting a thread is an explicit action that calls
-`DELETE /api/agent/sessions/{id}`. `sessionStorage` keeps track of the
-current session id plus the panel's open/closed state and geometry, so
-the next page load can restore the log and reconnect to the SSE stream
-using `?after=`. The thread list column is resizable, and that width is
-remembered in `localStorage` (`wiki.chat.sidebarWidth`) — the same
-convenience the site's main sidebar uses — specifically so restoring a
-previously-hidden panel doesn't clamp the width back down to its
-minimum. Closing the tab (`pagehide`) does **not** delete a chat session
-— Draft sessions do get deleted that way, since a Draft session is tied
-to one specific edit page. A new chat's title defaults to its first
-instruction, truncated.
+Chat history is stored in the database, not in your vault — rebuilding
+the search index never wipes a chat thread. The panel's left sidebar
+lists existing threads, with New chat, rename, and delete actions.
+Closing the browser tab does **not** delete a chat session, so it's
+still there next time; a Draft session, by contrast, is tied to the one
+edit page it was opened from and does get cleared when you leave that
+page. A new chat's title defaults to its first instruction, truncated.
 
 Only one session can be `running` at a time, since they share one
 `ChatClient`. Draft and Chat sessions can both exist in memory
@@ -250,34 +223,14 @@ Wiki-links that appear in a model's answer render as clickable
 
 ## Wiki-links in the editor
 
-The compiled prompt asks the model to write literal
-`[[vault/relative/path.md]]` or `[[path.md|Label]]` syntax. In practice,
-models often over-escape punctuation inside JSON tool arguments (producing
-something like `\[\[path\|Label\]\]`). `propose_draft`, `append_to_draft`,
-`insert_in_draft`, and `replace_in_draft` all strip those escapes,
-running several passes since a doubled JSON escape is a real case that
-shows up in practice.
-
-Toast UI's WYSIWYG writer only understands plain CommonMark, so
-`[[path|label]]` isn't a link as far as it's concerned — a round trip
-through it would re-escape the brackets, and can even merge the path and
-label into one span. The fix is **not** Toast UI's `widgetRules`
-mechanism — an earlier attempt using it collided with existing wiki-link
-documents and leaked internal `$$widgetN$$` markers into the content.
-
-Instead, `static/js/common.js` maps a wiki-link to a real markdown link
-using an editor-only `wiki:` URL scheme, for `setMarkdown`/`initialValue`,
-and maps it back to `[[ ]]` syntax on Save or whenever a snapshot is sent
-to the agent:
-
-```
-[[notes/foo.md|Foo]]  ↔  [Foo](wiki:notes/foo.md)
-```
-
-Fenced code blocks are left alone by this mapping, so a
-` ```mermaid ` block (or any sample text that happens to mention
-`[[wiki-links]]`) is never rewritten. The `wiki:` scheme itself never
-reaches disk — it exists only inside the editor's in-memory model.
+The model writes normal `[[vault/relative/path.md]]` or
+`[[path.md|Label]]` wiki-link syntax, and it round-trips correctly
+through the WYSIWYG editor like any link you'd type yourself — this
+needed some internal translation under the hood to work around the
+editor's own markdown writer, but there's nothing you need to do
+differently. Fenced code blocks (including ` ```mermaid ` ones) are left
+untouched by this, so a code sample that happens to mention
+`[[wiki-links]]` as literal text is never rewritten.
 
 The default system prompt also covers Markdown `>` blockquotes and
 fenced ` ```mermaid ` blocks, where the info string must be exactly

@@ -17,10 +17,9 @@ end-to-end on a real aarch64 SBC (an Orange Pi One Plus): `container-arm`
 (a `buildx`-built, QEMU-emulated ARM image) and `container-native` (a
 `buildx`-built `linux/arm64` binary, deployed as a plain systemd install
 rather than a running container). See `docs/sbc-deployment.md`'s
-"Real-hardware verification status" for exactly what each one exercises,
-and the deploy-flow bugs each one's install-root/platform handling ran
-into. The plain `container` variant below is verified on x86_64 only, not
-yet on ARM hardware specifically.
+"Real-hardware verification status" for exactly what each one exercises.
+The plain `container` variant below is verified on x86_64 only, not yet
+on ARM hardware specifically.
 
 ## Quick start
 

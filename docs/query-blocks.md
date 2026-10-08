@@ -173,16 +173,13 @@ order: asc
 ## What it can't do (on purpose)
 
 - **No raw SQL, no arbitrary filters beyond the table above.** This is
-  deliberate, not a missing feature — see `docs/architecture.md`'s "`query`
-  blocks" section for the full security reasoning (short version: a
-  whitelisted DSL means a value can never become part of the query text
-  itself, only a bound parameter).
+  deliberate, not a missing feature: a whitelisted DSL means a value can
+  never become part of the query text itself, only a bound parameter.
 - **Visibility still applies.** A private document never shows up in a query
   block's results for a visitor who isn't logged in — same fail-safe-private
   rule as everything else in this app, regardless of what the block asks for.
 - **No pagination yet.** `limit` caps at 100; if you need more, narrow the
-  filter instead. See `docs/architecture.md` if this ever becomes a real
-  problem for a large vault — it's an easy follow-up, just not built yet.
+  filter instead. It's an easy follow-up, just not built yet.
 - **The block only renders on the document view page — never in the
   editor itself, currently.** While you're writing one, both the WYSIWYG
   canvas and the Markdown Preview panel show it as a plain, unrendered
@@ -190,8 +187,8 @@ order: asc
   its view page to see the real table.
 
   Mermaid diagrams, by contrast, do get a live preview in the editor's
-  Markdown Preview panel (see `docs/architecture.md`'s mermaid section).
-  That's a deliberate scope choice made when that feature shipped, not
+  Markdown Preview panel. That's a deliberate scope choice made when
+  that feature shipped, not
   something query blocks are structurally incapable of — the same
   approach mermaid preview uses would work here too, it just hasn't been
   built yet.
