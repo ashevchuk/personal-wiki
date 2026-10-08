@@ -122,6 +122,29 @@ host-bind-mounted `vault_data` with no `--reindex` call in between. The plain
 `container` and `container-native` variants have not been exercised on real ARM
 hardware yet.
 
+The `cross-container` variant (the same aarch64-musl cross build as above, but
+produced inside `cross/Dockerfile.builder` instead of needing zig installed on the
+build machine) has also been built and deployed as a plain binary+systemd install to
+the same aarch64 SBC. Two more deploy-flow bugs surfaced and were fixed: `verify
+cross`/`verify cross-container` hardcoded `qemu-arm-static` (32-bit) regardless of
+triplet, so verifying an aarch64-musl build failed outright with "Invalid ELF image
+for this architecture" — fixed by picking `qemu-arm-static` vs. `qemu-aarch64-static`
+from the binary's own ELF machine type. And both shipped systemd units
+(`wiki.service`, `wiki-backup.service`) hardcode `/opt/wiki` in `ExecStart`/
+`WorkingDirectory`/`ReadWritePaths` — deploying to any OTHER install root silently
+installed a unit still pointing at `/opt/wiki`; on a target that happened to already
+have something running there from an earlier deploy, systemd reported the new service
+healthy while actually running that OTHER binary the whole time, no error at all — a
+worse failure than refusing to start. Fixed by `sed`-substituting the real install root
+into both unit files before installing them. The post-restart health check also
+hardcoded port 8080 regardless of the target's actual configured port, always
+reporting "healthz: 000" for any `--port` other than the default even when the service
+was genuinely healthy — now reads the real port from the target's own `config.toml`.
+Verified live (non-default install root AND non-default port, specifically to
+exercise both fixes): unit tests pass under `qemu-aarch64-static` (1621 assertions,
+315 cases), and the same login/create/update/search/visibility-gating cycle as
+`container-arm` above, against the newly-deployed binary.
+
 ## Recording your own live deployment target
 
 Keep the host/IP, install root, public URL (and reverse-proxy subpath, if any), and
