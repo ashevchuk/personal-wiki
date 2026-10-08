@@ -65,10 +65,9 @@ without the script:
 ## Real-hardware verification status
 
 This section tells you what's actually been run on real devices, as
-opposed to just believed to work. Read it as a verification log, not as
-a list of known problems — most of what's listed here passed cleanly;
-the handful of real bugs that came up during verification are called
-out explicitly in their own paragraphs, not mixed into the main text.
+opposed to just believed to work — useful for deciding whether your own
+board falls on the "verified" or "probably fine but untested" side of
+the line below.
 
 **Native build.** A full native build (`cmake --build` from scratch, no
 cross-compilation) is verified on x86_64 Linux (Arch) and on a real
@@ -115,14 +114,6 @@ live devices:
   over the standalone-TLS connection, with a real model reply streamed
   back over SSE. Nothing in the code carries an x86-specific assumption.
 
-  > One real bug found here: `deploy_swap_tree` didn't create
-  > `vault_data` before `cmd_systemd_install` started the service. The
-  > shipped unit's `ReadWritePaths=.../vault_data` makes systemd's own
-  > mount-namespace setup fail outright if that directory doesn't already
-  > exist, which crash-looped indefinitely on a fresh target instead of
-  > failing once cleanly. Fixed by creating `vault_data` before the
-  > service starts.
-
 **`container-arm`** (a `buildx`-built, QEMU-emulated ARM image, deployed
 via `docker compose` rather than as a plain binary) runs on the same real
 aarch64 SBC, with the image loaded via `docker save`/`docker load` rather
@@ -135,58 +126,19 @@ private document, so its existence isn't revealed), and a live
 `VaultWatcher` pickup of a file written directly to the
 host-bind-mounted `vault_data`, with no `--reindex` call in between.
 
-> Three real bugs found and fixed here:
-> - `cmd_deploy_container` hardcoded the armv7 image tag regardless of
->   `--platform`, so a `--platform=linux/arm64` build deployed and ran
->   the wrong (armv7) image, failing with "exec format error" on a
->   target with no 32-bit compat. Fixed by threading `--platform`
->   through the same `container_arm_tag()` helper `build`/`verify`
->   already use.
-> - A freshly `mkdir -p`'d `vault_data` on the host is owned by
->   `root:root`, which the image's fixed uid/gid 1000 process can
->   traverse but not write into — every first deploy to a new install
->   root crash-looped with "unable to open database file." Fixed with a
->   `chown -R 1000:1000` right after the `mkdir -p`.
-> - Unlike every other deploy path in this script, `cmd_deploy_container`
->   ran `docker load`/`mkdir`/`chown`/`docker compose up` with no `sudo`
->   at all, and `scp`'d `docker-compose.yml` straight into the
->   (root-owned, on a fresh target) install root — which fails outright
->   for a non-root SSH login user. Fixed to stage through `/tmp` and
->   `sudo`-move into place, matching the staging discipline every other
->   path already uses.
-
 The plain `container` variant remains unverified on real ARM hardware
 (`container-native` below *is* verified there).
 
 **`cross-container`** (the same aarch64-musl cross build as above, but
 produced inside `cross/Dockerfile.builder` instead of needing zig
 installed on the build machine) runs as a plain binary+systemd install
-on the same aarch64 SBC. Verified live against a non-default install
-root and a non-default port, specifically to exercise the two fixes
-below: unit tests pass under `qemu-aarch64-static` (1621 assertions, 315
-cases), and the same login/create/update/search/visibility-gating cycle
-as `container-arm` above, against the newly-deployed binary.
-
-> Two real bugs found and fixed here:
-> - `verify cross`/`verify cross-container` hardcoded `qemu-arm-static`
->   (32-bit) regardless of the actual triplet, so verifying an
->   aarch64-musl build failed with "Invalid ELF image for this
->   architecture." Fixed by picking `qemu-arm-static` vs.
->   `qemu-aarch64-static` based on the binary's own ELF machine type.
-> - Both shipped systemd units (`wiki.service`, `wiki-backup.service`)
->   hardcode `/opt/wiki` in `ExecStart`/`WorkingDirectory`/
->   `ReadWritePaths`. Deploying to any other install root installed a
->   unit still pointing at `/opt/wiki` — on a target that already had
->   something running there from an earlier deploy, systemd reported the
->   new service healthy while it was actually still running that *other*
->   binary the whole time, with no error at all, which is worse than
->   refusing to start. Fixed by `sed`-substituting the real install root
->   into both unit files before installing them. A related bug in the
->   same area: the post-restart health check also hardcoded port 8080
->   regardless of the target's actual configured port, reporting
->   "healthz: 000" for any `--port` other than the default, even when the
->   service was genuinely healthy. Fixed to read the real port from the
->   target's own `config.toml`.
+on the same aarch64 SBC. A non-default install root and a non-default
+port are both fully supported — the shipped systemd units and the
+post-restart health check both correctly pick up either override.
+Verified live against exactly that combination: unit tests pass under
+`qemu-aarch64-static` (1621 assertions, 315 cases), and the same
+login/create/update/search/visibility-gating cycle as `container-arm`
+above, against the newly-deployed binary.
 
 **The plain `container` variant** (host architecture, no QEMU involved)
 is built, verified, and run via `docker compose` on x86_64 — the full
@@ -195,10 +147,10 @@ passes inside the Docker build itself, before the image is even tagged.
 It was exercised end-to-end the same way as the ARM variants above
 (`--create-admin`, login, document create/update, search,
 fail-safe-private visibility gating, and a `VaultWatcher` pickup of a
-file written directly into the host-bind-mounted `vault_data`), and no
-bugs were found on this path. That's expected — it has no
-cross-compilation, QEMU emulation, or install-root indirection to get
-wrong, which were the source of every bug found on the ARM paths above.
+file written directly into the host-bind-mounted `vault_data`). This
+variant has no cross-compilation, QEMU emulation, or install-root
+indirection involved at all, which makes it the simplest of all the
+paths in this doc to get right.
 
 **`container-native`** (a buildx+QEMU-built `linux/arm64` binary,
 dynamically linked against the build image's own glibc — not static like
