@@ -141,6 +141,18 @@ under `qemu-aarch64-static` (1621 assertions, 315 cases), and the same
 login/create/update/search/visibility-gating cycle as
 `container-arm` above, against the newly-deployed binary.
 
+The plain `container` variant (host architecture, no QEMU involved) is built,
+verified, and run via `docker compose` on x86_64 — the full `ctest` suite (unit
+tests, `security_e2e`, both stress scripts) runs and passes inside the Docker build
+itself before the image is even tagged. Exercised end-to-end the same way as the ARM
+variants above: `--create-admin`, login, document create/update, search,
+fail-safe-private visibility gating, and a `VaultWatcher` pickup of a file written
+directly to the host-bind-mounted `vault_data`. No bugs found on this path — it has
+no cross-compilation, QEMU emulation, or install-root indirection to get wrong, the
+three sources of every bug found on the ARM paths above. Not yet run on ARM hardware
+specifically (`container-native` remains the one variant where that distinction
+matters).
+
 ## Recording your own live deployment target
 
 Keep the host/IP, install root, public URL (and reverse-proxy subpath, if any), and
