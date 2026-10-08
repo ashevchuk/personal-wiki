@@ -995,12 +995,23 @@ cmd_deploy_container() {
   run bash -c "docker save '$image_tag' -o '$tmp_image'"
   remote_image="/tmp/$(basename "$tmp_image")"
   copy_to_target "$tmp_image" "$remote_image"
-  remote_sh "docker load -i '$remote_image' && rm -f '$remote_image'"
+  # sudo on docker load/compose below: unlike the native/cross paths,
+  # this doesn't assume the target's docker group — only that the SSH
+  # login user has (passwordless) sudo, the same single requirement
+  # every other remote_sh call in this script already relies on.
+  remote_sh "sudo docker load -i '$remote_image' && rm -f '$remote_image'"
   rm -f "$tmp_image"
 
-  copy_to_target docker-compose.yml "$install_root/docker-compose.yml"
+  # Staged into /tmp then sudo-moved, not scp'd straight into
+  # install_root: install_root (e.g. /opt/wiki) is root-owned on a fresh
+  # target, same as every other deploy path's staging dance (see
+  # deploy_swap_tree) — a non-root SSH login user's scp would otherwise
+  # fail outright with "Permission denied" before docker ever runs.
+  copy_to_target docker-compose.yml /tmp/wiki-docker-compose.yml
+  remote_sh "sudo mkdir -p '$install_root' && sudo mv /tmp/wiki-docker-compose.yml '$install_root/docker-compose.yml'"
   if [ "$variant" = container-arm ]; then
-    copy_to_target docker-compose.arm.yml "$install_root/docker-compose.arm.yml"
+    copy_to_target docker-compose.arm.yml /tmp/wiki-docker-compose.arm.yml
+    remote_sh "sudo mv /tmp/wiki-docker-compose.arm.yml '$install_root/docker-compose.arm.yml'"
   fi
   local compose_flags="-f docker-compose.yml"
   [ "$variant" = container-arm ] && compose_flags="-f docker-compose.yml -f docker-compose.arm.yml"
@@ -1018,7 +1029,11 @@ cmd_deploy_container() {
   # 1000:1000 vault_data") when this install_root previously held a
   # native/cross binary deployment's own vault_data, owned by whatever
   # uid that deployment's system user happened to get.
-  remote_sh "mkdir -p '$install_root/vault_data' && chown -R 1000:1000 '$install_root/vault_data' && cd '$install_root' && ${env_prefix}docker compose $compose_flags up -d"
+  # `sudo env VAR=val` (not `VAR=val sudo`), so the override survives
+  # sudo's env_reset regardless of this target's own env_keep config —
+  # a bare `VAR=val sudo cmd` sets the variable for sudo itself, not for
+  # the command sudo then execs.
+  remote_sh "sudo mkdir -p '$install_root/vault_data' && sudo chown -R 1000:1000 '$install_root/vault_data' && cd '$install_root' && sudo env ${env_prefix}docker compose $compose_flags up -d"
 }
 
 cmd_deploy() {
