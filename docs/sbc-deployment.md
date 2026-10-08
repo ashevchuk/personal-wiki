@@ -53,18 +53,48 @@ script:
 ## Real-hardware verification status
 
 A full native build (`cmake --build` from scratch, not cross-compilation) is verified
-on x86_64 Linux (Arch) only — `cmake --install`, running the installed tree, the full
-`ctest` security/E2E pass, a live VaultWatcher. A native build on a Raspberry Pi itself
-(compiling on the device, as described below under "Path A") has not been done.
+on x86_64 Linux (Arch) AND on a real aarch64 SBC (Orange Pi One Plus, 970 MiB RAM,
+Armbian/Debian trixie — a 3 GiB swap file added first, since vcpkg building
+Drogon/OpenSSL this way is genuinely RAM-hungry at that size): full
+`git clone`+vcpkg bootstrap+`cmake --build` on the device itself, `wiki-server` starts
+and shuts down cleanly, and all 1619 unit test assertions pass running natively.
+Compiling on-device took substantially longer than the x86_64 dev-machine build, as
+expected (see "Path A" below) — the added swap turned out to matter only lightly in
+practice (peak observed usage stayed well under the board's own 970 MiB, swap barely
+touched), but is still the right precaution to take before starting: vcpkg building
+Drogon/OpenSSL this way is a genuinely heavier job than this board's bare RAM alone
+reliably covers.
 
-Cross-compiled binaries have been deployed to and verified on a live target device —
-armv7l, Debian 9 (stretch, EOL, glibc 2.24) — via `arm-linux-musleabihf`+musl+static
-(see "Path B" below): `wiki-server` and `wiki-mcp` run natively (not emulated) on the
-device, `unit_tests` passes under `qemu-arm-static`, and the full login → CSRF →
-document creation → atomic disk write → FTS5 search with snippet highlighting cycle
-works over live HTTP against a real systemd unit (hardening as described below),
-alongside live nginx/Samba/NFS/ProFTPD/mosquitto/munin on the same box with no impact
-on any of them. The code has no x86-specific assumptions.
+Cross-compiled binaries have been deployed to and verified on two separate live target
+devices:
+- armv7l, Debian 9 (stretch, EOL, glibc 2.24) — via `arm-linux-musleabihf`+musl+static
+  (see "Path B" below): `wiki-server`/`wiki-mcp` run natively (not emulated),
+  `unit_tests` passes under `qemu-arm-static`, and the full login → CSRF → document
+  creation → atomic disk write → FTS5 search with snippet highlighting cycle works over
+  live HTTP against a real systemd unit, alongside live
+  nginx/Samba/NFS/ProFTPD/mosquitto/munin on the same box with no impact on any of them.
+- aarch64, Armbian/Debian trixie, kernel 6.18 (Orange Pi One Plus, `CONFIG_COMPAT` not
+  set — a 32-bit binary can't even exec there) — via the new `aarch64-linux-musl`
+  target (`cross/aarch64-musl/`, see "Porting to a different board" below): all 1619
+  unit test assertions pass running directly on the device (no qemu needed — real
+  hardware beats emulation when you have it). Both the nginx-fronted reverse-proxy
+  shape AND standalone TLS ([tls] in config.toml, self-signed cert, real
+  `setfacl`-granted ACL access) were deployed and verified end-to-end on this same
+  device: HTTPS termination, HSTS, `Secure` cookies, a live certbot-style cert
+  rotation picked up by `CertWatcher` with no restart (confirmed via changed TLS
+  fingerprint, same PID throughout), and — the actual security property standalone
+  TLS exists to guarantee — a spoofed `X-Real-IP` against `/mcp` does NOT reset the
+  remote-MCP rate limiter in that mode. `[llm]` cloud chat (`CloudChatClient` against
+  the real Anthropic API, key delivered via the `tools/wiki-ops.sh secrets` mechanism)
+  was also exercised end-to-end over the standalone-TLS connection, with a real model
+  reply streamed back over SSE. The code has no x86-specific assumptions.
+
+Deploying to a genuinely fresh target this way also surfaced a real deploy-flow bug,
+since fixed: `deploy_swap_tree` didn't create `vault_data` before `cmd_systemd_install`
+started the service, and the shipped unit's `ReadWritePaths=.../vault_data` makes
+systemd's own mount-namespace setup fail outright if that directory doesn't already
+exist — on a fresh target this crash-looped indefinitely rather than failing once
+cleanly.
 
 ## Recording your own live deployment target
 
@@ -288,7 +318,22 @@ architecture-agnostic wrappers around `zig ar`/`zig ranlib`):
 Then run the same recipe as the armv7 instructions above, pointed at your
 new triplet/toolchain file instead. The same mandatory step applies:
 `qemu-<your-arch>-static ./build-<name>/tests/unit_tests` must pass every
-case, not just avoid crashing, before the binary goes near real hardware.
+case, not just avoid crashing, before the binary goes near real hardware
+(or, if you actually have the real board, skip qemu and run the test
+binary there directly — strictly better than emulation, and what
+verified the aarch64-musl target below).
+
+**`cross/aarch64-musl/` is exactly this recipe already done** — built and
+verified running natively (not under emulation) on a real aarch64 target
+(Orange Pi One Plus, Armbian/Debian trixie, kernel 6.18, `CONFIG_COMPAT`
+not set — a 32-bit `arm-musl` binary can't execute there at all, ENOEXEC,
+not just "runs slower"). Uses `aarch64-linux-musl`, the exact target
+string this section already named as its own worked example above, with
+`-mcpu=generic` (no `+v7a`-style baseline needed) and
+`VCPKG_TARGET_ARCHITECTURE arm64`. All 1619 unit test assertions passed
+running directly on the device, no qemu involved. Use
+`--triplet=aarch64-musl --cross-dir=cross/aarch64-musl` with `build
+cross`/`deploy`.
 
 **One alternative worth considering before cross-compiling at all**: the
 musl+static approach exists specifically to dodge `GLIBC_2.XX not found`
