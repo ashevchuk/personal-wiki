@@ -1,10 +1,9 @@
 // In-theme replacements for window.alert / confirm / prompt. The native
-// ones are the host OS's chrome (the screenshot of folder Rename/Move
-// was a grey "10.100.100.2 says" box on top of the green page) — they
-// cannot pick up --fg/--panel-bg, and a themed wiki that otherwise
-// never leaves its own palette shouldn't punch a hole there for the
-// one confirm/prompt an admin hits. <dialog>.showModal() is the
-// browser's own modal primitive (focus trap, Escape, inert backdrop);
+// ones are the host OS's chrome (a grey "<host> says" box on top of the
+// green page) — they cannot pick up --fg/--panel-bg, and a themed wiki
+// that otherwise never leaves its own palette shouldn't punch a hole
+// there for the one confirm/prompt an admin hits. <dialog>.showModal()
+// is the browser's own modal primitive (focus trap, Escape, inert backdrop);
 // we only restyle it. Messages go in textContent, never innerHTML —
 // document titles and error.what() can contain "<".
 window.WikiDialog = (function () {
