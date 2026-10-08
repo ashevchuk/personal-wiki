@@ -135,6 +135,10 @@ load_deploy_config() {
   : "${WIKI_DEPLOY_TRIPLET:=}"
   : "${WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV:=}"
   : "${WIKI_DEPLOY_LLM_API_KEY_ENV:=}"
+  : "${WIKI_DEPLOY_TLS_ENABLED:=false}"
+  : "${WIKI_DEPLOY_TLS_CERT_FILE:=}"
+  : "${WIKI_DEPLOY_TLS_KEY_FILE:=}"
+  : "${WIKI_DEPLOY_LISTEN_ADDR:=}"
   if [ -f "$DEPLOY_CONFIG" ]; then
     set -a
     # shellcheck disable=SC1090
@@ -160,6 +164,26 @@ remote_sh() {
     ssh -p "$WIKI_DEPLOY_SSH_PORT" "$WIKI_DEPLOY_HOST" "set -euo pipefail; $script"
   else
     bash -c "set -euo pipefail; $script"
+  fi
+}
+
+# remote_sh_secret SCRIPT SECRET — same as remote_sh, but pipes SECRET
+# into the remote command's stdin instead of embedding it in SCRIPT.
+# remote_sh's own trace line prints its whole SCRIPT argument unconditionally
+# (even under --dry-run) — a secret VALUE must never be part of that
+# string, or it leaks into this script's own stderr/logs every single
+# run. SCRIPT is expected to do its own `read -r SOMEVAR` to consume it;
+# nothing here parses or re-echoes the value itself.
+remote_sh_secret() {
+  local script=$1 secret=$2
+  printf 'wiki-ops: + (%s) %s <value piped via stdin, not shown>\n' "${WIKI_DEPLOY_HOST:-local}" "$script" >&2
+  if [ "$DRY_RUN" = 1 ]; then
+    return 0
+  fi
+  if [ -n "${WIKI_DEPLOY_HOST:-}" ]; then
+    ssh -p "$WIKI_DEPLOY_SSH_PORT" "$WIKI_DEPLOY_HOST" "set -euo pipefail; $script" <<< "$secret"
+  else
+    bash -c "set -euo pipefail; $script" <<< "$secret"
   fi
 }
 
@@ -697,9 +721,20 @@ cmd_systemd_status() {
 cmd_configure_toml() {
   local install_root=$1 port_flag=$2 cfg
   cfg="$install_root/config.toml"
-  local listen_addr port threads vault_path mcp_scope base_path
+  local listen_addr listen_addr_default port threads vault_path mcp_scope base_path
+  local tls_enabled tls_cert_file tls_key_file
 
-  resolve listen_addr "" "" "127.0.0.1" "[server].listen_addr (keep on loopback behind a reverse proxy)"
+  # Asked BEFORE listen_addr: standalone TLS (src/server/CertWatcher, see
+  # docs/sbc-deployment.md's "Standalone TLS" section) changes what a
+  # SENSIBLE default for listen_addr even is (AppConfig::load() itself
+  # doesn't validate this field either way — see its own comment on why).
+  resolve_optional tls_enabled "" "${WIKI_DEPLOY_TLS_ENABLED:-}" "false" \
+    "Standalone TLS — terminate TLS in wiki-server itself instead of behind a reverse proxy (true/false)"
+
+  listen_addr_default="127.0.0.1"
+  [ "$tls_enabled" = "true" ] && listen_addr_default="0.0.0.0"
+  resolve listen_addr "" "${WIKI_DEPLOY_LISTEN_ADDR:-}" "$listen_addr_default" \
+    "[server].listen_addr (loopback behind a reverse proxy, or a public/specific-interface address with standalone TLS above)"
   resolve port "$port_flag" "${WIKI_DEPLOY_PORT:-}" "8080" "[server].port"
   resolve threads "" "" "2" "[server].threads"
   resolve vault_path "" "" "./vault_data" "[vault].path"
@@ -712,6 +747,64 @@ cmd_configure_toml() {
   if [ -n "$base_path" ]; then
     remote_sh "sudo sed -i '/^\[server\]/a base_path = \"$base_path\"' '$cfg'"
   fi
+
+  if [ "$tls_enabled" = "true" ]; then
+    resolve tls_cert_file "" "${WIKI_DEPLOY_TLS_CERT_FILE:-}" "" \
+      "[tls].cert_file (e.g. /etc/letsencrypt/live/example.com/fullchain.pem)"
+    resolve tls_key_file "" "${WIKI_DEPLOY_TLS_KEY_FILE:-}" "" \
+      "[tls].key_file (e.g. /etc/letsencrypt/live/example.com/privkey.pem)"
+    remote_sh "sudo sed -i '/^\[tls\]/a enabled = true\ncert_file = \"$tls_cert_file\"\nkey_file = \"$tls_key_file\"' '$cfg'"
+    log "standalone TLS configured — '$WIKI_DEPLOY_SERVICE_USER' needs READ access to the cert/key; certbot's default /etc/letsencrypt/{live,archive} is root-only. Run once (survives renewals): sudo setfacl -R -m u:$WIKI_DEPLOY_SERVICE_USER:rx /etc/letsencrypt/live /etc/letsencrypt/archive — see docs/sbc-deployment.md's 'Standalone TLS' section"
+  fi
+}
+
+# ============================================================
+# SECTION: secrets (/etc/opt/wiki/wiki.env) — real API key VALUES,
+# never config.toml's api_key_env NAME (that's cmd_configure_toml's own
+# [embeddings]/[llm] territory, still left to hand-edit — see
+# docs/sbc-deployment.md). A value entered here NEVER touches
+# deploy.local.env, a flag, or this script's own trace output — see
+# resolve_secret()/remote_sh_secret()'s own comments for exactly how.
+# ============================================================
+
+cmd_configure_secrets() {
+  local install_root=$1 variant=$2
+  case "$variant" in
+    container|container-arm)
+      log "'$variant' is a Docker deployment — wiki.env has no meaning there; set the real key via docker-compose.yml's own environment:/env_file instead"
+      return ;;
+  esac
+
+  # Both names may be unset (the common case: embeddings/llm provider is
+  # "none", nothing needs a key), may be the same name (Anthropic/OpenAI
+  # keys are interchangeable at this layer per wiki.env.example's own
+  # comment — one key, one prompt, not two), or two different names.
+  local names="${WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV:-} ${WIKI_DEPLOY_LLM_API_KEY_ENV:-}"
+  local -A seen=()
+  local name value
+
+  for name in $names; do
+    [ -z "$name" ] && continue
+    [ -n "${seen[$name]:-}" ] && continue
+    seen[$name]=1
+
+    resolve_secret value "" "value for $name (written to /etc/opt/wiki/wiki.env on the target; leave blank to skip/leave unchanged)"
+    if [ -z "$value" ]; then
+      log "skipped $name — wiki.env left unchanged for this name"
+      continue
+    fi
+
+    ensure_remote_user "$WIKI_DEPLOY_SERVICE_USER" "$install_root"
+    remote_sh_secret \
+      "sudo mkdir -p /etc/opt/wiki && sudo touch /etc/opt/wiki/wiki.env && \
+read -r WIKI_SECRET_VALUE && \
+sudo sed -i \"/^$name=/d\" /etc/opt/wiki/wiki.env && \
+printf '%s=%s\n' '$name' \"\$WIKI_SECRET_VALUE\" | sudo tee -a /etc/opt/wiki/wiki.env >/dev/null && \
+sudo chown '$WIKI_DEPLOY_SERVICE_USER':'$WIKI_DEPLOY_SERVICE_USER' /etc/opt/wiki/wiki.env && \
+sudo chmod 600 /etc/opt/wiki/wiki.env" \
+      "$value"
+    log "wrote $name to /etc/opt/wiki/wiki.env (mode 600, owned by $WIKI_DEPLOY_SERVICE_USER) — make sure config.toml's matching api_key_env is actually set to '$name', that part is still yours to hand-edit"
+  done
 }
 
 # ============================================================
@@ -945,6 +1038,7 @@ cmd_deploy() {
 
   if [ "$first_time" = 1 ]; then
     cmd_configure_toml "$WIKI_DEPLOY_INSTALL_ROOT" "$port_flag"
+    cmd_configure_secrets "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
   fi
 
   cmd_systemd_install "$with_backup_timer" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
@@ -982,6 +1076,11 @@ removes the hand-typing and enforces the order).
            --static-only skips straight to static-redeploy instead)
   static-redeploy [--target=HOST] [--variant=V] [--dry-run]
   setup-admin [--target=HOST] [--variant=V]
+  secrets [--target=HOST] [--variant=V]
+          (prompts, echo disabled, for each of WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV /
+           WIKI_DEPLOY_LLM_API_KEY_ENV's real VALUE and writes it to the target's
+           /etc/opt/wiki/wiki.env — also runs automatically as part of
+           deploy --first-time; re-run standalone any time to rotate a key)
   systemd install [--target=HOST] [--variant=V] [--with-backup-timer] [--yes] [--dry-run]
   systemd status  [--target=HOST]
   nginx-config root --domain=D [--out=FILE]
@@ -1153,6 +1252,17 @@ main() {
       resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
       resolve_optional WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "" "Variant (blank if unknown — only checked to refuse container/container-arm)"
       cmd_setup_admin "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
+      ;;
+
+    secrets)
+      parse_flags "$@"
+      load_deploy_config
+      resolve_optional WIKI_DEPLOY_HOST "$FLAG_TARGET" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
+      resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
+      resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
+      resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
+      resolve_optional WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "" "Variant (blank if unknown — only checked to refuse container/container-arm)"
+      cmd_configure_secrets "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
       ;;
 
     systemd)

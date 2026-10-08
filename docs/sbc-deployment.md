@@ -401,16 +401,73 @@ unsigned random tokens with no secret-based signature.
 
 ## TLS / public internet access
 
-`wiki-server` doesn't terminate TLS itself. For access outside the local network, put a
-reverse proxy (nginx/Caddy/traefik) in front of it to handle TLS and proxy to
-`127.0.0.1:8080` (or whatever `config.toml` specifies). Without that step, keep
-`listen_addr = "127.0.0.1"` and don't expose the port directly.
+`wiki-server` doesn't terminate TLS itself by default. For access outside the local
+network, put a reverse proxy (nginx/Caddy/traefik) in front of it to handle TLS and
+proxy to `127.0.0.1:8080` (or whatever `config.toml` specifies) — see "Reverse proxy"
+below. Without that step, keep `listen_addr = "127.0.0.1"` and don't expose the port
+directly — this is comment-only guidance, not something `AppConfig::load()` enforces
+(the Docker image's own `docker/config.docker.toml` deliberately sets
+`listen_addr = "0.0.0.0"` with no `[tls]` table at all, since the container's network
+namespace, not this value, is what actually controls real exposure there — there's no
+single rule that's correct for every deployment shape, so this stays the deploying
+admin's own judgment call).
+
+The one exception is standalone TLS mode, below — `wiki-server` CAN terminate TLS
+itself, as a second, equally-supported option to running it behind nginx.
+
+## Standalone TLS (no reverse proxy)
+
+For a single-purpose box that only ever runs this app, `wiki-server` can terminate TLS
+itself instead of needing nginx as a second moving part. Set in `config.toml`:
+
+```toml
+[server]
+listen_addr = "0.0.0.0"   # or a specific interface — no longer loopback-only
+
+[tls]
+enabled = true
+cert_file = "/etc/letsencrypt/live/example.com/fullchain.pem"
+key_file = "/etc/letsencrypt/live/example.com/privkey.pem"
+```
+
+A background watcher (`src/server/CertWatcher`) detects a certbot renewal (an atomic
+symlink swap inside that `live/<domain>/` directory) and reloads the cert/key into the
+already-running process — no restart needed. It re-validates both files as parseable
+PEM AND that the key actually matches the certificate before ever reloading them, so a
+transient half-written file, or the two symlinks updating a moment apart from each
+other mid-renewal, is skipped (logged, retried on the next change) rather than risking
+a crash.
+
+**Permission gotcha**: `/etc/letsencrypt/{live,archive}` is root-only (`0700`) by
+default — `wiki-server`'s own run-as user needs read access, or it can neither start
+nor pick up renewals. A one-time ACL survives every future renewal (it's a symlink
+swap inside the same directory tree, not a fresh directory each time), so it's less
+fragile than a certbot deploy-hook that has to re-run every renewal:
+
+```sh
+setfacl -R -m u:wiki:rx /etc/letsencrypt/live /etc/letsencrypt/archive
+```
+
+(substitute the actual user `wiki-server` runs as for `wiki`.)
+
+`auth::clientIp()` (used by the remote-MCP rate limiter and IP allowlist, see "Remote
+MCP" below) automatically stops trusting `X-Real-IP`/`X-Forwarded-For` whenever
+`[tls].enabled` is true — there's no separate setting for this. It's derived, not
+configurable, because there's by definition no reverse proxy in front in this mode:
+`wiki-server` is the direct, sole TCP endpoint, so nothing legitimate would ever send
+those headers and `req->getPeerAddr()` is already correct. `X-Accel-Buffering: no`
+(set by `AgentRoutes.cpp` on the Draft/Chat SSE stream) is advisory to a reverse proxy
+only; it's simply unused and harmless here, with no proxy around to read it.
 
 ## Reverse proxy
 
-`wiki-server` never terminates TLS itself and, by default, listens only on
-`127.0.0.1:8080` — it's meant to sit behind a reverse proxy for anything beyond local
-access.
+This section covers the still-default, still-fully-supported nginx-fronted mode —
+`wiki-server`, by default, listens only on `127.0.0.1:8080` and is meant to sit behind
+a reverse proxy for anything beyond local access. See "Standalone TLS (no reverse
+proxy)" above for the alternative where `wiki-server` terminates TLS itself instead.
+Nothing here changes for an existing nginx-fronted deployment — `clientIp()`'s header
+trust is derived from `[tls].enabled` (false in this mode, exactly as before this mode
+existed), not a separate setting that needs updating.
 
 ### On its own (sub)domain
 
@@ -501,23 +558,29 @@ instead of only a local stdio spawn. Enable/disable, write access, the token, an
 IP allowlist are all managed live from the Account page — no config.toml edit, no
 restart.
 
-**Requires TLS in front of this app.** The bearer token travels in a plain
-`Authorization` header on every request — over plain HTTP that's readable by anything
-between the client and this box. `wiki-server` deliberately doesn't terminate TLS
-itself (see "TLS / public internet access" above) — put the same reverse proxy this
-app already needs for any public exposure in front of `/mcp` too; there's no separate
-listener to configure, it's one more route on the existing `127.0.0.1:8080` upstream.
+**Requires TLS in front of this app** (either the reverse proxy above, or
+`wiki-server`'s own standalone TLS mode — see "Standalone TLS (no reverse proxy)"
+above). The bearer token travels in a plain `Authorization` header on every request —
+over plain HTTP that's readable by anything between the client and this box. If using
+the reverse-proxy mode, put the same proxy this app already needs for any public
+exposure in front of `/mcp` too; there's no separate listener to configure, it's one
+more route on the existing `127.0.0.1:8080` upstream.
 
-**The IP allowlist depends on the proxy setting the right headers correctly** — the
-exact nginx directives already shown above for the subpath case are what this needs:
+**The IP allowlist depends on the proxy setting the right headers correctly** — this
+only matters in the nginx-fronted mode (`[tls].enabled = false`); in standalone TLS
+mode, `clientIp()` already returns the real caller from the raw TCP peer, with no
+header involved at all (there's by definition no proxy in front to have set one). For
+the nginx-fronted mode, the exact directives already shown above for the subpath case
+are what this needs:
 
 ```nginx
 proxy_set_header X-Real-IP $remote_addr;
 proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 ```
 
-`auth::clientIp()` (`src/auth/ClientIp.h`) reads `X-Real-IP` first, falling back to
-`X-Forwarded-For`'s last entry. Both matter for the same reason: `proxy_set_header`
+`auth::clientIp()` (`src/auth/ClientIp.h`), whenever `[tls].enabled = false`, reads
+`X-Real-IP` first, falling back to `X-Forwarded-For`'s last entry. Both matter for the
+same reason: `proxy_set_header`
 overwrites a header before forwarding it upstream (no client-supplied `X-Real-IP`
 survives that — `$remote_addr` is nginx's own view of the TCP connection, not
 spoofable from the client side), while `$proxy_add_x_forwarded_for` appends

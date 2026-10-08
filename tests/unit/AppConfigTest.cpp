@@ -244,3 +244,69 @@ TEST_CASE("AppConfig::load: llm.chat_system_prompt is optional and read verbatim
   REQUIRE(AppConfig::load(multiline.path().string()).llmChatSystemPrompt ==
           "Chat one\nChat two\n");
 }
+
+TEST_CASE("AppConfig::load: tls defaults to disabled when config.toml has no "
+          "[tls] table at all",
+          "[AppConfig]") {
+  TempConfigFile file("[vault]\npath = \"./vault_data\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE_FALSE(cfg.tls.enabled);
+  REQUIRE(cfg.tls.certFile.empty());
+  REQUIRE(cfg.tls.keyFile.empty());
+}
+
+TEST_CASE("AppConfig::load: tls fields are read verbatim when the [tls] "
+          "table is present",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[tls]\nenabled = true\n"
+      "cert_file = \"/etc/letsencrypt/live/example.com/fullchain.pem\"\n"
+      "key_file = \"/etc/letsencrypt/live/example.com/privkey.pem\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.tls.enabled);
+  REQUIRE(cfg.tls.certFile == "/etc/letsencrypt/live/example.com/fullchain.pem");
+  REQUIRE(cfg.tls.keyFile == "/etc/letsencrypt/live/example.com/privkey.pem");
+}
+
+TEST_CASE("AppConfig::load: tls.enabled = true with an empty cert_file is "
+          "rejected",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[tls]\nenabled = true\nkey_file = \"/etc/letsencrypt/live/x/privkey.pem\"\n");
+  REQUIRE_THROWS_AS(AppConfig::load(file.path().string()), std::runtime_error);
+}
+
+TEST_CASE("AppConfig::load: tls.enabled = true with an empty key_file is "
+          "rejected",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[tls]\nenabled = true\n"
+      "cert_file = \"/etc/letsencrypt/live/x/fullchain.pem\"\n");
+  REQUIRE_THROWS_AS(AppConfig::load(file.path().string()), std::runtime_error);
+}
+
+TEST_CASE("AppConfig::load: a non-loopback listen_addr is accepted without "
+          "tls.enabled — not this layer's job to second-guess (the Docker "
+          "image's own docker/config.docker.toml ships listen_addr = "
+          "\"0.0.0.0\" with no [tls] table at all, correctly: the "
+          "container's network namespace is what actually controls real "
+          "exposure there, not this value)",
+          "[AppConfig]") {
+  TempConfigFile file("[server]\nlisten_addr = \"0.0.0.0\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.listenAddr == "0.0.0.0");
+  REQUIRE_FALSE(cfg.tls.enabled);
+}
+
+TEST_CASE("AppConfig::load: a non-loopback listen_addr together with "
+          "tls.enabled = true is also just accepted verbatim",
+          "[AppConfig]") {
+  TempConfigFile file(
+      "[server]\nlisten_addr = \"0.0.0.0\"\n"
+      "[tls]\nenabled = true\n"
+      "cert_file = \"/etc/letsencrypt/live/x/fullchain.pem\"\n"
+      "key_file = \"/etc/letsencrypt/live/x/privkey.pem\"\n");
+  const AppConfig cfg = AppConfig::load(file.path().string());
+  REQUIRE(cfg.listenAddr == "0.0.0.0");
+  REQUIRE(cfg.tls.enabled);
+}

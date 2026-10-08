@@ -16,7 +16,9 @@ std::string trim(const std::string& s) {
 
 }  // namespace
 
-std::string clientIp(const drogon::HttpRequestPtr& req) {
+std::string clientIp(const drogon::HttpRequestPtr& req, bool trustProxyHeaders) {
+  if (!trustProxyHeaders) return req->getPeerAddr().toIp();
+
   const std::string xRealIp = req->getHeader("X-Real-IP");
   if (!xRealIp.empty()) return trim(xRealIp);
 

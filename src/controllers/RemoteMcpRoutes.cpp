@@ -695,12 +695,12 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
                               IndexUpdater& indexUpdater, DocumentService& documents,
                               AttachmentService& attachments, McpUploadStaging& mcpUploads,
                               McpAuditLog& auditLog, QueryBlocks& queryBlocks,
-                              CalendarQueries& calendarQueries) {
+                              CalendarQueries& calendarQueries, bool trustProxyHeaders) {
   app.registerHandler(
       "/mcp",
       [&remoteConfig, &rateLimiter, &search, &nav, &indexUpdater, &documents, &attachments,
-       &mcpUploads, &auditLog, &queryBlocks,
-       &calendarQueries](const HttpRequestPtr& req,
+       &mcpUploads, &auditLog, &queryBlocks, &calendarQueries,
+       trustProxyHeaders](const HttpRequestPtr& req,
                    std::function<void(const HttpResponsePtr&)>&& callback) {
         // Feature off -> plain 404, indistinguishable from "this route
         // never existed" (see this file's own header comment on why:
@@ -714,7 +714,7 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           return;
         }
 
-        const std::string ip = clientIp(req);
+        const std::string ip = clientIp(req, trustProxyHeaders);
 
         // Rate limit BEFORE spending any work on token verification --
         // blunts brute-force token guessing the same way /login's own
@@ -858,7 +858,8 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
   // path so an agent can `curl -T file.pdf` without pasting it.
   app.registerHandlerViaRegex(
       "^/mcp/uploads/([0-9a-fA-F-]{36})$",
-      [&remoteConfig, &rateLimiter, &documents, &attachments, &mcpUploads, &auditLog](
+      [&remoteConfig, &rateLimiter, &documents, &attachments, &mcpUploads, &auditLog,
+       trustProxyHeaders](
           const HttpRequestPtr& req,
           std::function<void(const HttpResponsePtr&)>&& callback,
           const std::string& uploadId) {
@@ -870,7 +871,7 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           return;
         }
 
-        const std::string ip = clientIp(req);
+        const std::string ip = clientIp(req, trustProxyHeaders);
         if (!rateLimiter.allow(ip)) {
           auto resp = HttpResponse::newHttpResponse();
           resp->setStatusCode(k429TooManyRequests);

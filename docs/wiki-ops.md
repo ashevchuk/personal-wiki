@@ -28,8 +28,8 @@ ssh, install locally") never reaches an error; it just resolves to blank. Everyt
 else errors out plainly if nothing above supplies it and there's no terminal to ask.
 
 Secrets (an embeddings/LLM API key's actual *value*, not its env-var *name*) never
-flow through this resolver or `deploy.local.env` at all — see "Secrets" under `deploy`
-below.
+flow through this resolver or `deploy.local.env` at all — see the `secrets` subcommand
+below, the only place a real value is ever asked for.
 
 ## Getting started
 
@@ -54,6 +54,10 @@ WIKI_DEPLOY_BACKUP_DIR=/mnt/usb-backup
 WIKI_DEPLOY_WITH_BACKUP_TIMER=true
 WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV=
 WIKI_DEPLOY_LLM_API_KEY_ENV=
+WIKI_DEPLOY_TLS_ENABLED=false
+WIKI_DEPLOY_TLS_CERT_FILE=
+WIKI_DEPLOY_TLS_KEY_FILE=
+WIKI_DEPLOY_LISTEN_ADDR=
 ```
 
 With this file in place, `./tools/wiki-ops.sh deploy --first-time` needs no flags at
@@ -261,8 +265,24 @@ install on this machine, no ssh involved; otherwise every mutating step runs ove
    `[vault].path`/`[mcp].scope` (anchored `sed`, never a real TOML parser — the
    multi-line `[embeddings]`/`[llm]` blocks are left for you to hand-edit, same as the
    manual doc already says) and sets `[server].base_path` if `WIKI_DEPLOY_BASE_PATH`
-   is non-blank, then runs `wiki-server --create-admin` with a real, unscripted TTY
-   (password entry needs its echo disabled — this is never piped or captured).
+   is non-blank, then prompts (see `secrets` below — same real-TTY, echo-disabled
+   discipline) for the actual VALUE of each non-blank
+   `WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV`/`WIKI_DEPLOY_LLM_API_KEY_ENV` and writes it to
+   the target's `/etc/opt/wiki/wiki.env`, then runs `wiki-server --create-admin` with a
+   real, unscripted TTY (password entry needs its echo disabled — this is never piped
+   or captured).
+   Asks about standalone TLS first (`WIKI_DEPLOY_TLS_ENABLED`, see
+   docs/sbc-deployment.md's "Standalone TLS" section) — `true` changes
+   `listen_addr`'s own default to `0.0.0.0` and writes `[tls].enabled`/`cert_file`/
+   `key_file` from `WIKI_DEPLOY_TLS_CERT_FILE`/`WIKI_DEPLOY_TLS_KEY_FILE`, plus a
+   reminder that `$WIKI_DEPLOY_SERVICE_USER` needs read access to those files
+   (certbot's default `/etc/letsencrypt/{live,archive}` is root-only) — the script
+   never runs `setfacl`/`certbot` itself, same "stays manual" boundary as
+   `nginx-config`'s own TLS-cert-issuance note below. `WIKI_DEPLOY_LISTEN_ADDR`
+   overrides the computed default outright (e.g. a specific LAN interface instead
+   of every interface for standalone TLS) — with a real terminal attached you can
+   also just type something else at the prompt instead of accepting its shown
+   default; only a non-interactive run (no TTY) actually needs the env var.
 5. Installs/enables the `wiki.service` systemd unit (restarts it, with a `[y/N]`
    confirmation unless `--yes`, if it's already running); `--with-backup-timer`
    additionally ships `wiki-backup.sh`+its unit/timer/env fresh from this repo's own
@@ -456,6 +476,37 @@ path, same as the manual doc says). **Binary-style installs only** — assumes
 `container`/`container-arm` — use `docker compose exec wiki wiki-server
 --create-admin` for those instead.
 
+## `secrets`
+
+```
+secrets [--target=HOST] [--variant=V]
+```
+
+The one place an API key's real *value* (as opposed to its env-var *name*, which
+`WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV`/`WIKI_DEPLOY_LLM_API_KEY_ENV` in
+`deploy.local.env` already name) ever flows through this script. For each of those two
+vars that's non-blank (deduplicated if both name the same var — Anthropic/OpenAI keys
+are interchangeable at this layer, see `systemd/wiki.env.example`'s own comment),
+prompts with echo disabled (`resolve_secret()` — same discipline as `--create-admin`'s
+password entry: real TTY only, no flag, never written to `deploy.local.env`) and writes
+`NAME=value` into the target's `/etc/opt/wiki/wiki.env`, creating the file (mode `600`,
+owned by `WIKI_DEPLOY_SERVICE_USER`) if it doesn't exist yet, replacing just that one
+line if it does — every other line already in that file (including ones you hand-added
+yourself) is left untouched. The value itself never appears in this script's own
+`--dry-run`/trace output either — it travels over the same ssh connection as everything
+else, but via stdin, never as part of a logged command string (see `remote_sh_secret()`
+in the script if you want the exact mechanism).
+
+Leaving a prompt blank skips that name entirely — wiki.env stays whatever it already
+was for that line. **Does not touch `config.toml`** — `[embeddings].api_key_env` /
+`[llm].api_key_env` actually being set to the matching name is still yours to hand-edit
+(same "multi-line blocks left alone" boundary `cmd_configure_toml` already has, see
+`docs/sbc-deployment.md`). Also runs automatically as part of `deploy --first-time`
+(right before the service unit is installed, so the very first start already has the
+real key); re-run standalone any time afterward to rotate a key. **Binary-style
+installs only** — a container deployment's real key lives in `docker-compose.yml`'s own
+`environment:`/`env_file:` instead; this subcommand just logs that and returns.
+
 ## `systemd`
 
 ```
@@ -502,7 +553,11 @@ Renders one of the two reverse-proxy blocks from `docs/sbc-deployment.md`'s "Rev
 proxy" section to a file (or stdout without `--out`) — it never touches a target's
 live nginx config, and **TLS certificate issuance itself (certbot etc.) stays entirely
 manual**: the rendered block references `/etc/letsencrypt/live/$domain/...` paths that
-must already exist.
+must already exist. For the alternative where `wiki-server` terminates TLS itself
+instead of nginx, there's no separate subcommand — `deploy --first-time` asks about
+it directly and writes `config.toml`'s `[tls]` table (see the `deploy` section above,
+point 4, and docs/sbc-deployment.md's "Standalone TLS" section); certbot issuance
+stays just as manual there too.
 
 ```sh
 ./tools/wiki-ops.sh nginx-config root --domain=wiki.example.com --out=/tmp/wiki.conf
@@ -551,6 +606,16 @@ because today's rules need adding to.
   `ReadWritePaths=`/`ReadOnlyPaths=` override in
   `/etc/systemd/system/wiki-backup.service.d/` on the target by hand — this script
   doesn't do that for you.
+- **`secrets` (and `deploy --first-time`'s automatic call into it) has no
+  non-interactive path at all** — `resolve_secret()` deliberately has no flag and
+  never reads `deploy.local.env`, so a `--yes`-only/CI run with
+  `WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV`/`WIKI_DEPLOY_LLM_API_KEY_ENV` set but no real
+  TTY attached just dies there. Intentional (an API key value should never flow
+  through a flag, a committed file, or this script's own `--dry-run` trace), but means
+  a fully unattended first deploy with a cloud embeddings/LLM provider configured
+  isn't possible yet — run `secrets` by hand afterward from an interactive session
+  instead, or leave the `_API_KEY_ENV` vars blank for that unattended run and add the
+  key later.
 - **No multi-host inventory.** One `deploy.local.env` holds exactly one target; manage
   several real deployments with separate env files and `--target=`/`--port=`/
   `--triplet=` flags overriding per invocation, or several copies of

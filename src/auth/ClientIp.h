@@ -39,12 +39,21 @@ namespace wikicore::auth {
 // append, exactly as trustworthy as X-Real-IP. Reading the FIRST entry
 // as the trusted one is backwards for this exact, real config.
 //
-// This still trusts whatever headers arrive at all — it is NOT safe if
-// something in front of this app forwards a client-supplied header
-// without normalizing it the way the directives above do. A deployment
-// with a DIFFERENT proxy chain (more than one hop, or a proxy that
-// doesn't set X-Real-IP) needs to verify its own directives produce the
-// same guarantee before relying on the IP allowlist for anything.
-std::string clientIp(const drogon::HttpRequestPtr& req);
+// Trusting these headers at all is gated behind `trustProxyHeaders`,
+// which main.cpp derives as `!cfg.tls.enabled` — NOT a separate config
+// knob, deliberately: whether a reverse proxy can plausibly be in front
+// of this process is already fully decided by whether wiki-server is
+// terminating TLS itself. [tls].enabled (standalone TLS, no reverse
+// proxy — see docs/sbc-deployment.md) means this process is the sole,
+// direct TCP endpoint; nothing legitimate ever sends these headers in
+// that mode, and a direct caller setting them itself would otherwise
+// defeat both the rate limiter and the IP allowlist below. tls.enabled
+// = false is the original, still-default nginx-fronted shape, where
+// trusting them is unchanged from before this mode existed. A
+// deployment with a DIFFERENT proxy chain than the one documented in
+// "Reverse proxy" (more than one hop, or a proxy that doesn't set
+// X-Real-IP) needs to verify its own directives produce the same
+// guarantee.
+std::string clientIp(const drogon::HttpRequestPtr& req, bool trustProxyHeaders);
 
 }  // namespace wikicore::auth

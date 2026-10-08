@@ -52,6 +52,20 @@ struct AppConfig {
   // that allowlist on the C++ side too.
   std::string defaultTheme;
 
+  // [tls] — OPTIONAL standalone TLS termination inside wiki-server
+  // itself, instead of always relying on a reverse proxy for TLS. Off
+  // by default — the documented nginx-fronted deployment shape
+  // (docs/sbc-deployment.md) keeps working unchanged with this whole
+  // table absent. When enabled, certFile/keyFile are watched for
+  // changes (server/CertWatcher.h) so a certbot renewal is picked up
+  // without a restart.
+  struct TlsConfig {
+    bool enabled = false;
+    std::string certFile;
+    std::string keyFile;
+  };
+  TlsConfig tls;
+
   // [vault]
   std::string vaultPath = "./vault_data";
 

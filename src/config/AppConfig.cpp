@@ -114,6 +114,29 @@ AppConfig AppConfig::load(const std::string& path) {
     cfg.logLevel = (*log)["level"].value_or(cfg.logLevel);
   }
 
+  if (auto* tls = root["tls"].as_table()) {
+    cfg.tls.enabled = (*tls)["enabled"].value_or(cfg.tls.enabled);
+    cfg.tls.certFile = (*tls)["cert_file"].value_or(cfg.tls.certFile);
+    cfg.tls.keyFile = (*tls)["key_file"].value_or(cfg.tls.keyFile);
+  }
+
+  if (cfg.tls.enabled && (cfg.tls.certFile.empty() || cfg.tls.keyFile.empty())) {
+    throw std::runtime_error(
+        "tls.enabled = true requires both tls.cert_file and tls.key_file to be set");
+  }
+
+  // Deliberately NOT validated here: whether listen_addr being
+  // non-loopback is actually safe without tls.enabled. A Docker
+  // deployment's own docker/config.docker.toml sets listen_addr =
+  // "0.0.0.0" with no [tls] table at all — correctly, since the
+  // container's network namespace (not this app) is what actually
+  // controls real exposure there, the same way a reverse-proxied
+  // bare-metal deployment's own exposure is controlled by nginx, not by
+  // this value. There is no way for this function to distinguish
+  // "non-loopback because it's safely sandboxed behind something else"
+  // from "non-loopback because of an unprotected typo" — that judgment
+  // stays the deploying admin's, per docs/sbc-deployment.md's own
+  // comment-only guidance on this field.
   return cfg;
 }
 

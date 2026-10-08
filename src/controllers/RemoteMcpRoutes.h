@@ -38,12 +38,11 @@ namespace wikicore::controllers {
 // fast, synchronous call with nothing to carry across requests, so there
 // is no session state worth tracking). POST /mcp is independently
 // authenticated: bearer token (Authorization: Bearer <token>) AND, if
-// any allowlist entries are configured, the caller's IP (auth::clientIp
-// — X-Real-IP/X-Forwarded-For-aware, NOT the raw TCP peer, which behind
-// the reverse proxy this needs to run behind would always be the
-// proxy's own address; see auth/ClientIp.h for exactly which header
-// wins and why, verified against this deployment's own real nginx
-// config, not assumed). PUT/POST /mcp/uploads/{uuid} is the follow-up
+// any allowlist entries are configured, the caller's IP (auth::clientIp,
+// gated by `trustProxyHeaders` below — true unless standalone TLS
+// ([tls].enabled) is on, in which case there's by definition no reverse
+// proxy in front and clientIp() always falls back to the raw TCP peer;
+// see auth/ClientIp.h). PUT/POST /mcp/uploads/{uuid} is the follow-up
 // to attach_file_begin for large files: no Bearer (the UUID is the
 // capability secret), still gated by enabled + IP allowlist +
 // writeEnabled, so an agent can `curl -T` without pasting the token.
@@ -63,6 +62,7 @@ void registerRemoteMcpRoutes(drogon::HttpAppFramework& app,
                               wikicore::vault::McpUploadStaging& mcpUploads,
                               wikicore::index::McpAuditLog& auditLog,
                               wikicore::index::QueryBlocks& queryBlocks,
-                              wikicore::index::CalendarQueries& calendarQueries);
+                              wikicore::index::CalendarQueries& calendarQueries,
+                              bool trustProxyHeaders);
 
 }  // namespace wikicore::controllers

@@ -140,6 +140,7 @@ add_executable(wiki-server
   src/auth/AuthFilter.cpp
   src/auth/CsrfFilter.cpp
   src/auth/RequireAdmin.cpp
+  src/server/CertWatcher.cpp
   src/controllers/AuthRoutes.cpp
   src/controllers/DocumentRoutes.cpp
   src/controllers/SearchRoutes.cpp

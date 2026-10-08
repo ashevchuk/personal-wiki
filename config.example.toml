@@ -47,6 +47,17 @@ threads = 2
 # shell.html's own bootstrap script already checks this against its
 # real theme list before ever using it.
 
+[tls]
+# OPTIONAL — terminate TLS inside wiki-server itself instead of behind
+# nginx (listen_addr above may then be a public address). Also flips
+# auth::clientIp() to stop trusting X-Real-IP/X-Forwarded-For (there's
+# by definition no reverse proxy left to normalize them) — correct
+# automatically, no separate setting needed. See docs/sbc-deployment.md's
+# "Standalone TLS (no reverse proxy)" section before enabling this.
+# enabled = true
+# cert_file = "/etc/letsencrypt/live/example.com/fullchain.pem"
+# key_file = "/etc/letsencrypt/live/example.com/privkey.pem"
+
 [vault]
 # Root directory of the markdown vault (source of truth for all content).
 path = "./vault_data"

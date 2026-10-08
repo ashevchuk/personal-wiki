@@ -92,13 +92,36 @@ Drogon or OpenSSL. `src/auth/` and `src/controllers/` are a web-only concern and
   handler calls `requireAdminApi(req)` as its first line for exactly this reason —
   listing these filters on a route is not proof the route is protected; the handler code
   is.
-- `auth::clientIp()` trusts `X-Real-IP` first, then `X-Forwarded-For`'s **last** entry,
-  never its first. A correctly configured reverse proxy appends to `X-Forwarded-For`
+- `auth::clientIp()` takes a `trustProxyHeaders` bool (`main.cpp` passes
+  `!cfg.tls.enabled` — derived from whether standalone TLS is on, not a separate
+  config knob, since that already tells you whether a reverse proxy can possibly be
+  in front). Only when true does it trust `X-Real-IP` first, then `X-Forwarded-For`'s
+  **last** entry, never its first, falling back to `req->getPeerAddr()` otherwise. A
+  correctly configured reverse proxy appends to `X-Forwarded-For`
   (`$proxy_add_x_forwarded_for`) rather than overwriting it, so a client can prepend any
   IP it likes — the first entry is attacker-controlled, the last is always the proxy's
-  own append. Any code that needs the caller's real IP (an allowlist, a per-IP rate
-  limit) must go through this function, never `req->getPeerAddr()` directly, which is
-  the proxy's own loopback address in this deployment shape.
+  own append — but only trustworthy at all when a proxy is actually there to have done
+  that (`tls.enabled = false`, the nginx-fronted default). Any code that needs the
+  caller's real IP (an allowlist, a per-IP rate limit) must go through this function
+  with the right `trustProxyHeaders` value, never `req->getPeerAddr()` directly and
+  never assume the header is safe unconditionally — in standalone TLS mode there is no
+  proxy, `getPeerAddr()` is already the real caller, and the header is spoofable by
+  that same direct caller.
+- **Standalone TLS** (`[tls]` in `config.toml`) terminates TLS inside `wiki-server`
+  itself — a second, equally supported alternative to the nginx-fronted shape, not a
+  replacement for it. `src/server/CertWatcher` (OpenSSL-dependent, so it lives outside
+  `wikicore` like `auth/`/`controllers/`) watches the cert file's directory for a
+  certbot renewal and calls `drogon::app().reloadSSLFiles()` — but only after
+  independently confirming both the cert and key still parse AND that the key matches
+  the certificate (`X509_check_private_key`), since trantor's own reload path throws
+  on a mismatch and an uncaught throw there kills that event-loop thread; certbot
+  updates the cert/key symlinks as two separate filesystem writes, so a transiently
+  mismatched pair during a renewal is real, not hypothetical. `listen_addr` being
+  non-loopback is NOT validated by `AppConfig::load()` either with or without
+  `tls.enabled` — Docker's own `docker/config.docker.toml` needs `0.0.0.0` with no
+  `[tls]` table at all (the container's network namespace controls real exposure
+  there, not this value), so there is no single rule that's correct for every
+  deployment shape; this field stays comment-only guidance.
 - CIDR prefix parsing rejects a negative parsed value explicitly, rather than letting it
   fall through to the same sentinel used for "no prefix given" (which would silently
   become `/32`).

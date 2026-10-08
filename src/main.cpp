@@ -38,6 +38,7 @@
 #include "index/VaultWatcher.h"
 #include "llm/AgentRuntime.h"
 #include "llm/CloudChatClient.h"
+#include "server/CertWatcher.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
@@ -52,6 +53,7 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -372,6 +374,28 @@ int main(int argc, char** argv) {
       });
   vaultWatcher.start();
 
+  // Mirrors vaultWatcher just above: a stack-local object, started
+  // before app().run() is reached, stopped implicitly by its destructor
+  // during main()'s stack unwind after run() returns. Only constructed
+  // when standalone TLS is actually enabled.
+  std::optional<wikicore::server::CertWatcher> certWatcher;
+  if (cfg.tls.enabled) {
+    // Fail loudly at startup rather than handing addListener a cert that
+    // won't load, or later crashing the event loop on the first reload
+    // attempt (see CertWatcher.h's own comment on why that path is
+    // unrecoverable once reloadSSLFiles() is actually called).
+    if (!wikicore::server::CertWatcher::filesLookValid(cfg.tls.certFile, cfg.tls.keyFile)) {
+      throw std::runtime_error(
+          "tls.enabled = true but cert_file/key_file failed to load/parse as "
+          "valid PEM — refusing to start");
+    }
+    certWatcher.emplace(cfg.tls.certFile, cfg.tls.keyFile, [] {
+      LOG_INFO << "cert/key re-validated — reloading TLS listener(s)";
+      drogon::app().reloadSSLFiles();
+    });
+    certWatcher->start();
+  }
+
   // Force these classes' DrObject<T> static registrar to actually
   // instantiate. It's a namespace-scope static (DrObject<T>::alloc_) whose
   // constructor registers the class by name in DrClassMap — but being a
@@ -488,6 +512,14 @@ int main(int argc, char** argv) {
         // same reason as kCspCircuitEmbed above.
         resp->addHeader("X-Frame-Options", isCircuitEmbed ? "SAMEORIGIN" : "DENY");
         resp->addHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+        // Behind nginx this would be the proxy's job; in standalone TLS
+        // mode (cfg.tls.enabled) there's no proxy left to add it, so the
+        // app adds it itself whenever the connection is actually secure
+        // — correct automatically regardless of how TLS got there.
+        if (req->isOnSecureConnection()) {
+          resp->addHeader("Strict-Transport-Security",
+                           "max-age=31536000; includeSubDomains");
+        }
       });
 
   // registerPageRoutes() also builds and caches the rendered shell body
@@ -572,13 +604,21 @@ int main(int argc, char** argv) {
                                                   remoteMcpRateLimiter, ftsSearch, navQueries,
                                                   indexUpdater, documentService, attachmentService,
                                                   mcpUploadStaging, mcpAuditLog, queryBlocks,
-                                                  calendarQueries);
+                                                  calendarQueries, /*trustProxyHeaders=*/!cfg.tls.enabled);
   wikicore::controllers::registerAgentRoutes(drogon::app(), agentRuntime);
 
-  drogon::app()
-      .addListener(cfg.listenAddr, cfg.port)
-      .setThreadNum(static_cast<size_t>(cfg.threads))
-      .run();
+  if (cfg.tls.enabled) {
+    drogon::app()
+        .addListener(cfg.listenAddr, cfg.port, /*useSSL=*/true, cfg.tls.certFile,
+                     cfg.tls.keyFile)
+        .setThreadNum(static_cast<size_t>(cfg.threads))
+        .run();
+  } else {
+    drogon::app()
+        .addListener(cfg.listenAddr, cfg.port)
+        .setThreadNum(static_cast<size_t>(cfg.threads))
+        .run();
+  }
 
   // app().run() blocks until a real shutdown (SIGINT/SIGTERM) and returns
   // only then — join the background startup rescan here rather than

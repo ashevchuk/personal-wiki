@@ -46,6 +46,11 @@ add_executable(unit_tests
   ${CMAKE_SOURCE_DIR}/src/auth/CidrMatch.cpp
   ${CMAKE_SOURCE_DIR}/src/auth/Crypto.cpp
   ${CMAKE_SOURCE_DIR}/src/auth/McpRemoteConfig.cpp
+  # CertWatcher is server/-only (same OpenSSL-but-no-Drogon shape as the
+  # auth/-only files just above) — cheap to compile straight into the
+  # test binary rather than standing up a whole second library.
+  unit/CertWatcherTest.cpp
+  ${CMAKE_SOURCE_DIR}/src/server/CertWatcher.cpp
 )
 if(WIKI_ENABLE_LOCAL_EMBEDDINGS OR WIKI_ENABLE_CLOUD_EMBEDDINGS)
   # EmbeddingIndexer/EmbeddingsRuntimeConfig only exist in wikicore when
@@ -157,6 +162,20 @@ if(TARGET wiki-server)
             $<TARGET_FILE:wiki-server>
   )
   set_tests_properties(security_e2e PROPERTIES TIMEOUT 60)
+
+  # Standalone-TLS mode ([tls] enabled = true) against a real wiki-server
+  # process: real HTTPS termination, HSTS, and the actual security
+  # property this mode requires -- trust_proxy_headers gating clientIp()
+  # correctly (see tests/integration/tls_e2e.py's module docstring).
+  # Kept separate from security_e2e.py (plain HTTP) rather than folded
+  # in -- see that script's own docstring for why. Same wiki-server
+  # dependency gate.
+  add_test(
+    NAME tls_e2e
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/tls_e2e.py
+            $<TARGET_FILE:wiki-server>
+  )
+  set_tests_properties(tls_e2e PROPERTIES TIMEOUT 60)
 
   # Stress tests: concurrency races and resource-exhaustion behavior, NOT
   # logical correctness (that's security_e2e.py above) — see
