@@ -903,7 +903,19 @@ stage_bare_binary_tree() {
 # Reproduces docs/sbc-deployment.md's "Update" atomic-swap sequence:
 # .bak-$STAMP the live bin/+static/, move the new ones into place, chown,
 # strip on the TARGET (never the dev machine — see the doc's note on why
-# the dev machine's own `strip` can't read a cross ARM ELF).
+# the dev machine's own `strip` can't read a cross ARM ELF; a target
+# missing `strip` entirely — confirmed on a minimal Armbian image — is
+# handled explicitly, not silently, see strip_cmd below).
+#
+# Also creates vault_data here, before cmd_systemd_install ever starts
+# the service — confirmed live on a fresh target: the shipped
+# wiki.service's `ReadWritePaths=.../vault_data` makes systemd's own
+# mount-namespace setup fail outright (code=226/NAMESPACE) if that
+# directory doesn't already exist, and nothing else in this flow created
+# it first. Without this, the service only came up by accident, because
+# a concurrent --create-admin run (outside systemd's sandbox) happened
+# to create it in the ~2s gap between two of systemd's own on-failure
+# restarts — not a real guarantee on a fresh target.
 deploy_swap_tree() {
   local staging=$1 install_root=$2 strip_bins=$3
   local user=$WIKI_DEPLOY_SERVICE_USER
@@ -916,7 +928,18 @@ deploy_swap_tree() {
 
   local strip_cmd=""
   if [ "$strip_bins" = 1 ]; then
-    strip_cmd="sudo strip --strip-all '$remote_staging/bin/wiki-server' '$remote_staging/bin/wiki-mcp' &&"
+    # `&&`-gating this ahead of the rm -rf/mv below used to mean a target
+    # with no `strip` installed (confirmed live: a minimal Armbian image
+    # has none) silently skipped not just the strip but LOOKED like it
+    # might skip the rm -rf too — set -e does NOT abort a bare `cmd1 &&
+    # cmd2` statement when cmd1 fails (only the LAST command in an AND/OR
+    # list can trigger -e; confirmed empirically, this is correct but
+    # unintuitive bash semantics), so the rm -rf/mv after it always ran
+    # regardless — but on an UPDATE (existing bin/ dir) a failed strip
+    # skipping jumped straight to `mv` with no clean rm -rf first in
+    # some orderings, risking a nested bin/bin/. Now a stand-alone
+    # statement, never silently swallowed, and never gates anything after it.
+    strip_cmd="if command -v strip >/dev/null 2>&1; then sudo strip --strip-all '$remote_staging/bin/wiki-server' '$remote_staging/bin/wiki-mcp'; else echo 'wiki-ops: strip not found on target -- shipping unstripped binaries' >&2; fi; "
   fi
 
   remote_sh "STAMP=\$(date +%Y%m%d-%H%M%S); \
@@ -932,6 +955,7 @@ sudo mv '$remote_staging/static' '$install_root/static'; \
 sudo cp '$remote_staging/config.example.toml' '$install_root/config.example.toml'; \
 sudo mkdir -p '$install_root/share/wiki/systemd'; \
 sudo cp '$remote_staging'/share/wiki/systemd/* '$install_root/share/wiki/systemd/'; \
+sudo mkdir -p '$install_root/vault_data'; \
 sudo chown -R '$user':'$user' '$install_root'; \
 rm -rf '$remote_staging'"
 }
