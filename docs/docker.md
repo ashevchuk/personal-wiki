@@ -10,6 +10,13 @@ Dockerfile is for the "I want to try this right now" path: a desktop, a
 NAS, a cloud VM, or a Pi 4/5 on a 64-bit OS new enough to run Docker
 properly.
 
+The `container-arm` variant of `tools/wiki-ops.sh` (a `buildx`-built, QEMU-emulated
+ARM image — see `docs/wiki-ops.md`) has been deployed and verified end-to-end on a
+real aarch64 SBC (Orange Pi One Plus); see `docs/sbc-deployment.md`'s "Real-hardware
+verification status" for what was actually exercised and the deploy-flow bugs that
+were found and fixed along the way. The plain `container` and `container-native`
+variants remain verified on x86_64 only, not yet on ARM hardware specifically.
+
 ## Quick start
 
 ```sh

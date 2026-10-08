@@ -96,6 +96,29 @@ systemd's own mount-namespace setup fail outright if that directory doesn't alre
 exist — on a fresh target this crash-looped indefinitely rather than failing once
 cleanly.
 
+The `container-arm` variant (a `buildx`-built, QEMU-emulated ARM image, deployed via
+`docker compose` rather than as a plain binary) has also been built and deployed to a
+real aarch64 SBC (the same Orange Pi One Plus above), image loaded via `docker save`/
+`docker load` rather than pulled from a registry. Three deploy-flow bugs surfaced and
+were fixed: `cmd_deploy_container` hardcoded the armv7 image tag regardless of
+`--platform`, so a `--platform=linux/arm64` build silently deployed and ran the wrong
+(armv7) image, failing with "exec format error" on a target with no 32-bit compat —
+fixed by threading `--platform` through the same `container_arm_tag()` helper
+`build`/`verify` already use. A freshly `mkdir -p`'d `vault_data` on the host is
+`root:root`, which the image's fixed uid/gid 1000 process can traverse but not write
+into — every first deploy to a new install root crash-looped with "unable to open
+database file" until `chown -R 1000:1000` was added after the `mkdir -p`. And unlike
+every other deploy path in this script, `cmd_deploy_container` ran `docker load`/
+`mkdir`/`chown`/`docker compose up` with no `sudo` at all and `scp`'d
+`docker-compose.yml` straight into the (root-owned, on a fresh target) install root —
+fixed to stage through `/tmp` and `sudo`-move into place, matching the staging
+discipline every other path already uses; confirmed working by deploying as a
+passwordless-sudo, non-root, non-`docker`-group SSH user. Verified so far: image
+build/load, container healthy, `--create-admin`, login, `/healthz`. The plain
+`container` and `container-native` variants, and a full functional pass (document
+creation/search/visibility gating) through `container-arm`, have not been exercised on
+real ARM hardware yet.
+
 ## Recording your own live deployment target
 
 Keep the host/IP, install root, public URL (and reverse-proxy subpath, if any), and
@@ -123,7 +146,7 @@ for the native-build path on a device capable of it.
 | When to use | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device | Capable, modern-enough device (Pi 4/5, 64-bit OS) where you'd rather not manage a toolchain at all |
 | Toolchain | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ | Whatever `docker build` pulls in, entirely inside the image |
 | Output | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc | A container image; the device's own userland is untouched |
-| Verified live | Not yet (no on-device compile has been run to completion) | Yes — see "Real-hardware verification status" above | Not on real ARM SBC hardware specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
+| Verified live | Yes — see "Real-hardware verification status" above | Yes — see "Real-hardware verification status" above | `container-arm` yes, on real ARM SBC hardware — see "Real-hardware verification status" above; plain `container`/`container-native` not yet on ARM specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
 
 Pick native if the device is reasonably capable and current (Raspberry Pi OS Bookworm+,
 a recent Debian/Ubuntu ARM64). Pick cross-compile if the target is old/weak/EOL (e.g.
