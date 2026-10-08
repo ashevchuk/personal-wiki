@@ -645,7 +645,18 @@ cmd_systemd_install() {
       if [ -n "$existing_env_file" ] && [ "$existing_env_file" != "$new_env_file" ]; then
         confirm_or_die "target's existing wiki.service reads env from '$existing_env_file', not this repo's '$new_env_file' — overwrite it anyway? (backed up first, but the running service's secrets may live at the old path)"
       fi
-      remote_sh "if [ -f /etc/systemd/system/wiki.service ]; then sudo cp /etc/systemd/system/wiki.service /etc/systemd/system/wiki.service.bak-\$(date +%Y%m%d-%H%M%S); fi; sudo cp '$install_root/share/wiki/systemd/wiki.service' /etc/systemd/system/ && sudo systemctl daemon-reload"
+      # sed 's|/opt/wiki|$install_root|g', not a plain `cp`: the shipped
+      # unit hardcodes /opt/wiki in ExecStart/WorkingDirectory/
+      # ReadWritePaths (see systemd/wiki.service, and CMakeLists.txt's own
+      # "Install layout — matches what systemd/wiki.service expects"
+      # comment) — confirmed live, deploying to any OTHER install_root
+      # silently installed a unit pointing at /opt/wiki regardless, which
+      # on a box that happened to have something already at /opt/wiki from
+      # an earlier, unrelated deploy ran THAT instead with no error at
+      # all; on a box with nothing there it would have failed to start
+      # outright. $install_root = /opt/wiki (the documented default) makes
+      # this a no-op substitution, so nothing changes for that case.
+      remote_sh "if [ -f /etc/systemd/system/wiki.service ]; then sudo cp /etc/systemd/system/wiki.service /etc/systemd/system/wiki.service.bak-\$(date +%Y%m%d-%H%M%S); fi; sed 's|/opt/wiki|$install_root|g' '$install_root/share/wiki/systemd/wiki.service' | sudo tee /etc/systemd/system/wiki.service >/dev/null && sudo systemctl daemon-reload"
       local is_active
       is_active=$(remote_sh_capture "systemctl is-active wiki.service 2>/dev/null || true")
       if [ "$is_active" = active ]; then
@@ -663,7 +674,14 @@ cmd_systemd_install() {
       # Poll instead of guessing one fixed delay, and never let a
       # non-"active" status abort the script — report what's actually
       # there either way.
-      remote_sh "st=unknown; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 2; st=\$(sudo systemctl is-active wiki.service 2>/dev/null || true); [ \"\$st\" = active ] && break; done; echo \"wiki.service: \$st\"; curl -s -o /dev/null -w 'healthz: %{http_code}\n' http://127.0.0.1:8080/healthz || true"
+      # Port read from the target's own config.toml, not hardcoded 8080:
+      # confirmed live, a deploy with --port=<anything else> left this
+      # check curling the wrong port, always reporting "healthz: 000"
+      # (connection refused) even when the service was actually healthy.
+      local health_port
+      health_port=$(remote_sh_capture "grep -m1 '^port = ' '$install_root/config.toml' 2>/dev/null | sed -E 's/^port = ([0-9]+).*/\\1/'" || true)
+      [ -n "$health_port" ] || health_port=8080
+      remote_sh "st=unknown; for i in 1 2 3 4 5 6 7 8 9 10; do sleep 2; st=\$(sudo systemctl is-active wiki.service 2>/dev/null || true); [ \"\$st\" = active ] && break; done; echo \"wiki.service: \$st\"; curl -s -o /dev/null -w 'healthz: %{http_code}\n' http://127.0.0.1:$health_port/healthz || true"
       ;;
   esac
 
@@ -692,7 +710,10 @@ cmd_backup_timer_install() {
 
   copy_to_target systemd/wiki-backup.service /tmp/wiki-backup.service
   copy_to_target systemd/wiki-backup.timer /tmp/wiki-backup.timer
-  remote_sh "sudo mv /tmp/wiki-backup.service /etc/systemd/system/wiki-backup.service && sudo mv /tmp/wiki-backup.timer /etc/systemd/system/wiki-backup.timer"
+  # Same /opt/wiki hardcoding as wiki.service (ExecStart, ReadOnlyPaths)
+  # — see cmd_systemd_install's own comment on why a plain `mv` here is
+  # wrong for any install_root other than the documented default.
+  remote_sh "sed -i 's|/opt/wiki|$install_root|g' /tmp/wiki-backup.service && sudo mv /tmp/wiki-backup.service /etc/systemd/system/wiki-backup.service && sudo mv /tmp/wiki-backup.timer /etc/systemd/system/wiki-backup.timer"
 
   local has_env
   has_env=$(remote_sh_capture "[ -f /etc/opt/wiki/wiki-backup.env ] && echo yes || echo no")
