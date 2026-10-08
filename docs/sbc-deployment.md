@@ -117,7 +117,8 @@ HTTP against the running container: `--create-admin`, login, document create/upd
 gating (an anonymous caller gets `404`, not `403`, for a private document — existence
 not revealed), and a live `VaultWatcher` pickup of a file written directly to the
 host-bind-mounted `vault_data` with no `--reindex` call in between. The plain
-`container` and `container-native` variants remain unverified on real ARM hardware.
+`container` variant remains unverified on real ARM hardware (`container-native` below
+is).
 
 The `cross-container` variant (the same aarch64-musl cross build as above, produced
 inside `cross/Dockerfile.builder` instead of needing zig installed on the build
@@ -149,9 +150,18 @@ variants above: `--create-admin`, login, document create/update, search,
 fail-safe-private visibility gating, and a `VaultWatcher` pickup of a file written
 directly to the host-bind-mounted `vault_data`. No bugs found on this path — it has
 no cross-compilation, QEMU emulation, or install-root indirection to get wrong, the
-three sources of every bug found on the ARM paths above. Not yet run on ARM hardware
-specifically (`container-native` remains the one variant where that distinction
-matters).
+three sources of every bug found on the ARM paths above.
+
+`container-native` (a buildx+QEMU-built `linux/arm64` binary, dynamically linked
+against the build image's own glibc — not static like `cross`/`cross-container`)
+deploys as a plain binary+systemd install on the same aarch64 SBC, exercising the
+same `cmd_systemd_install` install-root and health-check-port substitution as
+`cross-container`, on a second, independently-built binary. The full `ctest` suite
+runs for this exact `arm64` build inside the Docker build step itself (a cached
+layer shared with `container-arm`'s own `arm64` build of the same source).
+Verified live, end-to-end: `--create-admin`, login, document create/update, search,
+fail-safe-private visibility gating, and a `VaultWatcher` pickup of a file written
+directly to the host `vault_data`.
 
 ## Recording your own live deployment target
 
@@ -180,7 +190,7 @@ for the native-build path on a device capable of it.
 | When to use | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device | Capable, modern-enough device (Pi 4/5, 64-bit OS) where you'd rather not manage a toolchain at all |
 | Toolchain | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ | Whatever `docker build` pulls in, entirely inside the image |
 | Output | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc | A container image; the device's own userland is untouched |
-| Verified live | Yes — see "Real-hardware verification status" above | Yes — see "Real-hardware verification status" above | `container-arm` yes, on real ARM SBC hardware — see "Real-hardware verification status" above; plain `container`/`container-native` not yet on ARM specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
+| Verified live | Yes — see "Real-hardware verification status" above | Yes — see "Real-hardware verification status" above | `container-arm`/`container-native` yes, on real ARM SBC hardware — see "Real-hardware verification status" above; the plain `container` variant not yet on ARM specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
 
 Pick native if the device is reasonably capable and current (Raspberry Pi OS Bookworm+,
 a recent Debian/Ubuntu ARM64). Pick cross-compile if the target is old/weak/EOL (e.g.
