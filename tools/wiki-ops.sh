@@ -448,10 +448,23 @@ cmd_build_container_native() {
 
 cmd_verify_cross() {
   local build_dir=$1 qemu_cpu=$2 skip_admin_smoke=$3
-  command -v qemu-arm-static >/dev/null 2>&1 || die "qemu-arm-static not found — install qemu-user-static"
   local unit_tests_bin="$build_dir/tests/unit_tests"
   [ -x "$unit_tests_bin" ] || unit_tests_bin="$build_dir/unit_tests"
   [ -x "$unit_tests_bin" ] || die "no unit_tests binary found under $build_dir"
+
+  # Picked from the binary's own ELF machine type, not the triplet name —
+  # arm-musl/armv6-musl are both 32-bit ARMv6/v7 (qemu-arm-static), but
+  # aarch64-musl is a different, 64-bit instruction set entirely
+  # (qemu-aarch64-static); hardcoding qemu-arm-static unconditionally here
+  # made `verify cross-container --triplet=aarch64-musl` fail outright
+  # with "Invalid ELF image for this architecture" before this.
+  local qemu_bin
+  case "$(file -b "$unit_tests_bin")" in
+    *"ARM aarch64"*) qemu_bin=qemu-aarch64-static ;;
+    *", ARM, "*) qemu_bin=qemu-arm-static ;;
+    *) die "don't know which qemu-user-static binary to use for $unit_tests_bin (unrecognized architecture: $(file -b "$unit_tests_bin"))" ;;
+  esac
+  command -v "$qemu_bin" >/dev/null 2>&1 || die "$qemu_bin not found — install qemu-user-static"
 
   local qemu_cpu_args=()
   if [ -n "$qemu_cpu" ]; then
@@ -468,13 +481,13 @@ cmd_verify_cross() {
     log "pinning qemu CPU model to '$qemu_cpu' — a pass here is only as trustworthy as that name actually matching the real target core"
   fi
 
-  log "running unit_tests under qemu-arm-static — must report all cases passed, not just exit 0"
-  qemu-arm-static "${qemu_cpu_args[@]}" "$unit_tests_bin"
+  log "running unit_tests under $qemu_bin — must report all cases passed, not just exit 0"
+  "$qemu_bin" "${qemu_cpu_args[@]}" "$unit_tests_bin"
   if [ "$skip_admin_smoke" = 1 ]; then
     log "skipping --create-admin smoke test — needs a real interactive TTY (password echo disabled), which 'update' never has"
   else
-    log "running wiki-server --create-admin under qemu-arm-static as a real smoke test"
-    qemu-arm-static "${qemu_cpu_args[@]}" "$build_dir/wiki-server" --create-admin
+    log "running wiki-server --create-admin under $qemu_bin as a real smoke test"
+    "$qemu_bin" "${qemu_cpu_args[@]}" "$build_dir/wiki-server" --create-admin
   fi
 }
 
