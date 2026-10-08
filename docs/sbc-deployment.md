@@ -113,11 +113,14 @@ every other deploy path in this script, `cmd_deploy_container` ran `docker load`
 `docker-compose.yml` straight into the (root-owned, on a fresh target) install root —
 fixed to stage through `/tmp` and `sudo`-move into place, matching the staging
 discipline every other path already uses; confirmed working by deploying as a
-passwordless-sudo, non-root, non-`docker`-group SSH user. Verified so far: image
-build/load, container healthy, `--create-admin`, login, `/healthz`. The plain
-`container` and `container-native` variants, and a full functional pass (document
-creation/search/visibility gating) through `container-arm`, have not been exercised on
-real ARM hardware yet.
+passwordless-sudo, non-root, non-`docker`-group SSH user. Verified end-to-end over live
+HTTP against the running container: `--create-admin`, login, document create/update,
+`/api/search` (including FTS5 snippet highlighting), fail-safe-private visibility
+gating (an anonymous caller gets `404`, not `403`, for a private document — existence
+not revealed), and a live `VaultWatcher` pickup of a file written directly to the
+host-bind-mounted `vault_data` with no `--reindex` call in between. The plain
+`container` and `container-native` variants have not been exercised on real ARM
+hardware yet.
 
 ## Recording your own live deployment target
 
