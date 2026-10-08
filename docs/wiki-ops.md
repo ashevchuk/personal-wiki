@@ -199,17 +199,20 @@ verify cross|container|cross-container|container-arm|container-native
 Run this before a binary/image ever reaches real hardware — "compiling cleanly is not
 the same as working."
 
-- **`cross`** / **`cross-container`** — `qemu-arm-static` runs `unit_tests` (must
-  report every case passed, not just exit 0) then `wiki-server --create-admin` as a
-  real smoke test, against whichever directory `build`'s own `--triplet`-derived
-  naming produced (`build-arm/` for the default, `build-$triplet/` otherwise — pass
-  the same `--triplet` here that you built with). Needs `qemu-user-static` installed
-  on the dev machine.
-  **`--qemu-cpu=NAME` matters more than it looks.** qemu's *default* CPU model (no
-  `-cpu` flag) emulates a broader instruction set than some real cores — confirmed:
-  the stock armv7 `arm-musl` binary passes clean under the bare default, then SIGILLs
-  under `-cpu arm1176` specifically. For `armv6-musl` (ARM1176JZF-S — Raspberry Pi
-  1/Zero/Zero W), the bare default would give a **false pass**:
+- **`cross`** / **`cross-container`** — runs `unit_tests` under `qemu-arm-static`
+  (32-bit triplets: `arm-musl`, `armv6-musl`) or `qemu-aarch64-static` (`aarch64-musl`),
+  picked from the binary's own ELF machine type, not the triplet name — must report
+  every case passed, not just exit 0 — then `wiki-server --create-admin` as a real
+  smoke test, against whichever directory `build`'s own `--triplet`-derived naming
+  produced (`build-arm/` for the default, `build-$triplet/` otherwise — pass the same
+  `--triplet` here that you built with). Needs `qemu-user-static` installed on the
+  dev machine (both binaries ship in that same package).
+  **`--qemu-cpu=NAME` matters more than it looks, for the 32-bit triplets.** qemu's
+  *default* CPU model (no `-cpu` flag) emulates a broader instruction set than some
+  real cores — confirmed: the stock armv7 `arm-musl` binary passes clean under the
+  bare default, then SIGILLs under `-cpu arm1176` specifically. For `armv6-musl`
+  (ARM1176JZF-S — Raspberry Pi 1/Zero/Zero W), the bare default would give a
+  **false pass**:
   ```sh
   ./tools/wiki-ops.sh verify cross --qemu-cpu=arm1176
   ```
@@ -597,15 +600,6 @@ because today's rules need adding to.
   for every real target this project has actually been deployed to), so this is
   unverified rather than confirmed-broken — but genuinely untested against a
   non-bash login shell.
-- **`wiki-backup.service`'s `ReadOnlyPaths=` is hardcoded to `/opt/wiki/vault_data`**
-  in the shipped unit file itself (`systemd/wiki-backup.service`) — if your
-  `--target`'s install root isn't `/opt/wiki`, the timer's own sandboxing won't permit
-  reading the real vault path even though `cmd_backup_timer_install` correctly points
-  `VAULT_PATH` at it. `systemd install --with-backup-timer` logs a warning when this
-  applies; fixing it means either always deploying to `/opt/wiki`, or adding a
-  `ReadWritePaths=`/`ReadOnlyPaths=` override in
-  `/etc/systemd/system/wiki-backup.service.d/` on the target by hand — this script
-  doesn't do that for you.
 - **`secrets` (and `deploy --first-time`'s automatic call into it) has no
   non-interactive path at all** — `resolve_secret()` deliberately has no flag and
   never reads `deploy.local.env`, so a `--yes`-only/CI run with

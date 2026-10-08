@@ -731,10 +731,6 @@ cmd_backup_timer_install() {
   fi
 
   remote_sh "sudo systemctl daemon-reload && sudo systemctl enable --now wiki-backup.timer"
-
-  if [ "$install_root" != /opt/wiki ]; then
-    log "WARNING: the shipped wiki-backup.service hardcodes ReadOnlyPaths=/opt/wiki/vault_data — install_root is '$install_root', not /opt/wiki, so this unit's own sandboxing won't actually permit reading the real vault path; pre-existing limitation of the shipped unit file itself, not specific to this deploy"
-  fi
 }
 
 cmd_systemd_status() {
