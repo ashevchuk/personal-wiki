@@ -89,60 +89,56 @@ devices:
   was also exercised end-to-end over the standalone-TLS connection, with a real model
   reply streamed back over SSE. The code has no x86-specific assumptions.
 
-Deploying to a genuinely fresh target this way also surfaced a real deploy-flow bug,
-since fixed: `deploy_swap_tree` didn't create `vault_data` before `cmd_systemd_install`
-started the service, and the shipped unit's `ReadWritePaths=.../vault_data` makes
-systemd's own mount-namespace setup fail outright if that directory doesn't already
-exist — on a fresh target this crash-looped indefinitely rather than failing once
-cleanly.
+`deploy_swap_tree` did not create `vault_data` before `cmd_systemd_install` started
+the service; the shipped unit's `ReadWritePaths=.../vault_data` makes systemd's own
+mount-namespace setup fail outright if that directory does not already exist,
+crash-looping indefinitely on a fresh target rather than failing once cleanly. Fixed
+by creating `vault_data` before the service starts.
 
 The `container-arm` variant (a `buildx`-built, QEMU-emulated ARM image, deployed via
-`docker compose` rather than as a plain binary) has also been built and deployed to a
-real aarch64 SBC (the same Orange Pi One Plus above), image loaded via `docker save`/
-`docker load` rather than pulled from a registry. Three deploy-flow bugs surfaced and
-were fixed: `cmd_deploy_container` hardcoded the armv7 image tag regardless of
-`--platform`, so a `--platform=linux/arm64` build silently deployed and ran the wrong
-(armv7) image, failing with "exec format error" on a target with no 32-bit compat —
-fixed by threading `--platform` through the same `container_arm_tag()` helper
+`docker compose` rather than as a plain binary) runs on the same real aarch64 SBC
+(the Orange Pi One Plus above), image loaded via `docker save`/`docker load` rather
+than pulled from a registry. `cmd_deploy_container` hardcoded the armv7 image tag
+regardless of `--platform`: a `--platform=linux/arm64` build deployed and ran the
+wrong (armv7) image, failing with "exec format error" on a target with no 32-bit
+compat. Fixed by threading `--platform` through the same `container_arm_tag()` helper
 `build`/`verify` already use. A freshly `mkdir -p`'d `vault_data` on the host is
 `root:root`, which the image's fixed uid/gid 1000 process can traverse but not write
-into — every first deploy to a new install root crash-looped with "unable to open
-database file" until `chown -R 1000:1000` was added after the `mkdir -p`. And unlike
-every other deploy path in this script, `cmd_deploy_container` ran `docker load`/
-`mkdir`/`chown`/`docker compose up` with no `sudo` at all and `scp`'d
-`docker-compose.yml` straight into the (root-owned, on a fresh target) install root —
-fixed to stage through `/tmp` and `sudo`-move into place, matching the staging
-discipline every other path already uses; confirmed working by deploying as a
-passwordless-sudo, non-root, non-`docker`-group SSH user. Verified end-to-end over live
+into: every first deploy to a new install root crash-looped with "unable to open
+database file". Fixed with `chown -R 1000:1000` after the `mkdir -p`. Unlike every
+other deploy path in this script, `cmd_deploy_container` ran `docker load`/`mkdir`/
+`chown`/`docker compose up` with no `sudo` at all and `scp`'d `docker-compose.yml`
+straight into the (root-owned, on a fresh target) install root, which fails outright
+for a non-root SSH login user. Fixed to stage through `/tmp` and `sudo`-move into
+place, matching the staging discipline every other path already uses. Verified
+end-to-end as a passwordless-sudo, non-root, non-`docker`-group SSH user, over live
 HTTP against the running container: `--create-admin`, login, document create/update,
 `/api/search` (including FTS5 snippet highlighting), fail-safe-private visibility
 gating (an anonymous caller gets `404`, not `403`, for a private document — existence
 not revealed), and a live `VaultWatcher` pickup of a file written directly to the
 host-bind-mounted `vault_data` with no `--reindex` call in between. The plain
-`container` and `container-native` variants have not been exercised on real ARM
-hardware yet.
+`container` and `container-native` variants remain unverified on real ARM hardware.
 
-The `cross-container` variant (the same aarch64-musl cross build as above, but
-produced inside `cross/Dockerfile.builder` instead of needing zig installed on the
-build machine) has also been built and deployed as a plain binary+systemd install to
-the same aarch64 SBC. Two more deploy-flow bugs surfaced and were fixed: `verify
+The `cross-container` variant (the same aarch64-musl cross build as above, produced
+inside `cross/Dockerfile.builder` instead of needing zig installed on the build
+machine) runs as a plain binary+systemd install on the same aarch64 SBC. `verify
 cross`/`verify cross-container` hardcoded `qemu-arm-static` (32-bit) regardless of
-triplet, so verifying an aarch64-musl build failed outright with "Invalid ELF image
-for this architecture" — fixed by picking `qemu-arm-static` vs. `qemu-aarch64-static`
-from the binary's own ELF machine type. And both shipped systemd units
-(`wiki.service`, `wiki-backup.service`) hardcode `/opt/wiki` in `ExecStart`/
-`WorkingDirectory`/`ReadWritePaths` — deploying to any OTHER install root silently
-installed a unit still pointing at `/opt/wiki`; on a target that happened to already
-have something running there from an earlier deploy, systemd reported the new service
-healthy while actually running that OTHER binary the whole time, no error at all — a
-worse failure than refusing to start. Fixed by `sed`-substituting the real install root
-into both unit files before installing them. The post-restart health check also
-hardcoded port 8080 regardless of the target's actual configured port, always
-reporting "healthz: 000" for any `--port` other than the default even when the service
-was genuinely healthy — now reads the real port from the target's own `config.toml`.
-Verified live (non-default install root AND non-default port, specifically to
-exercise both fixes): unit tests pass under `qemu-aarch64-static` (1621 assertions,
-315 cases), and the same login/create/update/search/visibility-gating cycle as
+triplet: verifying an aarch64-musl build failed with "Invalid ELF image for this
+architecture". Fixed by picking `qemu-arm-static` vs. `qemu-aarch64-static` from the
+binary's own ELF machine type. Both shipped systemd units (`wiki.service`,
+`wiki-backup.service`) hardcode `/opt/wiki` in `ExecStart`/`WorkingDirectory`/
+`ReadWritePaths`: deploying to any other install root installs a unit still pointing
+at `/opt/wiki` — on a target that already has something running there from an
+earlier deploy, systemd reports the new service healthy while actually running that
+other binary the whole time, with no error at all, a worse failure than refusing to
+start. Fixed by `sed`-substituting the real install root into both unit files before
+installing them. The post-restart health check also hardcoded port 8080 regardless of
+the target's actual configured port, reporting "healthz: 000" for any `--port` other
+than the default even when the service was genuinely healthy. Fixed to read the real
+port from the target's own `config.toml`. Verified live against a non-default install
+root and a non-default port, specifically to exercise both fixes: unit tests pass
+under `qemu-aarch64-static` (1621 assertions, 315 cases), and the same
+login/create/update/search/visibility-gating cycle as
 `container-arm` above, against the newly-deployed binary.
 
 ## Recording your own live deployment target
