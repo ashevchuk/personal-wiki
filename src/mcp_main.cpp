@@ -33,8 +33,14 @@
 
 #include <cstdio>
 #include <filesystem>
+#include <string>
 
-int main() {
+int main(int argc, char** argv) {
+  if (argc > 1 && std::string(argv[1]) == "--version") {
+    std::printf("%s\n", wikicore::versionString());
+    return 0;
+  }
+
   // stderr only, always -- see McpServer.cpp's comment on why stdout is
   // reserved exclusively for JSON-RPC framing.
   std::fprintf(stderr, "wiki-mcp: %s\n", wikicore::versionString());

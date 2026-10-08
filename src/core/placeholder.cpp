@@ -7,10 +7,14 @@
 
 #include "core/wikicore.h"
 
+#ifndef WIKI_VERSION
+#define WIKI_VERSION "0.0.0-dev"
+#endif
+
 namespace wikicore {
 
 const char* versionString() {
-  return "personal-wiki core 0.1.0";
+  return "personal-wiki " WIKI_VERSION;
 }
 
 }  // namespace wikicore

@@ -134,6 +134,11 @@ int runReindex(const wikicore::config::AppConfig& cfg, wikicore::index::Database
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc > 1 && std::string(argv[1]) == "--version") {
+    std::cout << wikicore::versionString() << "\n";
+    return 0;
+  }
+
   LOG_INFO << "starting, " << wikicore::versionString();
 
   const std::string configPath =

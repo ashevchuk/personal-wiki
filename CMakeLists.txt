@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
-project(personal_wiki CXX)
+# Bump this on every user-visible fix/feature and record it in
+# CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
+# `wiki-mcp --version`) and reported as the MCP serverInfo.version.
+project(personal_wiki VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -99,6 +102,7 @@ add_library(wikicore STATIC
   src/llm/ChatStreamParser.cpp
 )
 target_include_directories(wikicore PUBLIC src)
+target_compile_definitions(wikicore PRIVATE WIKI_VERSION="${PROJECT_VERSION}")
 target_link_libraries(wikicore PUBLIC
   SQLite3::SQLite3
   nlohmann_json::nlohmann_json
