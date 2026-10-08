@@ -960,13 +960,24 @@ sudo chown -R '$user':'$user' '$install_root'; \
 rm -rf '$remote_staging'"
 }
 
+# cmd_deploy_container VARIANT INSTALL_ROOT HOST_PORT PLATFORM — PLATFORM is
+# only consulted for container-arm (ignored, may be blank, for plain
+# container) and MUST be the exact same --platform `build container-arm`
+# was given: container_arm_tag() is how both `build`/`verify` already name
+# a non-default-platform image, and this needs to pick up that SAME tag,
+# not the hardcoded armv7 one, or docker-compose.arm.yml's own default
+# 'image: personal-wiki:arm' silently runs whatever stale armv7 image
+# happens to already be tagged that, which fails with a plain "exec format
+# error" rather than any clearer signal — confirmed live deploying an
+# arm64-built image to an aarch64 target with CONFIG_COMPAT unset (no
+# 32-bit compat at all) before this was threaded through.
 cmd_deploy_container() {
-  local variant=$1 install_root=$2 host_port=$3
+  local variant=$1 install_root=$2 host_port=$3 platform=$4
   local extra_compose=()
   local image_tag=personal-wiki:latest
   if [ "$variant" = container-arm ]; then
     extra_compose=(-f docker-compose.arm.yml)
-    image_tag=personal-wiki:arm
+    image_tag=$(container_arm_tag "${platform:-linux/arm/v7}")
   fi
 
   if [ -z "${WIKI_DEPLOY_HOST:-}" ]; then
@@ -974,6 +985,7 @@ cmd_deploy_container() {
       export WIKI_HOST_PORT="$host_port"
       log "WIKI_HOST_PORT=$host_port exported for docker compose (container's own internal port stays 8080)"
     fi
+    export WIKI_IMAGE_TAG="$image_tag"
     run docker compose -f docker-compose.yml "${extra_compose[@]}" up -d
     return
   fi
@@ -992,9 +1004,21 @@ cmd_deploy_container() {
   fi
   local compose_flags="-f docker-compose.yml"
   [ "$variant" = container-arm ] && compose_flags="-f docker-compose.yml -f docker-compose.arm.yml"
-  local port_env=""
-  [ -n "$host_port" ] && port_env="WIKI_HOST_PORT='$host_port' "
-  remote_sh "mkdir -p '$install_root/vault_data' && cd '$install_root' && ${port_env}docker compose $compose_flags up -d"
+  local env_prefix=""
+  [ -n "$host_port" ] && env_prefix="WIKI_HOST_PORT='$host_port' "
+  [ "$variant" = container-arm ] && env_prefix="${env_prefix}WIKI_IMAGE_TAG='$image_tag' "
+  # chown -R 1000:1000, not just mkdir -p: the image runs as a fixed
+  # uid/gid 1000 (Dockerfile, see docker-compose.yml's own comment on
+  # why) — a freshly `mkdir -p`'d directory over ssh is root:root, which
+  # a uid-1000 process can traverse but not write into, so the container
+  # crash-looped on every first deploy to a brand new install_root with
+  # "unable to open database file" before this — confirmed live, not a
+  # hypothetical. -R also self-heals the other documented caveat
+  # (docker-compose.yml: "if your host user is a different uid, chown -R
+  # 1000:1000 vault_data") when this install_root previously held a
+  # native/cross binary deployment's own vault_data, owned by whatever
+  # uid that deployment's system user happened to get.
+  remote_sh "mkdir -p '$install_root/vault_data' && chown -R 1000:1000 '$install_root/vault_data' && cd '$install_root' && ${env_prefix}docker compose $compose_flags up -d"
 }
 
 cmd_deploy() {
@@ -1026,7 +1050,12 @@ cmd_deploy() {
       # fresh from this repo's own systemd/ directory, independent of
       # anything a container deploy would otherwise stage.
       resolve_optional WIKI_DEPLOY_PORT "$port_flag" "${WIKI_DEPLOY_PORT:-}" "" "Host-side port (blank = compose default, 8080)"
-      cmd_deploy_container "$WIKI_DEPLOY_VARIANT" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_PORT"
+      # $FLAG_PLATFORM: same global dispatch_build already reads directly
+      # (see its own comment) rather than threading it through as a
+      # parameter. Must be the SAME platform `build container-arm` was
+      # given, or this loads/runs the wrong image — see
+      # cmd_deploy_container's own comment on exactly how that fails.
+      cmd_deploy_container "$WIKI_DEPLOY_VARIANT" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_PORT" "${FLAG_PLATFORM:-linux/arm/v7}"
       cmd_systemd_install "$with_backup_timer" "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
       return
       ;;

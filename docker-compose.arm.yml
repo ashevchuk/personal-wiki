@@ -12,9 +12,16 @@
 # builder that supports the target platform — `docker buildx create --use`
 # once, plus `docker run --privileged --rm tonistiigi/binfmt --install all`
 # if linux/arm/v7 under QEMU isn't already registered on this host.
+#
+# WIKI_IMAGE_TAG overrides the image tag for any --platform other than the
+# default linux/arm/v7 (e.g. linux/arm64) — `wiki-ops.sh deploy
+# --variant=container-arm --platform=...` sets it to match whatever
+# container_arm_tag() named the image `build container-arm` actually
+# produced; running `docker compose` directly for the default platform
+# needs no env var at all, same as before this existed.
 services:
   wiki:
     build:
       platforms:
         - linux/arm/v7
-    image: personal-wiki:arm
+    image: ${WIKI_IMAGE_TAG:-personal-wiki:arm}
