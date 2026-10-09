@@ -1,0 +1,9 @@
+# Vendored third-party JS — excluded from GitHub's language stats (which
+# otherwise count this repo as mostly JavaScript; the actual service is
+# C++, see CLAUDE.md's "Two-binary split" section). linguist-vendored
+# alone is enough; linguist-generated additionally hides them from diffs
+# in PR review UIs by default.
+static/js/circuitjs1/** linguist-vendored
+static/js/mermaid/** linguist-vendored
+static/js/toastui-editor/** linguist-vendored
+static/js/prism/** linguist-vendored
