@@ -777,9 +777,14 @@ since binaries are cross-compiled on x86_64), push just the `static/`
 tree over SSH instead:
 
 ```sh
-# 1. tar the WHOLE static/ tree, never a selective "the files I believe
-#    changed" scp — see below for why that shortcut is unsafe.
-tar -czf static-deploy.tar.gz -C static .
+# 1. stage a copy and generate .gz sidecars for anything Drogon's
+#    StaticFileRouter would otherwise serve uncompressed via sendfile()
+#    (see tools/compress-static.sh) — then tar the WHOLE staged tree,
+#    never a selective "the files I believe changed" scp (see below for
+#    why that shortcut is unsafe).
+rm -rf /tmp/static-stage && cp -r static /tmp/static-stage
+tools/compress-static.sh /tmp/static-stage
+tar -czf static-deploy.tar.gz -C /tmp/static-stage .
 scp static-deploy.tar.gz root@<target>:/tmp/static-deploy.tar.gz
 
 # 2. on the target: extract to a STAGING directory first, never straight
@@ -817,7 +822,7 @@ getting the old cached `shell.html` indefinitely, silently.
 you think changed:**
 
 ```sh
-find static -type f -exec md5sum {} \; | sed 's|static/||' | sort > /tmp/local.md5
+find /tmp/static-stage -type f -exec md5sum {} \; | sed 's|/tmp/static-stage/||' | sort > /tmp/local.md5
 ssh root@<target> 'cd /opt/wiki/static && find . -type f -exec md5sum {} \;' \
   | sed 's|  \./|  |' | sort > /tmp/remote.md5
 diff /tmp/local.md5 /tmp/remote.md5 && echo "identical" || echo "MISMATCH"

@@ -861,11 +861,11 @@ cmd_setup_admin() {
 # ============================================================
 
 verify_static_md5() {
-  local install_root=$1
+  local install_root=$1 local_static_dir=$2
   local local_md5 remote_md5
   local_md5=$(mktemp)
   remote_md5=$(mktemp)
-  find static -type f -exec md5sum {} \; | sed 's|static/||' | sort > "$local_md5"
+  find "$local_static_dir" -type f -exec md5sum {} \; | sed "s|$local_static_dir/||" | sort > "$local_md5"
   remote_sh_capture "cd '$install_root/static' && find . -type f -exec md5sum {} \;" \
     | sed 's|  \./|  |' | sort > "$remote_md5"
   if diff -q "$local_md5" "$remote_md5" >/dev/null; then
@@ -884,9 +884,12 @@ cmd_static_redeploy() {
     container|container-arm)
       die "static-redeploy assumes a binary install — '$variant' serves static/ from inside the image; rebuild ('build $variant') and 'deploy --variant=$variant' again instead" ;;
   esac
-  local tmp_tar remote_tar
+  local tmp_static tmp_tar remote_tar
+  tmp_static=$(mktemp -d /tmp/wiki-static-stage-XXXXXX)
+  cp -r static/. "$tmp_static/"
+  "$SCRIPT_DIR/tools/compress-static.sh" "$tmp_static"
   tmp_tar=$(mktemp /tmp/wiki-static-XXXXXX.tar.gz)
-  run tar -czf "$tmp_tar" -C static .
+  run tar -czf "$tmp_tar" -C "$tmp_static" .
   remote_tar="/tmp/$(basename "$tmp_tar")"
   copy_to_target "$tmp_tar" "$remote_tar"
 
@@ -898,8 +901,9 @@ sudo systemctl restart wiki.service && \
 sudo rm -rf static.old '$remote_tar'"
 
   if [ "$DRY_RUN" != 1 ]; then
-    verify_static_md5 "$install_root"
+    verify_static_md5 "$install_root" "$tmp_static"
   fi
+  rm -rf "$tmp_static"
   rm -f "$tmp_tar"
 }
 
@@ -922,6 +926,7 @@ stage_bare_binary_tree() {
   mkdir -p "$staging/bin" "$staging/share/wiki/systemd"
   cp "$build_dir/wiki-server" "$build_dir/wiki-mcp" "$staging/bin/"
   cp -r static "$staging/static"
+  "$SCRIPT_DIR/tools/compress-static.sh" "$staging/static"
   cp config.example.toml "$staging/"
   cp systemd/wiki.service systemd/wiki.env.example "$staging/share/wiki/systemd/"
   cp systemd/wiki-backup.service systemd/wiki-backup.timer systemd/wiki-backup.env.example "$staging/share/wiki/systemd/"

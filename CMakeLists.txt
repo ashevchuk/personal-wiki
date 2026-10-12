@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 # Bump this on every user-visible fix/feature and record it in
 # CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
 # `wiki-mcp --version`) and reported as the MCP serverInfo.version.
-project(personal_wiki VERSION 0.2.0 LANGUAGES CXX)
+project(personal_wiki VERSION 0.2.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -371,6 +371,12 @@ endif()
 # ---------------------------------------------------------------------------
 install(TARGETS wiki-server wiki-mcp RUNTIME DESTINATION bin)
 install(DIRECTORY static/ DESTINATION static)
+# Drogon's StaticFileRouter serves any .gz sidecar it finds next to a
+# static file (setGzipStatic, on by default) instead of compressing on the
+# fly — see tools/compress-static.sh for why that matters for files like
+# the vendored circuitjs1/mermaid bundles. Runs against the INSTALLED copy,
+# not the repo's own static/, so nothing generated here is ever committed.
+install(CODE "execute_process(COMMAND \"${CMAKE_SOURCE_DIR}/tools/compress-static.sh\" \"\${CMAKE_INSTALL_PREFIX}/static\")")
 install(FILES config.example.toml DESTINATION .)
 install(FILES systemd/wiki.service systemd/wiki.env.example DESTINATION share/wiki/systemd)
 # wiki-backup.sh is a PROGRAMS install (not FILES) so it lands executable —

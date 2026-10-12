@@ -8,6 +8,21 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-12
+
+### Fixed
+
+- Static assets over Drogon's 200 KiB sendfile cutoff (the vendored
+  circuitjs1/mermaid/Toast UI Editor bundles) were served fully
+  uncompressed: `HttpResponseImpl::shouldBeCompressed()` refuses to
+  gzip/brotli a sendfile-backed response, and no `.gz`/`.br` sidecar
+  existed for `setGzipStatic`/`setBrStatic` to pick up. New
+  `tools/compress-static.sh` generates `.gz` sidecars for qualifying
+  files at install/staging time (hooked into `CMakeLists.txt`'s
+  `install()`, `tools/wiki-ops.sh`'s cross/cross-container staging, and
+  its static-only redeploy path) — nothing generated is committed to the
+  repo.
+
 ## [0.2.0] - 2026-10-12
 
 ### Added
