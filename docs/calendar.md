@@ -130,4 +130,4 @@ all three go through the same `CalendarQueries::eventsBetween` engine that
 due today" can call this directly, instead of reading documents one at a
 time and parsing front matter itself. Recurring series come back already
 expanded into concrete per-day occurrences, exactly like the HTTP API. See
-`docs/mcp.md`'s tool list for the full parameter shape.
+[`docs/mcp.md`](mcp.md)'s tool list for the full parameter shape.

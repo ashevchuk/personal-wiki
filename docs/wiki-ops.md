@@ -1,12 +1,14 @@
 # tools/wiki-ops.sh — Build and Deploy Reference
 
-`tools/wiki-ops.sh` automates the manual flow in `docs/sbc-deployment.md`
-— every subcommand below is a thin wrapper around an exact sequence from
-that doc (or, for `cross-container`/`container-arm`, newer infrastructure
-under `cross/` and the main `Dockerfile`, parameterized by
+`tools/wiki-ops.sh` automates the manual flow in
+[`docs/sbc-deployment.md`](sbc-deployment.md) — every subcommand below
+is a thin wrapper around an exact sequence from that doc (or, for
+`cross-container`/`container-arm`, newer infrastructure under `cross/`
+and the main `Dockerfile`, parameterized by
 `TARGETARCH`/`TARGETVARIANT`). This document is the detailed reference,
-with every flag and worked examples. `docs/sbc-deployment.md` stays the
-explanation of *what each step actually does and why* — read that first
+with every flag and worked examples.
+[`docs/sbc-deployment.md`](sbc-deployment.md) stays the explanation of
+*what each step actually does and why* — read that first
 if something here doesn't make sense, or if you're working without the
 script at all. `./tools/wiki-ops.sh help` always reflects the script's
 current, real flag set faster than this doc can — trust that output over
@@ -71,8 +73,9 @@ no flags at all — everything it needs is already answered.
 
 ## Which variant for which hardware
 
-This is the same decision as `docs/sbc-deployment.md`'s own table,
-mapped onto `build`/`deploy --variant=`:
+This is the same decision as
+[`docs/sbc-deployment.md`](sbc-deployment.md)'s own table, mapped onto
+`build`/`deploy --variant=`:
 
 | Target | Variant | Needs on the dev machine | Needs on the target | Build time |
 |---|---|---|---|---|
@@ -96,11 +99,12 @@ build native|cross|container|cross-container|container-arm [--skip-tests]
 build-time feature flags that exist
 (`CMakeLists.txt`'s `WIKI_ENABLE_LOCAL_EMBEDDINGS`/
 `WIKI_ENABLE_CLOUD_EMBEDDINGS`, both `OFF` by default — see
-`docs/embeddings.md`). They're independent, not mutually exclusive — you
-can pass either, both, or neither. There is **no** LLM/chat build flag:
-the Draft panel and sidebar Chat are always compiled in, and toggled
+[`docs/embeddings.md`](embeddings.md)). They're independent, not
+mutually exclusive — you can pass either, both, or neither. There is
+**no** LLM/chat build flag: the Draft panel and sidebar Chat are
+always compiled in, and toggled
 purely at runtime via `config.toml`'s `[llm]` section
-(`provider = "none"` hides them); see `docs/llm.md`.
+(`provider = "none"` hides them); see [`docs/llm.md`](llm.md).
 `WIKI_ENABLE_FUZZING` (the one other `option()` in `CMakeLists.txt`) is
 a dev-only `tests/fuzz/` flag that needs Clang specifically, and has no
 place in a build/deploy flow — it isn't exposed here.
@@ -118,8 +122,8 @@ warning saying exactly this — it's not a solved problem, just a flag
 that's now possible to pass.
 
 - **`native`** — `cmake configure+build(+ctest)` into `build/`, exactly
-  `docs/sbc-deployment.md`'s Path A. `--skip-tests` skips the `ctest`
-  run.
+  [`docs/sbc-deployment.md`](sbc-deployment.md)'s Path A. `--skip-tests`
+  skips the `ctest` run.
 - **`cross`** — Path B. Requires a native `build/` to already exist
   (specifically
   `build/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl` — run
@@ -306,9 +310,9 @@ command, using `WIKI_DEPLOY_SSH_PORT`.
    disabled — this is never piped or captured).
 
    It also asks about standalone TLS first (`WIKI_DEPLOY_TLS_ENABLED`,
-   see `docs/sbc-deployment.md`'s "Standalone TLS" section) — `true`
-   changes `listen_addr`'s own default to `0.0.0.0` and writes
-   `[tls].enabled`/`cert_file`/`key_file` from
+   see [`docs/sbc-deployment.md`](sbc-deployment.md)'s "Standalone TLS"
+   section) — `true` changes `listen_addr`'s own default to `0.0.0.0`
+   and writes `[tls].enabled`/`cert_file`/`key_file` from
    `WIKI_DEPLOY_TLS_CERT_FILE`/`WIKI_DEPLOY_TLS_KEY_FILE`, plus a
    reminder that `$WIKI_DEPLOY_SERVICE_USER` needs read access to those
    files (certbot's default `/etc/letsencrypt/{live,archive}` is
@@ -417,7 +421,8 @@ This is equivalent to, and replaces, the three-step
 `git pull` + `build cross` + `deploy --target=root@192.0.2.10 --variant=cross`
 sequence by hand — see `update` below. `deploy` here never gets
 `--first-time`, so `config.toml` and the admin account are left
-untouched, matching `docs/sbc-deployment.md`'s "Update" section.
+untouched, matching [`docs/sbc-deployment.md`](sbc-deployment.md)'s
+"Update" section.
 
 ### Example: build in Docker, deploy a bare binary (no Docker on the target)
 
@@ -561,9 +566,10 @@ whatever it already was for that line. **This does not touch
 `config.toml`** — actually setting `[embeddings].api_key_env`/
 `[llm].api_key_env` to the matching name is still yours to hand-edit
 (same "multi-line blocks left alone" boundary `cmd_configure_toml`
-already has, see `docs/sbc-deployment.md`). It also runs automatically
-as part of `deploy --first-time` (right before the service unit is
-installed, so the very first start already has the real key); re-run it
+already has, see [`docs/sbc-deployment.md`](sbc-deployment.md)). It
+also runs automatically as part of `deploy --first-time` (right before
+the service unit is installed, so the very first start already has the
+real key); re-run it
 standalone any time afterward to rotate a key. **Binary-style installs
 only** — a container deployment's real key lives in
 `docker-compose.yml`'s own `environment:`/`env_file:` instead; this
@@ -613,17 +619,18 @@ nginx-config subpath --base-path=/wiki [--out=FILE]
 ```
 
 Renders one of the two reverse-proxy blocks from
-`docs/sbc-deployment.md`'s "Reverse proxy" section to a file (or stdout
-without `--out`) — it never touches a target's live nginx config.
+[`docs/sbc-deployment.md`](sbc-deployment.md)'s "Reverse proxy" section
+to a file (or stdout without `--out`) — it never touches a target's
+live nginx config.
 **TLS certificate issuance itself (certbot etc.) stays entirely
 manual**: the rendered block references
 `/etc/letsencrypt/live/$domain/...` paths that must already exist. For
 the alternative where `wiki-server` terminates TLS itself instead of
 nginx, there's no separate subcommand — `deploy --first-time` asks
 about it directly and writes `config.toml`'s `[tls]` table (see the
-`deploy` section above, point 4, and `docs/sbc-deployment.md`'s
-"Standalone TLS" section); certbot issuance stays just as manual there
-too.
+`deploy` section above, point 4, and
+[`docs/sbc-deployment.md`](sbc-deployment.md)'s "Standalone TLS"
+section); certbot issuance stays just as manual there too.
 
 ```sh
 ./tools/wiki-ops.sh nginx-config root --domain=wiki.example.com --out=/tmp/wiki.conf
@@ -632,8 +639,9 @@ too.
 
 The `subpath` form also reminds you to set `[server].base_path` in
 `config.toml` and restart — this closes the one cold-start edge case
-client-side URL inference can't, see `docs/sbc-deployment.md`. Running
-the `root` form instead of `subpath` (moving to a dedicated
+client-side URL inference can't, see
+[`docs/sbc-deployment.md`](sbc-deployment.md). Running the `root` form
+instead of `subpath` (moving to a dedicated
 (sub)domain) means **removing** `base_path` from `config.toml` if it
 was set for a previous subpath deployment — there's one `config.toml`,
 one global value, baked into every served page regardless of which
@@ -658,8 +666,8 @@ adding to.
   copies (`bin.bak-*`, `static.bak-*`) on the target, never cleaned up
   automatically — restore one by hand (`mv` it back over the current
   one, `systemctl restart wiki.service`), same as
-  `docs/sbc-deployment.md` already documents. Nothing here automates
-  that walk back yet.
+  [`docs/sbc-deployment.md`](sbc-deployment.md) already documents.
+  Nothing here automates that walk back yet.
 - **This script assumes the target's login shell is bash.** It's
   verified against every real target this project has actually been
   deployed to (Debian/Ubuntu's default root/admin shell is bash), but

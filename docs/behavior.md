@@ -42,9 +42,9 @@ code is built, just what you'll notice as someone using or running it.
   connect *to* for search/read/write — it doesn't call out to one on its
   own. The only features that actually send content to anyone external
   are optional and off by default: cloud-based semantic search
-  (`docs/embeddings.md`) and the Draft/Chat assistant
-  (`docs/llm.md`), both of which need an API key you provide before
-  they do anything.
+  ([`docs/embeddings.md`](embeddings.md)) and the Draft/Chat assistant
+  ([`docs/llm.md`](llm.md)), both of which need an API key you provide
+  before they do anything.
 
 ## Writing content
 
@@ -79,5 +79,6 @@ code is built, just what you'll notice as someone using or running it.
   that `wiki-server` hasn't indexed yet, run `wiki-server` once (or
   `wiki-server --reindex`) first.
 
-See `docs/mcp.md` for the full tool list and setup, `docs/embeddings.md`
-and `docs/llm.md` for the optional AI features mentioned above.
+See [`docs/mcp.md`](mcp.md) for the full tool list and setup,
+[`docs/embeddings.md`](embeddings.md) and [`docs/llm.md`](llm.md) for the
+optional AI features mentioned above.

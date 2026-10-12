@@ -17,7 +17,7 @@ fail-safe-private by default:
 - **Local** (a small quantized model run in-process) keeps every
   document on the machine, at the cost of a heavier binary and a real
   cross-compilation story for the ARM/SBC deployment path (see
-  `sbc-deployment.md`).
+  [`sbc-deployment.md`](sbc-deployment.md)).
 
 Both are build-time-optional and independent of each other. A running
 binary is then configured at runtime to use zero, one, or in principle

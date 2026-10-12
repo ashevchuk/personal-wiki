@@ -7,7 +7,7 @@ redeploys, in one place.
 
 What this does **not** cover: connecting an MCP client to `wiki-mcp` once
 it's built and installed (tool schemas, `claude_desktop_config.json`, the
-remote HTTP transport's own protocol) — that's `docs/mcp.md`.
+remote HTTP transport's own protocol) — that's [`docs/mcp.md`](mcp.md).
 
 ## Automating this with tools/wiki-ops.sh
 
@@ -16,19 +16,19 @@ be driven by `tools/wiki-ops.sh` instead of typed by hand. It's one
 script where flags take priority over `deploy.local.env` (gitignored,
 never committed — copy `deploy.local.env.example` to start one), which
 takes priority over an interactive prompt, which takes priority over a
-hard default. `docs/wiki-ops.md` is the full reference (every flag,
-worked examples, known limitations); `./tools/wiki-ops.sh help` always
-reflects the current flag set fastest. The manual steps below stay the
-reference for what each one actually does under the hood, and for anyone
-without the script:
+hard default. [`docs/wiki-ops.md`](wiki-ops.md) is the full reference
+(every flag, worked examples, known limitations);
+`./tools/wiki-ops.sh help` always reflects the current flag set
+fastest. The manual steps below stay the reference for what each one
+actually does under the hood, and for anyone without the script:
 
 - `build native|cross|container|cross-container|container-arm|container-native`
   — Path A, Path B, the Docker image below, a containerized zig
   cross-toolchain (no local zig/vcpkg install needed), a multi-arch
   Docker image (amd64/arm64/armv7 via `--platform`), or a build done in
   Docker with the result deployed as a bare binary (no Docker on the
-  target — see `docs/wiki-ops.md`'s glibc-compatibility caveat before
-  pointing this at an old target).
+  target — see [`docs/wiki-ops.md`](wiki-ops.md)'s glibc-compatibility
+  caveat before pointing this at an old target).
 - `verify cross|container|cross-container|container-arm|container-native`
   — runs the qemu-arm-static / `docker run` checks that "Verify BEFORE
   shipping anything to real hardware" below requires, before anything
@@ -196,7 +196,7 @@ capable of it.
 | When to use | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device | Capable, modern-enough device (Pi 4/5, 64-bit OS) where you'd rather not manage a toolchain at all |
 | Toolchain | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ | Whatever `docker build` pulls in, entirely inside the image |
 | Output | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc | A container image; the device's own userland is untouched |
-| Verified live | Yes — see "Real-hardware verification status" above | Yes — see "Real-hardware verification status" above | `container-arm`/`container-native` yes, on real ARM SBC hardware — see above; the plain `container` variant not yet on ARM specifically (built/run and verified on x86_64 — see `docs/docker.md`) |
+| Verified live | Yes — see "Real-hardware verification status" above | Yes — see "Real-hardware verification status" above | `container-arm`/`container-native` yes, on real ARM SBC hardware — see above; the plain `container` variant not yet on ARM specifically (built/run and verified on x86_64 — see [`docs/docker.md`](docker.md)) |
 
 Pick **native** if the device is reasonably capable and current
 (Raspberry Pi OS Bookworm+, a recent Debian/Ubuntu ARM64). Pick
@@ -212,7 +212,7 @@ exactly the old/weak targets cross-compilation exists for — but if the
 device does qualify, it trades a from-scratch native build for a
 `docker build` and skips toolchain management entirely. The rest of this
 runbook covers only the native/cross-compile paths in detail; see
-`docs/docker.md` for the Docker one.
+[`docs/docker.md`](docker.md) for the Docker one.
 
 ## Path A — Native build, on the device
 
@@ -337,7 +337,7 @@ error, or if you need to target a CPU architecture other than armv7
 toolchain-level undertaking outside the scope of this guide — the
 `cross/` directory's own files are the place to start.
 
-## Install (Path A or B — Docker doesn't use this step, see `docs/docker.md`)
+## Install (Path A or B — Docker doesn't use this step, see [`docs/docker.md`](docker.md))
 
 ```sh
 sudo cmake --install build --prefix /opt/wiki       # or build-arm for a cross-build
@@ -434,7 +434,7 @@ nothing to configure manually for this.
 readers are `CloudEmbeddingProvider` and `CloudChatClient`: each calls
 `getenv()` on the variable named by `[embeddings].api_key_env` /
 `[llm].api_key_env` in `config.toml` (see `systemd/wiki.env.example`,
-`docs/embeddings.md`, `docs/llm.md`). For embeddings
+[`docs/embeddings.md`](embeddings.md), [`docs/llm.md`](llm.md)). For embeddings
 `provider = "none"`/`"local"` and LLM `provider = "none"`, or a loopback
 OpenAI-compatible server that doesn't authenticate, this file can stay
 absent. Admin credentials live in SQLite; sessions are unsigned random
@@ -587,10 +587,11 @@ cold-start edge case is acceptable to leave unstyled.
 ## Remote MCP
 
 This is an admin-toggleable, bearer-token-protected `POST /mcp` HTTP
-endpoint (see `docs/mcp.md`) that lets an MCP client reach this wiki over
-the network, instead of only through a local stdio spawn. Enabling or
-disabling it, write access, the token, and the IP allowlist are all
-managed live from the Account page — no `config.toml` edit, no restart.
+endpoint (see [`docs/mcp.md`](mcp.md)) that lets an MCP client reach
+this wiki over the network, instead of only through a local stdio
+spawn. Enabling or disabling it, write access, the token, and the IP
+allowlist are all managed live from the Account page — no `config.toml`
+edit, no restart.
 
 **This requires TLS in front of the app** — either the reverse proxy
 above, or `wiki-server`'s own standalone TLS mode (see "Standalone TLS
@@ -702,8 +703,8 @@ landed with `systemctl list-timers wiki-backup.timer` and
 
 `./tools/wiki-ops.sh update --target=HOST` runs this whole section in
 one command — `git pull`, the matching `build`, then a
-non-`--first-time` `deploy` — see `docs/wiki-ops.md`'s `update` section.
-What follows is the same sequence done by hand.
+non-`--first-time` `deploy` — see [`docs/wiki-ops.md`](wiki-ops.md)'s
+`update` section. What follows is the same sequence done by hand.
 
 ```sh
 cd wiki && git pull

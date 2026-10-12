@@ -38,11 +38,11 @@ current working directory, just like `wiki-server` does. If
 defaults.
 
 If you're running the whole app in Docker instead of natively (see
-`docs/docker.md`), the `command` above won't work as-is — there's no
-`wiki-mcp` binary sitting on the host filesystem to point at. Use
-`docker exec -i <container> wiki-mcp` as the `command` instead; see
-`docs/docker.md`'s "`wiki-mcp` from a container" section for the full
-config shape.
+[`docs/docker.md`](docker.md)), the `command` above won't work as-is —
+there's no `wiki-mcp` binary sitting on the host filesystem to point at.
+Use `docker exec -i <container> wiki-mcp` as the `command` instead; see
+[`docs/docker.md`](docker.md)'s "`wiki-mcp` from a container" section
+for the full config shape.
 
 **Important:** unlike `wiki-server`, `wiki-mcp` does **not** rescan the
 vault on every start — a full walk on every MCP client spawn would break
@@ -81,20 +81,22 @@ first MCP client connection.
 - **run_query**(query) — executes a ` ```query ` fenced block's body
   (the `key: value` DSL — `type`, `tag`, `folder`, `search`, `sort`,
   `order`, `limit`, `orphans`, `todos`, `links`; see
-  `docs/query-blocks.md` for the full grammar). Pass just the block body,
-  not the surrounding ` ``` ` fences. This runs through the exact same
-  `QueryBlocks::parseAndRun` engine as `GET /api/query` and the in-app
-  Draft/Chat agent's own `run_query_block` tool — one whitelisted DSL,
-  one implementation, identical behavior everywhere it's exposed. A typo
-  in a key comes back as an actual tool error, never a silent empty
+  [`docs/query-blocks.md`](query-blocks.md) for the full grammar). Pass
+  just the block body, not the surrounding ` ``` ` fences. This runs
+  through the exact same `QueryBlocks::parseAndRun` engine as
+  `GET /api/query` and the in-app Draft/Chat agent's own
+  `run_query_block` tool — one whitelisted DSL, one implementation,
+  identical behavior everywhere it's exposed. A typo in a key comes
+  back as an actual tool error, never a silent empty
   result.
 - **get_calendar_events**(start, end, folder?, tags?) — calendar events
   (documents with a `due` date) within an inclusive date range, using the
   same engine as `/calendar` and `GET /api/calendar` (see
-  `docs/calendar.md`). Recurring series come back already expanded into
-  concrete per-day occurrences — one row per occurrence, not one per
-  document. This is how an agent can answer "what's due today" or "what's
-  due this week" without reading every document in the vault and parsing
+  [`docs/calendar.md`](calendar.md)). Recurring series come back
+  already expanded into concrete per-day occurrences — one row per
+  occurrence, not one per document. This is how an agent can answer
+  "what's due today" or "what's due this week" without reading every
+  document in the vault and parsing
   front matter itself.
 
 All six tools are visibility-aware: a private document never appears in
@@ -242,12 +244,13 @@ able to toggle this without restarting the server:
   (treated as `/32` or `/128` respectively) — see `src/auth/CidrMatch.h`.
 
 **This requires TLS somewhere in front of the app.** That can be either
-a reverse proxy (see `docs/sbc-deployment.md`'s "Remote MCP" section for
-the exact nginx directives needed — including the ones the IP allowlist
-depends on to see the real client address rather than the proxy's own)
-or `wiki-server`'s own standalone TLS mode (`docs/sbc-deployment.md`'s
-"Standalone TLS" section — in that mode the IP allowlist sees the real
-client address directly, with no proxy header involved at all). The
+a reverse proxy (see [`docs/sbc-deployment.md`](sbc-deployment.md)'s
+"Remote MCP" section for the exact nginx directives needed — including
+the ones the IP allowlist depends on to see the real client address
+rather than the proxy's own) or `wiki-server`'s own standalone TLS mode
+([`docs/sbc-deployment.md`](sbc-deployment.md)'s "Standalone TLS"
+section — in that mode the IP allowlist sees the real client address
+directly, with no proxy header involved at all). The
 bearer token travels in a plain header, so without TLS somewhere between
 the client and this app, it's readable by anything sitting in between.
 

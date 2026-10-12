@@ -47,8 +47,9 @@ the wrong thing — if a block looks broken, check for a typo first.
 `search:` turns a query block from a structured filter into a real
 full-text search box, embedded on the page — the SAME search engine behind
 the site's own search page, hybrid semantic ranking included when the
-instance has embeddings configured (see `docs/embeddings.md`). A one-word
-`search: systemd` behaves like typing "systemd" into the search box; a
+instance has embeddings configured (see
+[`docs/embeddings.md`](embeddings.md)). A one-word `search: systemd`
+behaves like typing "systemd" into the search box; a
 longer phrase like `search: beet soup` benefits from semantic matching even
 when the exact words "beet soup" don't appear verbatim in the target
 document.
@@ -198,4 +199,4 @@ order: asc
 The same DSL runs in-process from the Draft and Chat agents
 (`run_query_block` → `QueryBlocks::parseAndRun`, admin, public+private —
 the agent is never anonymous). `get_document` still returns the fence
-source, not the table. See `docs/llm.md`.
+source, not the table. See [`docs/llm.md`](llm.md).

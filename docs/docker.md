@@ -6,7 +6,8 @@ real-hardware target this project is verified against (Debian 9 stretch,
 armv7, glibc 2.24, end-of-life) is too old to run a modern Docker Engine
 at all — it's also too old for native on-device compilation, which needs
 a C++20 toolchain the distro doesn't have. For that class of device, use
-the zig cross-compile path instead (see `docs/sbc-deployment.md`).
+the zig cross-compile path instead (see
+[`docs/sbc-deployment.md`](sbc-deployment.md)).
 
 This Dockerfile is for the "I want to try this right now" path: a
 desktop, a NAS, a cloud VM, or a Pi 4/5 running a 64-bit OS new enough to
@@ -16,8 +17,9 @@ Two of `tools/wiki-ops.sh`'s container variants have actually been run
 end-to-end on a real aarch64 SBC (an Orange Pi One Plus): `container-arm`
 (a `buildx`-built, QEMU-emulated ARM image) and `container-native` (a
 `buildx`-built `linux/arm64` binary, deployed as a plain systemd install
-rather than a running container). See `docs/sbc-deployment.md`'s
-"Real-hardware verification status" for exactly what each one exercises.
+rather than a running container). See
+[`docs/sbc-deployment.md`](sbc-deployment.md)'s "Real-hardware
+verification status" for exactly what each one exercises.
 The plain `container` variant below is verified on x86_64 only, not yet
 on ARM hardware specifically.
 
@@ -54,19 +56,20 @@ security suite; the build fails outright if it doesn't pass. That stage
 then runs `cmake --install` into a second, minimal
 `debian:bookworm-slim` runtime stage. vcpkg's Linux triplets are static by
 default, so the compiled binaries carry almost no dynamic dependencies
-beyond glibc itself (confirmed with `ldd` — see `CLAUDE.md`), which means
-the runtime image doesn't need a copy of the build toolchain sitting
-around.
+beyond glibc itself (confirmed with `ldd` — see
+[`CLAUDE.md`](../CLAUDE.md)), which means the runtime image doesn't
+need a copy of the build toolchain sitting around.
 
 One deliberate trick: the image copies in just `vcpkg.json` before the
 rest of the source, as its own Docker layer. That's a layer-caching
 optimization — editing a `.cpp` file and rebuilding the image does
 **not** re-trigger a from-scratch Drogon+OpenSSL+trantor build; only
 touching `vcpkg.json` itself does. The very first build is still slow
-regardless (this is the same dependency chain `docs/sbc-deployment.md`
-warns takes "substantially longer than on a desktop" on weak hardware —
-even on a normal x86_64 machine it's not instant). Every build after that
-reuses the cached layer.
+regardless (this is the same dependency chain
+[`docs/sbc-deployment.md`](sbc-deployment.md) warns takes "substantially
+longer than on a desktop" on weak hardware — even on a normal x86_64
+machine it's not instant). Every build after that reuses the cached
+layer.
 
 The container runs as a fixed, non-root `uid:gid 1000:1000`, which
 matches the default first-user id on most Linux distros — so a freshly
@@ -95,7 +98,7 @@ ANTHROPIC_API_KEY=...`, or compose's `environment:`) — never bake a key
 into the image itself. Leave them unset if you're using
 `provider = "none"`, embeddings `"local"`, or a loopback
 OpenAI-compatible server that doesn't authenticate. See
-`docs/embeddings.md` and `docs/llm.md`.
+[`docs/embeddings.md`](embeddings.md) and [`docs/llm.md`](llm.md).
 
 ## `wiki-mcp` from a container
 
@@ -114,15 +117,17 @@ spawn an arbitrary command can point straight at `docker exec`:
 }
 ```
 
-The remote (HTTP) MCP transport (`docs/mcp.md`) works exactly the same as
-always, through `wiki-server` itself — nothing Docker-specific is needed
-there; it's just another route on the same `8080` port already published.
+The remote (HTTP) MCP transport ([`docs/mcp.md`](mcp.md)) works exactly
+the same as always, through `wiki-server` itself — nothing
+Docker-specific is needed there; it's just another route on the same
+`8080` port already published.
 
 ## Backup
 
 `docker compose exec wiki wiki-server --reindex` works the same as the
 native path, and so does the one-click Web UI backup button (Account page
-— see `docs/sbc-deployment.md`'s "Backup" section), unmodified. The opt-in
+— see [`docs/sbc-deployment.md`](sbc-deployment.md)'s "Backup" section),
+unmodified. The opt-in
 `systemd` timer (`systemd/wiki-backup.*`) is systemd-specific and doesn't
 apply here, since `./vault_data` is just a plain host directory — back it
 up with whatever the host already uses for backups (cron + `tar`, restic,
