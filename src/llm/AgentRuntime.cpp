@@ -547,7 +547,8 @@ AgentRuntime::AgentRuntime(index::FtsSearch& search, vault::DocumentService& doc
                            std::string systemPrompt, std::string chatSystemPrompt,
                            index::AgentChatStore* chats, index::QueryBlocks* queryBlocks,
                            index::SnapshotStore* snapshots,
-                           index::CalendarQueries* calendarQueries)
+                           index::CalendarQueries* calendarQueries,
+                           index::GraphQueries* graph)
     : search_(search),
       documents_(documents),
       nav_(nav),
@@ -558,6 +559,7 @@ AgentRuntime::AgentRuntime(index::FtsSearch& search, vault::DocumentService& doc
       queryBlocks_(queryBlocks),
       snapshots_(snapshots),
       calendarQueries_(calendarQueries),
+      graph_(graph),
       systemPrompt_(resolveSystemPrompt(std::move(systemPrompt))),
       chatSystemPrompt_(resolveChatSystemPrompt(std::move(chatSystemPrompt))) {}
 
@@ -611,7 +613,9 @@ nlohmann::json AgentRuntime::toolSchemas(const std::string& kind) {
        {{"name", "get_document"},
         {"description",
          "Fetch one document's full markdown body and metadata by vault "
-         "path or id."},
+         "path or id. Includes its direct [[wiki-link]] neighbors: Links "
+         "(outgoing) and Backlinks (other documents linking to this one) "
+         "-- follow one with another get_document call."},
         {"parameters",
          {{"type", "object"},
           {"properties", {{"id_or_path", strProp("Document path or uuid")}}},
@@ -1343,11 +1347,28 @@ std::string AgentRuntime::executeTool(Session& session, const std::string& name,
       if (i) out += ", ";
       out += record->frontMatter.tags[i];
     }
-    out += "\n\n---\n\n";
+    out += "\n";
+    if (graph_) {
+      if (const auto links = graph_->directLinks(record->path, /*includePrivate=*/true)) {
+        out += "Links: ";
+        for (size_t i = 0; i < links->outgoing.size(); ++i) {
+          if (i) out += ", ";
+          out += links->outgoing[i];
+        }
+        out += "\n";
+        out += "Backlinks: ";
+        for (size_t i = 0; i < links->incoming.size(); ++i) {
+          if (i) out += ", ";
+          out += links->incoming[i];
+        }
+        out += "\n";
+      }
+    }
+    out += "\n---\n\n";
     out += record->body;
     {
       std::lock_guard<std::mutex> lock(mu_);
-      appendEventLocked(session, 
+      appendEventLocked(session,
           AgentEvent{"tool", nlohmann::json{{"name", name}, {"detail", record->path}}});
     }
     audit(name, record->path, true, "");

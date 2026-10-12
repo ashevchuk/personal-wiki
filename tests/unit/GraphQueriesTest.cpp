@@ -4,8 +4,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace wikicore::index;
@@ -319,4 +321,86 @@ TEST_CASE("GraphQueries::around treats a LIKE-wildcard path as a literal miss, "
   GraphQueries graph(database);
   REQUIRE_FALSE(graph.around("%", true).has_value());
   REQUIRE_FALSE(graph.around("_.md", true).has_value());
+}
+
+TEST_CASE("GraphQueries::directLinks returns nullopt for a missing document",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public"));
+
+  GraphQueries graph(database);
+  REQUIRE_FALSE(graph.directLinks("missing.md", true).has_value());
+}
+
+TEST_CASE("GraphQueries::directLinks returns nullopt for a private document "
+          "to an anonymous caller, the same as a miss",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("priv.md", "private"));
+
+  GraphQueries graph(database);
+  REQUIRE_FALSE(graph.directLinks("priv.md", false).has_value());
+  REQUIRE(graph.directLinks("priv.md", true).has_value());
+}
+
+TEST_CASE("GraphQueries::directLinks separates outgoing from incoming, "
+          "one hop only (not the full component)",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", "See [[b]]."));
+  updater.upsertOne(makeEntry("b.md", "public", "See [[c]]."));
+  updater.upsertOne(makeEntry("c.md", "public"));
+
+  GraphQueries graph(database);
+  auto b = graph.directLinks("b.md", true);
+  REQUIRE(b.has_value());
+  REQUIRE(b->incoming == std::vector<std::string>{"a.md"});
+  REQUIRE(b->outgoing == std::vector<std::string>{"c.md"});
+  // a.md is two hops from b.md via c.md -- must not appear on either side.
+  REQUIRE_FALSE(std::count(b->incoming.begin(), b->incoming.end(), "c.md"));
+}
+
+TEST_CASE("GraphQueries::directLinks excludes a red link (target document "
+          "doesn't exist)",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", "See [[nonexistent]]."));
+
+  GraphQueries graph(database);
+  auto a = graph.directLinks("a.md", true);
+  REQUIRE(a.has_value());
+  REQUIRE(a->outgoing.empty());
+}
+
+TEST_CASE("GraphQueries::directLinks never leaks a private neighbor to an "
+          "anonymous caller, from either direction",
+          "[GraphQueries]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("pub-source.md", "public", "See [[priv-target]]."));
+  updater.upsertOne(makeEntry("priv-target.md", "private", "See [[pub-mid]]."));
+  updater.upsertOne(makeEntry("pub-mid.md", "public"));
+
+  GraphQueries graph(database);
+  auto fromPub = graph.directLinks("pub-source.md", false);
+  REQUIRE(fromPub.has_value());
+  REQUIRE(fromPub->outgoing.empty());
+
+  auto admin = graph.directLinks("pub-source.md", true);
+  REQUIRE(admin.has_value());
+  REQUIRE(admin->outgoing == std::vector<std::string>{"priv-target.md"});
 }

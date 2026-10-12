@@ -8,6 +8,16 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-12
+
+### Added
+
+- `get_document` (both the stdio and remote-HTTP MCP transports) now
+  includes a document's direct `[[wiki-link]]` neighbors — `Links`
+  (outgoing) and `Backlinks` (incoming) — one hop only, so an agent can
+  follow one with another `get_document` call instead of re-deriving the
+  link graph itself from raw markdown text. New `GraphQueries::directLinks`.
+
 ## [0.1.0] - 2026-10-09
 
 First tracked version. Everything before this point shipped without a

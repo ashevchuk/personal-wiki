@@ -1,10 +1,12 @@
 # Personal Wiki
 
 A personal knowledge base where plain markdown files on disk are the only
-source of truth. On top of that you get full-text search, a WYSIWYG/markdown
-editor, public/private visibility per document, and an MCP server so Claude
-(or any MCP client) can search, read, and — if you allow it — write your
-notes directly.
+source of truth — and, through its MCP server, a persistent long-term
+memory an LLM agent can search, read, and — if you allow it — write to
+directly, across sessions. `[[wiki-links]]` with automatic, queryable
+backlinks mean an agent can follow the knowledge graph itself instead of
+re-deriving it from raw text. On top of that you get full-text search, a
+WYSIWYG/markdown editor, and public/private visibility per document.
 
 It ships as one C++ binary with no database server and no runtime dependency
 beyond what's already bundled in. It's built to run comfortably on a
@@ -192,8 +194,11 @@ client spawns it directly, with no server round-trip involved. Add it to
 }
 ```
 
-Six read tools are always available: `search_documents`, `get_document`,
-`list_tags`, `list_documents`, `run_query`, `get_calendar_events`.
+Six read tools are always available: `search_documents`, `get_document`
+(includes a document's direct `[[wiki-link]]` neighbors — outgoing `Links`
+and incoming `Backlinks` — so an agent can follow the knowledge graph
+itself, one hop at a time, instead of re-deriving it from raw markdown
+text), `list_tags`, `list_documents`, `run_query`, `get_calendar_events`.
 `create_document`/`update_document` exist too, but only once
 `[mcp].write_access` is turned on in `config.toml` (off by default); every
 write attempt, successful or not, lands in an audit log.

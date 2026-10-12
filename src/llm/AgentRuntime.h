@@ -3,6 +3,7 @@
 #include "index/AgentChatStore.h"
 #include "index/CalendarQueries.h"
 #include "index/FtsSearch.h"
+#include "index/GraphQueries.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
@@ -85,7 +86,8 @@ class AgentRuntime {
                index::AgentChatStore* chats = nullptr,
                index::QueryBlocks* queryBlocks = nullptr,
                index::SnapshotStore* snapshots = nullptr,
-               index::CalendarQueries* calendarQueries = nullptr);
+               index::CalendarQueries* calendarQueries = nullptr,
+               index::GraphQueries* graph = nullptr);
   ~AgentRuntime();
 
   AgentRuntime(const AgentRuntime&) = delete;
@@ -146,6 +148,7 @@ class AgentRuntime {
   index::QueryBlocks* queryBlocks_ = nullptr;
   index::SnapshotStore* snapshots_ = nullptr;
   index::CalendarQueries* calendarQueries_ = nullptr;
+  index::GraphQueries* graph_ = nullptr;
   std::string systemPrompt_;
   std::string chatSystemPrompt_;
 

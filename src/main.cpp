@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
                                             indexUpdater, &mcpAuditLog, chatClient.get(),
                                             cfg.llmSystemPrompt, cfg.llmChatSystemPrompt,
                                             &agentChatStore, &queryBlocks, &snapshotStore,
-                                            &calendarQueries);
+                                            &calendarQueries, &graphQueries);
 
   // The db is a disposable cache, never assumed correct on faith — rescan
   // unconditionally at every startup so the index reflects whatever's
@@ -609,7 +609,8 @@ int main(int argc, char** argv) {
                                                   remoteMcpRateLimiter, ftsSearch, navQueries,
                                                   indexUpdater, documentService, attachmentService,
                                                   mcpUploadStaging, mcpAuditLog, queryBlocks,
-                                                  calendarQueries, /*trustProxyHeaders=*/!cfg.tls.enabled);
+                                                  calendarQueries, graphQueries,
+                                                  /*trustProxyHeaders=*/!cfg.tls.enabled);
   wikicore::controllers::registerAgentRoutes(drogon::app(), agentRuntime);
 
   if (cfg.tls.enabled) {

@@ -3,6 +3,7 @@
 #include "config/AppConfig.h"
 #include "index/CalendarQueries.h"
 #include "index/FtsSearch.h"
+#include "index/GraphQueries.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
@@ -50,6 +51,7 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
                vault::AttachmentService& attachments, index::McpAuditLog& auditLog,
                index::QueryBlocks& queryBlocks, index::CalendarQueries& calendarQueries,
-               bool includePrivate, bool writeAccess, const config::AppConfig& cfg);
+               index::GraphQueries& graph, bool includePrivate, bool writeAccess,
+               const config::AppConfig& cfg);
 
 }  // namespace wikicore::mcp

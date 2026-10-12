@@ -57,9 +57,13 @@ first MCP client connection.
   (FTS5, BM25 ranking), returning a snippet with matches highlighted as
   `**term**` (markdown bold, not HTML — an MCP client reads text, it
   doesn't render a page).
-- **get_document**(id_or_path) — the full document body plus metadata.
-  Accepts either a vault-relative path (`notes/foo.md`) or a document
-  `id` (a UUID), resolved through the index either way.
+- **get_document**(id_or_path) — the full document body plus metadata,
+  including its direct `[[wiki-link]]` neighbors (`Links`: outgoing,
+  `Backlinks`: other documents linking to this one — one hop only, so a
+  client follows one with another `get_document` call rather than
+  getting a pre-walked subgraph). Accepts either a vault-relative path
+  (`notes/foo.md`) or a document `id` (a UUID), resolved through the
+  index either way.
 - **list_tags**() — every tag with its document count, e.g.
   `[{"tag": "lang/cpp", "count": 3}, {"tag": "meta", "count": 12}, ...]`.
   A `/` inside a tag has no special meaning to this tool, or to anything

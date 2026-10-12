@@ -327,7 +327,7 @@ Json::Value handleSearchDocuments(FtsSearch& search, const Json::Value& args) {
 }
 
 Json::Value handleGetDocument(DocumentService& documents, IndexUpdater& indexUpdater,
-                               const Json::Value& args) {
+                               GraphQueries& graph, const Json::Value& args) {
   if (!args.isMember("id_or_path") || !args["id_or_path"].isString()) {
     return toolTextResult("missing 'id_or_path'", true);
   }
@@ -364,7 +364,27 @@ Json::Value handleGetDocument(DocumentService& documents, IndexUpdater& indexUpd
   out += "\n";
   out += "Visibility: " + record->frontMatter.visibility + "\n";
   out += "Type: " + record->frontMatter.type + "\n";
-  out += "Updated: " + record->frontMatter.updated + "\n\n---\n\n";
+  out += "Updated: " + record->frontMatter.updated + "\n";
+
+  // Same one-hop-both-directions shape as the stdio transport's
+  // get_document (McpServer.cpp) -- kept in sync by hand, see this file's
+  // own header comment on why this is a separate implementation.
+  if (const auto links = graph.directLinks(record->path, kIncludePrivate)) {
+    out += "Links: ";
+    for (size_t i = 0; i < links->outgoing.size(); ++i) {
+      if (i) out += ", ";
+      out += links->outgoing[i];
+    }
+    out += "\n";
+    out += "Backlinks: ";
+    for (size_t i = 0; i < links->incoming.size(); ++i) {
+      if (i) out += ", ";
+      out += links->incoming[i];
+    }
+    out += "\n";
+  }
+
+  out += "\n---\n\n";
   out += record->body;
   return toolTextResult(out);
 }
@@ -695,11 +715,12 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
                               IndexUpdater& indexUpdater, DocumentService& documents,
                               AttachmentService& attachments, McpUploadStaging& mcpUploads,
                               McpAuditLog& auditLog, QueryBlocks& queryBlocks,
-                              CalendarQueries& calendarQueries, bool trustProxyHeaders) {
+                              CalendarQueries& calendarQueries, GraphQueries& graph,
+                              bool trustProxyHeaders) {
   app.registerHandler(
       "/mcp",
       [&remoteConfig, &rateLimiter, &search, &nav, &indexUpdater, &documents, &attachments,
-       &mcpUploads, &auditLog, &queryBlocks, &calendarQueries,
+       &mcpUploads, &auditLog, &queryBlocks, &calendarQueries, &graph,
        trustProxyHeaders](const HttpRequestPtr& req,
                    std::function<void(const HttpResponsePtr&)>&& callback) {
         // Feature off -> plain 404, indistinguishable from "this route
@@ -807,7 +828,7 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           if (toolName == "search_documents") {
             result = handleSearchDocuments(search, args);
           } else if (toolName == "get_document") {
-            result = handleGetDocument(documents, indexUpdater, args);
+            result = handleGetDocument(documents, indexUpdater, graph, args);
           } else if (toolName == "list_tags") {
             result = handleListTags(nav);
           } else if (toolName == "list_documents") {

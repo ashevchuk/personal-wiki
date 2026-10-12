@@ -367,8 +367,9 @@ tool_handler makeSearchDocumentsHandler(index::FtsSearch& search,
 
 tool_handler makeGetDocumentHandler(vault::DocumentService& documents,
                                             index::IndexUpdater& indexUpdater,
+                                            index::GraphQueries& graph,
                                             bool includePrivate) {
-  return [&documents, &indexUpdater, includePrivate](
+  return [&documents, &indexUpdater, &graph, includePrivate](
              const json& params) -> json {
     if (!params.contains("id_or_path") || !params["id_or_path"].is_string()) {
       throw mcp_exception(error_code::invalid_params,
@@ -408,7 +409,27 @@ tool_handler makeGetDocumentHandler(vault::DocumentService& documents,
     out += "\n";
     out += "Visibility: " + record->frontMatter.visibility + "\n";
     out += "Type: " + record->frontMatter.type + "\n";
-    out += "Updated: " + record->frontMatter.updated + "\n\n---\n\n";
+    out += "Updated: " + record->frontMatter.updated + "\n";
+
+    // Direct neighbors only (one hop, both directions) -- lets an agent
+    // decide for itself whether to follow a link via another get_document
+    // call, rather than pre-walking a subgraph it may not want.
+    if (const auto links = graph.directLinks(record->path, includePrivate)) {
+      out += "Links: ";
+      for (size_t i = 0; i < links->outgoing.size(); ++i) {
+        if (i) out += ", ";
+        out += links->outgoing[i];
+      }
+      out += "\n";
+      out += "Backlinks: ";
+      for (size_t i = 0; i < links->incoming.size(); ++i) {
+        if (i) out += ", ";
+        out += links->incoming[i];
+      }
+      out += "\n";
+    }
+
+    out += "\n---\n\n";
     out += record->body;
     return textContent(out);
   };
@@ -720,7 +741,8 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
                vault::AttachmentService& attachments, index::McpAuditLog& auditLog,
                index::QueryBlocks& queryBlocks, index::CalendarQueries& calendarQueries,
-               bool includePrivate, bool writeAccess, const config::AppConfig& cfg) {
+               index::GraphQueries& graph, bool includePrivate, bool writeAccess,
+               const config::AppConfig& cfg) {
   LazyEmbeddingProvider lazyProvider(indexUpdater, cfg);
 
   server srv(serverName, serverVersion);
@@ -742,11 +764,15 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
       tool_builder("get_document")
           .with_description(
               "Fetch one document's full markdown body and metadata, by "
-              "its vault-relative path or its id (uuid).")
+              "its vault-relative path or its id (uuid). Includes its "
+              "direct [[wiki-link]] neighbors: Links (outgoing) and "
+              "Backlinks (other documents linking to this one) -- follow "
+              "one with another get_document call.")
           .with_string_param("id_or_path", "Document path or id", true)
           .build();
-  srv.register_tool(getDocumentTool,
-                     makeGetDocumentHandler(documents, indexUpdater, includePrivate));
+  srv.register_tool(
+      getDocumentTool,
+      makeGetDocumentHandler(documents, indexUpdater, graph, includePrivate));
 
   tool listTagsTool =
       tool_builder("list_tags")

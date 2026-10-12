@@ -4,6 +4,7 @@
 #include "auth/RateLimiter.h"
 #include "index/CalendarQueries.h"
 #include "index/FtsSearch.h"
+#include "index/GraphQueries.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
@@ -63,6 +64,6 @@ void registerRemoteMcpRoutes(drogon::HttpAppFramework& app,
                               wikicore::index::McpAuditLog& auditLog,
                               wikicore::index::QueryBlocks& queryBlocks,
                               wikicore::index::CalendarQueries& calendarQueries,
-                              bool trustProxyHeaders);
+                              wikicore::index::GraphQueries& graph, bool trustProxyHeaders);
 
 }  // namespace wikicore::controllers

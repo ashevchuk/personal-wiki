@@ -25,6 +25,11 @@ struct GraphNeighborhood {
   std::vector<GraphEdge> edges;
 };
 
+struct DirectLinks {
+  std::vector<std::string> outgoing;  // this document's own [[wiki-link]] targets
+  std::vector<std::string> incoming;  // documents that link TO this one (backlinks)
+};
+
 // Backs both the full graph page (`nodes`/`edges`) and the per-document
 // local graph widget (`around`). Same fail-safe-private visibility
 // gating as NavQueries throughout: includePrivate is the caller's own
@@ -69,6 +74,16 @@ class GraphQueries {
   // correct local graph, not a bug.
   std::optional<GraphNeighborhood> around(const std::string& centerPath,
                                           bool includePrivate) const;
+
+  // One hop only, both directions, paths only -- the shape an MCP tool
+  // wants (let an agent decide whether to follow a link, rather than
+  // handing it a pre-walked subgraph). Same "red link" exclusion as
+  // edges(): an outgoing target with no matching document is omitted,
+  // never invented as a placeholder. std::nullopt if `path` is not a
+  // document visible to this caller, same existence-hiding contract as
+  // around().
+  std::optional<DirectLinks> directLinks(const std::string& path,
+                                         bool includePrivate) const;
 
  private:
   Database& db_;

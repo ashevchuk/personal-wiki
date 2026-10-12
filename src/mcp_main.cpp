@@ -21,6 +21,7 @@
 #include "index/CalendarQueries.h"
 #include "index/Database.h"
 #include "index/FtsSearch.h"
+#include "index/GraphQueries.h"
 #include "index/IndexUpdater.h"
 #include "index/McpAuditLog.h"
 #include "index/NavQueries.h"
@@ -73,6 +74,7 @@ int main(int argc, char** argv) {
   wikicore::index::McpAuditLog auditLog(db);
   wikicore::index::QueryBlocks queryBlocks(db, search);
   wikicore::index::CalendarQueries calendarQueries(db);
+  wikicore::index::GraphQueries graphQueries(db);
 
   // "admin" (the AppConfig default) sees public+private; only an exact
   // "public" restricts it — this is the opposite direction from the HTTP
@@ -83,7 +85,8 @@ int main(int argc, char** argv) {
 
   wikicore::mcp::runServer("personal-wiki", wikicore::versionString(), search, nav,
                             indexUpdater, documents, attachments, auditLog, queryBlocks,
-                            calendarQueries, includePrivate, cfg.mcpWriteAccess, cfg);
+                            calendarQueries, graphQueries, includePrivate, cfg.mcpWriteAccess,
+                            cfg);
 
   return 0;
 }

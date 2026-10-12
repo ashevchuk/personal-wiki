@@ -116,4 +116,43 @@ std::optional<GraphNeighborhood> GraphQueries::around(
   return out;
 }
 
+std::optional<DirectLinks> GraphQueries::directLinks(const std::string& path,
+                                                      bool includePrivate) const {
+  const int64_t vis = includePrivate ? 1 : 0;
+
+  {
+    Statement stmt(db_.handle(),
+                    "SELECT 1 FROM documents "
+                    "WHERE path = ?1 AND (?2 = 1 OR visibility = 'public');");
+    stmt.bind(1, path);
+    stmt.bind(2, vis);
+    if (!stmt.step()) return std::nullopt;
+  }
+
+  DirectLinks out;
+  {
+    Statement stmt(db_.handle(),
+                    "SELECT tgt.path FROM document_links dl "
+                    "JOIN documents src ON src.rowid_id = dl.source_rowid "
+                    "JOIN documents tgt ON tgt.path = dl.target_path "
+                    "WHERE src.path = ?1 AND (?2 = 1 OR tgt.visibility = 'public') "
+                    "ORDER BY tgt.path;");
+    stmt.bind(1, path);
+    stmt.bind(2, vis);
+    while (stmt.step()) out.outgoing.push_back(stmt.columnText(0));
+  }
+  {
+    Statement stmt(db_.handle(),
+                    "SELECT src.path FROM document_links dl "
+                    "JOIN documents src ON src.rowid_id = dl.source_rowid "
+                    "JOIN documents tgt ON tgt.path = dl.target_path "
+                    "WHERE tgt.path = ?1 AND (?2 = 1 OR src.visibility = 'public') "
+                    "ORDER BY src.path;");
+    stmt.bind(1, path);
+    stmt.bind(2, vis);
+    while (stmt.step()) out.incoming.push_back(stmt.columnText(0));
+  }
+  return out;
+}
+
 }  // namespace wikicore::index
