@@ -58,8 +58,12 @@ actually does under the hood, and for anyone without the script:
 - `systemd install --target=HOST --with-backup-timer` / `systemd status`
   — the "systemd" and "Backup" sections below as a standalone,
   re-runnable, idempotent step.
-- `setup-admin --target=HOST` — just `--create-admin`, keeping a real
-  interactive TTY (never piped or scripted) for the password prompt.
+- `setup-admin --target=HOST` — just `--create-admin`, on a real
+  interactive TTY by default for the password prompt; an explicit
+  opt-in (`WIKI_DEPLOY_ADMIN_USERNAME`/`WIKI_DEPLOY_SECRET_ADMIN_PASSWORD`
+  plus `--yes`) scripts it instead — see `docs/wiki-ops.md`'s
+  `setup-admin` section for the bootstrap-password caveat that comes
+  with doing that.
 
 ## Real-hardware verification status
 

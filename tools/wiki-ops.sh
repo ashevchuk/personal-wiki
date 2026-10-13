@@ -104,21 +104,38 @@ resolve_optional() {
   printf -v "$__outvar" '%s' "$value"
 }
 
-# resolve_secret OUTVAR FLAGVAL PROMPT — never shows a default, never
-# echoes input. Used only for values that must reach a target's wiki.env,
-# never stored in deploy.local.env itself.
+# resolve_secret OUTVAR FLAGVAL PROMPT [ENVNAME] — never shows a default,
+# never echoes input. Used only for values that must reach a target's
+# wiki.env, never stored in deploy.local.env itself.
+#
+# ENVNAME, if given, is checked only when there's no TTY (a CI runner):
+# the named env var's value (injected by the CI's own secret store, e.g.
+# GitHub Actions `env:` from `secrets.*`) is read directly from this
+# process's environment. This is deliberately NOT the same thing as the
+# flag path above — a flag's value sits in argv, visible to any local
+# user via `ps aux` and shell history; a dedicated env var set only for
+# this invocation isn't. It's the one channel `cmd_configure_secrets`'s
+# own comment doesn't rule out when it says a key must never flow through
+# a flag, a committed file, or this script's own trace output.
 resolve_secret() {
-  local __outvar=$1 flagval=$2 prompt=$3
-  local value
+  local __outvar=$1 flagval=$2 prompt=$3 envname=${4:-}
+  # Named __value, not value: bash's dynamic scoping means printf -v
+  # below binds to the NEAREST `local` of that name — if this were
+  # called `value` and a caller also has `local value` (the outvar name
+  # this function is actually used with), this function's own local
+  # wins and the caller's variable is left unassigned.
+  local __value
   if [ -n "$flagval" ]; then
-    value=$flagval
+    __value=$flagval
   elif [ -t 0 ]; then
-    read -rs -p "$prompt: " value
+    read -rs -p "$prompt: " __value
     echo >&2
+  elif [ -n "$envname" ] && [ -n "${!envname:-}" ]; then
+    __value=${!envname}
   else
     die "no value for $__outvar and no TTY to prompt for one"
   fi
-  printf -v "$__outvar" '%s' "$value"
+  printf -v "$__outvar" '%s' "$__value"
 }
 
 load_deploy_config() {
@@ -795,6 +812,10 @@ cmd_configure_toml() {
 # docs/sbc-deployment.md). A value entered here NEVER touches
 # deploy.local.env, a flag, or this script's own trace output — see
 # resolve_secret()/remote_sh_secret()'s own comments for exactly how.
+# Non-interactively (no TTY), resolve_secret() falls back to an env var
+# named WIKI_DEPLOY_SECRET_<name> (e.g. WIKI_DEPLOY_SECRET_ANTHROPIC_API_KEY
+# for a name of ANTHROPIC_API_KEY) — set that from a CI runner's own
+# secret store to run `deploy --first-time` unattended.
 # ============================================================
 
 cmd_configure_secrets() {
@@ -818,7 +839,7 @@ cmd_configure_secrets() {
     [ -n "${seen[$name]:-}" ] && continue
     seen[$name]=1
 
-    resolve_secret value "" "value for $name (written to /etc/opt/wiki/wiki.env on the target; leave blank to skip/leave unchanged)"
+    resolve_secret value "" "value for $name (written to /etc/opt/wiki/wiki.env on the target; leave blank to skip/leave unchanged)" "WIKI_DEPLOY_SECRET_$name"
     if [ -z "$value" ]; then
       log "skipped $name — wiki.env left unchanged for this name"
       continue
@@ -838,15 +859,41 @@ sudo chmod 600 /etc/opt/wiki/wiki.env" \
 }
 
 # ============================================================
-# SECTION: first-time admin account (real interactive TTY, never scripted)
+# SECTION: first-time admin account (real interactive TTY by default;
+# an explicit opt-in env pair below is the only way around that)
 # ============================================================
 
+# wiki-server --create-admin itself already tolerates a non-TTY stdin
+# fine (src/main.cpp's readPasswordFromTerminal only skips disabling
+# terminal echo when isatty() is false — it still reads the line either
+# way), so a scripted run needs no change on the binary side. The `-t`
+# ssh flag below exists purely for the interactive case; dropping it for
+# the piped-stdin case is what makes this work non-interactively at all.
+#
+# WIKI_DEPLOY_ADMIN_USERNAME + WIKI_DEPLOY_SECRET_ADMIN_PASSWORD (both
+# required together, same WIKI_DEPLOY_SECRET_* convention as the API
+# key env vars above) are this account's bootstrap credentials, not a
+# long-term one — --create-admin overwrites the single admin row
+# unconditionally, with no partial-recovery path, so an automated run
+# should rotate this password through the Account page right after,
+# rather than leaving the value a CI secret store holds indefinitely as
+# the actual login.
 cmd_setup_admin() {
   local install_root=$1 variant=$2
   case "$variant" in
     container|container-arm)
       die "setup-admin assumes a binary install — '$variant' runs via Docker; create the admin account with: docker compose exec wiki wiki-server --create-admin" ;;
   esac
+
+  if [ -n "${WIKI_DEPLOY_ADMIN_USERNAME:-}" ] && [ -n "${WIKI_DEPLOY_SECRET_ADMIN_PASSWORD:-}" ]; then
+    confirm_or_die "create/overwrite the admin account '$WIKI_DEPLOY_ADMIN_USERNAME' non-interactively from WIKI_DEPLOY_SECRET_ADMIN_PASSWORD?"
+    log "non-interactive setup-admin for '$WIKI_DEPLOY_ADMIN_USERNAME' — treat this as a bootstrap password and rotate it via the Account page afterward, not as the credential's permanent home"
+    remote_sh_secret \
+      "cd '$install_root' && sudo -u '$WIKI_DEPLOY_SERVICE_USER' ./bin/wiki-server --create-admin" \
+      "$(printf '%s\n%s\n%s' "$WIKI_DEPLOY_ADMIN_USERNAME" "$WIKI_DEPLOY_SECRET_ADMIN_PASSWORD" "$WIKI_DEPLOY_SECRET_ADMIN_PASSWORD")"
+    return
+  fi
+
   if [ -n "${WIKI_DEPLOY_HOST:-}" ]; then
     run ssh -t -p "$WIKI_DEPLOY_SSH_PORT" "$WIKI_DEPLOY_HOST" \
       "cd '$install_root' && sudo -u '$WIKI_DEPLOY_SERVICE_USER' ./bin/wiki-server --create-admin"
@@ -1178,12 +1225,18 @@ removes the hand-typing and enforces the order).
            EXISTING deployment — config.toml/vault/admin account untouched;
            --static-only skips straight to static-redeploy instead)
   static-redeploy [--target=HOST] [--variant=V] [--dry-run]
-  setup-admin [--target=HOST] [--variant=V]
+  setup-admin [--target=HOST] [--variant=V] [--yes]
+          (prompts on a real TTY; non-interactively, set BOTH
+           WIKI_DEPLOY_ADMIN_USERNAME and WIKI_DEPLOY_SECRET_ADMIN_PASSWORD
+           plus --yes — treat that password as bootstrap-only and rotate
+           it via the Account page right after)
   secrets [--target=HOST] [--variant=V]
           (prompts, echo disabled, for each of WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV /
            WIKI_DEPLOY_LLM_API_KEY_ENV's real VALUE and writes it to the target's
            /etc/opt/wiki/wiki.env — also runs automatically as part of
-           deploy --first-time; re-run standalone any time to rotate a key)
+           deploy --first-time; re-run standalone any time to rotate a key;
+           non-interactively, falls back to an env var named
+           WIKI_DEPLOY_SECRET_<name>, e.g. WIKI_DEPLOY_SECRET_ANTHROPIC_API_KEY)
   systemd install [--target=HOST] [--variant=V] [--with-backup-timer] [--yes] [--dry-run]
   systemd status  [--target=HOST]
   nginx-config root --domain=D [--out=FILE]

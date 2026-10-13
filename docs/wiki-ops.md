@@ -523,7 +523,7 @@ matching every other optional resolver value). Rebuild and
 ## `setup-admin`
 
 ```
-setup-admin [--target=HOST] [--variant=V]
+setup-admin [--target=HOST] [--variant=V] [--yes]
 ```
 
 Just the `--create-admin` step on its own, with the same real-TTY
@@ -536,6 +536,24 @@ manual doc says). **Binary-style installs only** — this assumes
 resolves to `container`/`container-arm`. Use
 `docker compose exec wiki wiki-server --create-admin` for those
 instead.
+
+**Non-interactive path, for an unattended first deploy.** Set both
+`WIKI_DEPLOY_ADMIN_USERNAME` and `WIKI_DEPLOY_SECRET_ADMIN_PASSWORD`
+(same `WIKI_DEPLOY_SECRET_*` convention `secrets` below uses) plus
+`--yes`, and `setup-admin` pipes `username`/`password`/`password` into
+`wiki-server --create-admin`'s stdin over the same ssh connection as
+everything else — no `-t` pseudo-TTY, since the binary's own password
+reader already tolerates a non-TTY stdin fine
+(`readPasswordFromTerminal` only skips disabling terminal echo when
+`isatty()` is false; it still reads the line either way). Without
+`--yes`, this refuses outright rather than silently falling back to the
+interactive prompt, since there's no TTY in that context to prompt on
+anyway. **Treat that password as bootstrap-only.** It overwrites the
+single admin row unconditionally, same as any other `--create-admin`
+run, and a value sitting in a CI secret store is not where this
+project's one and only login should live long-term — rotate it through
+the Account page right after the automated run, the same day, not as a
+followup.
 
 ## `secrets`
 
@@ -574,6 +592,20 @@ standalone any time afterward to rotate a key. **Binary-style installs
 only** — a container deployment's real key lives in
 `docker-compose.yml`'s own `environment:`/`env_file:` instead; this
 subcommand just logs that and returns.
+
+**Non-interactive path.** With no TTY attached, `resolve_secret()`
+falls back to an env var named `WIKI_DEPLOY_SECRET_<name>` — e.g.
+`WIKI_DEPLOY_SECRET_ANTHROPIC_API_KEY` for a `WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV`/
+`WIKI_DEPLOY_LLM_API_KEY_ENV` value of `ANTHROPIC_API_KEY` — read
+directly from this process's own environment, never from
+`deploy.local.env`. This is deliberately a different channel than the
+flag path the rest of this script uses: a CLI flag's value sits in
+`argv`, visible to any local user on the target via `ps aux` or shell
+history, while a dedicated env var set only for this invocation (as a
+CI runner's own secret store injects it) is not. A name configured
+with no matching env var set still dies with a clear message rather
+than silently skipping — skipping is only ever a real decision an
+interactive prompt (blank input) can make.
 
 ## `systemd`
 
@@ -673,17 +705,14 @@ adding to.
   deployed to (Debian/Ubuntu's default root/admin shell is bash), but
   genuinely untested against a target whose `ssh user@host` login shell
   is `dash` or plain `sh`.
-- **`secrets` (and `deploy --first-time`'s automatic call into it) has
-  no non-interactive path at all.** `resolve_secret()` deliberately has
-  no flag and never reads `deploy.local.env`, so a `--yes`-only/CI run
-  with `WIKI_DEPLOY_EMBEDDINGS_API_KEY_ENV`/`WIKI_DEPLOY_LLM_API_KEY_ENV`
-  set but no real TTY attached just dies there. This is intentional — an
-  API key value should never flow through a flag, a committed file, or
-  this script's own `--dry-run` trace — but it does mean a fully
-  unattended first deploy with a cloud embeddings/LLM provider
-  configured isn't possible yet. Run `secrets` by hand afterward from an
-  interactive session instead, or leave the `_API_KEY_ENV` vars blank
-  for that unattended run and add the key later.
+- **`deploy --first-time --yes` can now run fully unattended**, API key
+  and admin account both included — see the non-interactive paths
+  documented under `secrets` and `setup-admin` above
+  (`WIKI_DEPLOY_SECRET_<name>` and
+  `WIKI_DEPLOY_ADMIN_USERNAME`/`WIKI_DEPLOY_SECRET_ADMIN_PASSWORD`).
+  Both stay flag-free and `deploy.local.env`-free on purpose — only a
+  dedicated env var sidesteps the "no flag, no committed file" rule a
+  real secret value follows everywhere else in this script.
 - **No multi-host inventory.** One `deploy.local.env` holds exactly one
   target; manage several real deployments with separate env files and
   `--target=`/`--port=`/`--triplet=` flags overriding per invocation, or
