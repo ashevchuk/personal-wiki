@@ -67,7 +67,6 @@ RUN git clone https://github.com/microsoft/vcpkg.git vcpkg \
 RUN ./vcpkg/vcpkg install --triplet x64-linux
 
 COPY CMakeLists.txt ./
-COPY cmake ./cmake
 COPY src ./src
 COPY tests ./tests
 COPY cross ./cross

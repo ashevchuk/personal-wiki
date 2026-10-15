@@ -103,7 +103,6 @@ RUN ./vcpkg/vcpkg install --triplet "$(cat /tmp/vcpkg-triplet)"
 # they just never make it into the runtime stage's final COPY --from
 # list further down, so nothing systemd-specific ends up in the image.
 COPY CMakeLists.txt ./
-COPY cmake ./cmake
 COPY src ./src
 COPY tests ./tests
 COPY static ./static

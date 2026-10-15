@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 # Bump this on every user-visible fix/feature and record it in
 # CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
 # `wiki-mcp --version`) and reported as the MCP serverInfo.version.
-project(personal_wiki VERSION 0.3.0 LANGUAGES CXX)
+project(personal_wiki VERSION 0.3.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

@@ -8,6 +8,23 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-15
+
+### Fixed
+
+- Both `Dockerfile` and `cross/Dockerfile.builder` had a `COPY cmake
+  ./cmake` line referencing a top-level `cmake/` directory that exists
+  only as an empty, never-committed leftover on some dev machines —
+  nothing in `CMakeLists.txt` actually references it. On an actual
+  fresh checkout (any CI runner, any new clone) that directory doesn't
+  exist at all, so every containerized build variant
+  (`container`/`container-arm`/`container-native`/`cross-container`)
+  failed outright with `"/cmake": not found`, confirmed live by
+  `.github/workflows/release.yml`'s first real run on a clean GitHub
+  Actions checkout (every local test before that happened to have the
+  stray directory present and masked it). Removed the dead `COPY` line
+  from both Dockerfiles.
+
 ## [0.3.0] - 2026-10-15
 
 ### Added
