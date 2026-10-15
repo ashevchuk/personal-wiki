@@ -8,6 +8,20 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-15
+
+### Fixed
+
+- `cross/armv6-musl/{cc,c++}` passed `-mcpu=arm1176jzf-s` (hyphen) to
+  zig. zig's `-mcpu` syntax treats a trailing `-name` as "disable
+  feature `name`" (the same `+`/`-` syntax `cross/arm-musl/`'s own
+  `-mcpu=generic+v7a` uses to add one), so this parsed as "cpu=
+  arm1176jzf, disable feature s" and failed immediately with `unknown
+  CPU: 'arm1176jzf'` — confirmed live, this broke every CI build of
+  this triplet (`.github/workflows/release.yml`'s `v0.3.1`/`v0.3.2`
+  runs). The correct spelling is `arm1176jzf_s` (underscore), confirmed
+  against zig's own `-mcpu` CPU list and a full local build.
+
 ## [0.3.2] - 2026-10-15
 
 ### Fixed

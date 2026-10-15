@@ -1,2 +1,2 @@
 #!/bin/sh
-exec zig c++ -target arm-linux-musleabihf -mcpu=arm1176jzf-s "$@"
+exec zig c++ -target arm-linux-musleabihf -mcpu=arm1176jzf_s "$@"

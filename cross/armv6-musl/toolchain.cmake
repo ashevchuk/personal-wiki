@@ -5,10 +5,16 @@
 # 32-bit mode, or most 32-bit-capable SBCs); this one exists because
 # ARMv7 is NOT backward-compatible with ARMv6 — a v7-targeted binary
 # executes an illegal instruction on a true ARMv6 core, it isn't just
-# "slower," it crashes outright. `-mcpu=arm1176jzf-s` pins the EXACT
+# "slower," it crashes outright. `-mcpu=arm1176jzf_s` pins the EXACT
 # core rather than a generic ARMv6 baseline, since "ARMv6" itself covers
 # several incompatible variants (ARMv6-M, ARMv6K, ARMv6Z...) and the
-# real target here is one specific, known chip.
+# real target here is one specific, known chip. Underscore before the
+# final `s`, not a hyphen — zig's `-mcpu` syntax treats a trailing
+# `-name` as "disable feature `name`" (the same `+`/`-` syntax
+# ../arm-musl/'s own `-mcpu=generic+v7a` uses to ADD a feature), so
+# `arm1176jzf-s` parsed as "cpu=arm1176jzf, disable feature s" and
+# failed with "unknown CPU: 'arm1176jzf'" — confirmed live, this is
+# what broke every CI build of this triplet.
 
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
