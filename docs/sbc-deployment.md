@@ -28,20 +28,31 @@ actually does under the hood, and for anyone without the script:
   Docker image (amd64/arm64/armv7 via `--platform`), or a build done in
   Docker with the result deployed as a bare binary (no Docker on the
   target — see [`docs/wiki-ops.md`](wiki-ops.md)'s glibc-compatibility
-  caveat before pointing this at an old target).
+  caveat before pointing this at an old target). `--triplet=x64-musl`
+  cross-builds a fully static x86_64 binary the same way as any ARM
+  triplet (see Path C above).
 - `verify cross|container|cross-container|container-arm|container-native`
   — runs the qemu-arm-static / `docker run` checks that "Verify BEFORE
   shipping anything to real hardware" below requires, before anything
   touches a target. `--qemu-cpu=NAME` pins the emulated core explicitly
   — needed for a narrower target than the default armv7 path (see
-  `cross/armv6-musl/` for Raspberry Pi 1/Zero/Zero W).
+  `cross/armv6-musl/` for Raspberry Pi 1/Zero/Zero W). `x64-musl`'s
+  binaries run natively, no qemu involved.
+- `package --variant=V --triplet=NAME --out=DIR --archive` — stages a
+  build's output into the same `bin/`+`static/`+`config.example.toml`+
+  `share/wiki/systemd/` tree `deploy` itself stages, as a local
+  directory or `.tar.gz` — this is what `.github/workflows/release.yml`
+  (Path C above) uses to produce each release asset, and it's available
+  locally too if you want your own tarball without waiting on CI.
 - `deploy --target=HOST --first-time --with-backup-timer` — Install,
   first-time setup (including the `config.toml` fields below and
   `--create-admin`), systemd, and the opt-in backup timer, all in one
   atomic `bin/`+`static/` swap with a `.bak-$STAMP` safety copy on the
   target. `--port=N` sets `[server].port` for binary variants, or remaps
   only the container's host-side port via `WIKI_HOST_PORT` for container
-  variants.
+  variants. `--variant=release --release-tag=vX.Y.Z` (Path C above)
+  downloads and verifies a GitHub Release tarball instead of using a
+  local build dir — no `build`/`verify` step needed first.
 - `update --target=HOST` — the whole "Update" section below in one
   command: `git pull`, then the same variant's `build`, then a
   non-`--first-time` `deploy` (so `config.toml`, the vault, and the
@@ -193,30 +204,95 @@ from a dev machine, rather than run `cmake --install` natively on the
 device — see "Update" below for the native-build path on a device
 capable of it.
 
-## Three ways to get this running on the device
+## Four ways to get this running on the device
 
-| | Native build (on-device) | Cross-compile (from dev machine) | Docker |
-|---|---|---|---|
-| When to use | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device | Capable, modern-enough device (Pi 4/5, 64-bit OS) where you'd rather not manage a toolchain at all |
-| Toolchain | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ | Whatever `docker build` pulls in, entirely inside the image |
-| Output | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc | A container image; the device's own userland is untouched |
-| Verified live | Yes — see "Real-hardware verification status" above | Yes — see "Real-hardware verification status" above | `container-arm`/`container-native` yes, on real ARM SBC hardware — see above; the plain `container` variant not yet on ARM specifically (built/run and verified on x86_64 — see [`docs/docker.md`](docker.md)) |
+| | Prebuilt release | Native build (on-device) | Cross-compile (from dev machine) | Docker |
+|---|---|---|---|---|
+| When to use | Don't want to build anything, just want it running | Modern distro, capable enough CPU/RAM, time to spare | Old distro (no C++20 compiler available), weak CPU, or just don't want to burn hours on-device | Capable, modern-enough device (Pi 4/5, 64-bit OS) where you'd rather not manage a toolchain at all |
+| Toolchain | None — just `curl`/`tar`/`sudo` | The device's own GCC/Clang ≥ C++20 | [zig](https://ziglang.org/) (`zig cc`/`zig c++`), bundles its own musl libc + libc++ | Whatever `docker build` pulls in, entirely inside the image |
+| Output | Fully static, built by GitHub Actions | Dynamically linked against the device's own glibc | Fully static (`-static`), zero runtime dependency on the target's libc | A container image; the device's own userland is untouched |
+| Verified live | See the x64-musl caveat in "Path C" below | Yes — see "Real-hardware verification status" above | Yes — see "Real-hardware verification status" above | `container-arm`/`container-native` yes, on real ARM SBC hardware — see above; the plain `container` variant not yet on ARM specifically (built/run and verified on x86_64 — see [`docs/docker.md`](docker.md)) |
 
-Pick **native** if the device is reasonably capable and current
-(Raspberry Pi OS Bookworm+, a recent Debian/Ubuntu ARM64). Pick
-**cross-compile** if the target is old, weak, or end-of-life (e.g.
-Debian 9 stretch on 32-bit ARM, glibc 2.24) — a modern glibc
-cross-toolchain would link against a newer glibc than the target has and
-fail at runtime with `GLIBC_2.XX not found`; a static musl binary
-sidesteps that entirely by not touching the target's libc at all.
+Pick **prebuilt release** (Path C) if you just want the thing running and
+don't care to manage a toolchain at all — this is the easiest route for
+most users. Pick **native** (Path A) if the device is reasonably capable
+and current (Raspberry Pi OS Bookworm+, a recent Debian/Ubuntu ARM64).
+Pick **cross-compile** (Path B) if the target is old, weak, or
+end-of-life (e.g. Debian 9 stretch on 32-bit ARM, glibc 2.24) — a modern
+glibc cross-toolchain would link against a newer glibc than the target
+has and fail at runtime with `GLIBC_2.XX not found`; a static musl
+binary sidesteps that entirely by not touching the target's libc at all.
+Path C's binaries are exactly as static as Path B's (same
+`cross/<triplet>/` toolchains, just built by CI instead of by hand), so
+the same "old/weak target" case is covered without touching zig/vcpkg
+yourself at all.
 
-**Docker** sits between the two: it needs a device modern enough to run
-a current Docker Engine in the first place, which rules it out for
-exactly the old/weak targets cross-compilation exists for — but if the
-device does qualify, it trades a from-scratch native build for a
-`docker build` and skips toolchain management entirely. The rest of this
-runbook covers only the native/cross-compile paths in detail; see
-[`docs/docker.md`](docker.md) for the Docker one.
+**Docker** sits apart from the other three: it needs a device modern
+enough to run a current Docker Engine in the first place, which rules it
+out for exactly the old/weak targets cross-compilation (and the ARM
+release builds) exist for — but if the device does qualify, it trades a
+from-scratch native build for a `docker build` and skips toolchain
+management entirely. The rest of this runbook covers the prebuilt/
+native/cross-compile paths in detail; see [`docs/docker.md`](docker.md)
+for the Docker one.
+
+## Path C — Download a prebuilt release binary
+
+No build tooling needed at all — [`.github/workflows/release.yml`](../.github/workflows/release.yml)
+builds a fully static `wiki-server`/`wiki-mcp` for every target below on
+every version tag and publishes them, plus a `SHA256SUMS`, to that
+tag's GitHub Release. Pick whichever of the two consumers below matches
+where you're standing.
+
+| Triplet | Real hardware | libc |
+|---|---|---|
+| `arm-musl` | 32-bit ARMv7 (Cortex-A7-class) — e.g. Pi 2/3 armhf | musl, static |
+| `armv6-musl` | ARM1176JZF-S (the BCM2835 core) — Pi 1/Zero/Zero W specifically | musl, static |
+| `aarch64-musl` | 64-bit ARM (Cortex-A53-class) — Pi 3/4/5 64-bit OS, other aarch64 SBCs | musl, static |
+| `x64-musl` | Any x86_64 Linux — no glibc version to match | musl, static |
+
+The three ARM triplets carry the same real-hardware verification as
+Path B (same `cross/<triplet>/` toolchains — see "Real-hardware
+verification status" above). **`x64-musl` is new and, as of this
+writing, unverified on real hardware** — it builds and passes its own
+test suite natively in CI (no qemu needed, same architecture as the
+runner), but hasn't yet been deployed to and exercised on a live x86_64
+box the way the ARM targets have. Treat it as "should work" until that
+happens once for real.
+
+### Consumer 1: directly on the device
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/ashevchuk/personal-wiki/main/tools/wiki-install.sh
+# read it before running it as root/sudo — don't curl-pipe this blind
+chmod +x wiki-install.sh
+sudo ./wiki-install.sh
+```
+
+Downloads the matching release tarball for this device's own
+architecture (`uname -m`), verifies it against the release's
+`SHA256SUMS`, and does the same atomic bin/static swap + systemd install
++ `--create-admin` that every other path below ends with. `--version=vX.Y.Z`
+pins a specific release instead of latest; `--yes` skips the
+overwrite-confirmation prompt; `--skip-admin` skips the interactive
+`--create-admin` step at the end. No git checkout, no SSH, no dev
+machine involved at all.
+
+### Consumer 2: from a dev machine, over SSH (same flow as Path B's deploy)
+
+```sh
+tools/wiki-ops.sh deploy --target=user@host --variant=release --triplet=arm-musl \
+  --first-time --with-backup-timer
+```
+
+Downloads and verifies the same tarball on the dev machine, then feeds
+it through the exact same `deploy_swap_tree`/`cmd_systemd_install`/
+`--create-admin` sequence `deploy --variant=cross` already uses — see
+[`docs/wiki-ops.md`](wiki-ops.md) for `--release-tag`/
+`WIKI_DEPLOY_RELEASE_TAG` (blank = latest) and the full flag reference.
+Useful when you'd rather drive the install from your own machine (same
+reasons Path B's SSH flow is useful) without needing zig/vcpkg locally
+at all.
 
 ## Path A — Native build, on the device
 

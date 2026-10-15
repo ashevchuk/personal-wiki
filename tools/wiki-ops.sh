@@ -463,28 +463,40 @@ cmd_build_container_native() {
 # SECTION: verify — qemu for bare-ARM binaries, docker run for images
 # ============================================================
 
+# pick_qemu_bin BINARY — echoes the qemu-user-static binary to run BINARY
+# under, picked from its own ELF machine type, not the triplet name —
+# arm-musl/armv6-musl are both 32-bit ARMv6/v7 (qemu-arm-static), but
+# aarch64-musl is a different, 64-bit instruction set entirely
+# (qemu-aarch64-static); hardcoding qemu-arm-static unconditionally here
+# made `verify cross-container --triplet=aarch64-musl` fail outright
+# with "Invalid ELF image for this architecture" before this. Echoes
+# nothing (not an error) for an x86-64 binary — x64-musl's whole point is
+# running natively on the same CI/dev-machine architecture, no emulation
+# needed.
+pick_qemu_bin() {
+  local bin=$1
+  case "$(file -b "$bin")" in
+    *"ARM aarch64"*) printf 'qemu-aarch64-static' ;;
+    *", ARM, "*) printf 'qemu-arm-static' ;;
+    *"x86-64"*) printf '' ;;
+    *) die "don't know how to run $bin (unrecognized architecture: $(file -b "$bin"))" ;;
+  esac
+}
+
 cmd_verify_cross() {
   local build_dir=$1 qemu_cpu=$2 skip_admin_smoke=$3
   local unit_tests_bin="$build_dir/tests/unit_tests"
   [ -x "$unit_tests_bin" ] || unit_tests_bin="$build_dir/unit_tests"
   [ -x "$unit_tests_bin" ] || die "no unit_tests binary found under $build_dir"
 
-  # Picked from the binary's own ELF machine type, not the triplet name —
-  # arm-musl/armv6-musl are both 32-bit ARMv6/v7 (qemu-arm-static), but
-  # aarch64-musl is a different, 64-bit instruction set entirely
-  # (qemu-aarch64-static); hardcoding qemu-arm-static unconditionally here
-  # made `verify cross-container --triplet=aarch64-musl` fail outright
-  # with "Invalid ELF image for this architecture" before this.
   local qemu_bin
-  case "$(file -b "$unit_tests_bin")" in
-    *"ARM aarch64"*) qemu_bin=qemu-aarch64-static ;;
-    *", ARM, "*) qemu_bin=qemu-arm-static ;;
-    *) die "don't know which qemu-user-static binary to use for $unit_tests_bin (unrecognized architecture: $(file -b "$unit_tests_bin"))" ;;
-  esac
-  command -v "$qemu_bin" >/dev/null 2>&1 || die "$qemu_bin not found — install qemu-user-static"
+  qemu_bin=$(pick_qemu_bin "$unit_tests_bin")
+  if [ -n "$qemu_bin" ]; then
+    command -v "$qemu_bin" >/dev/null 2>&1 || die "$qemu_bin not found — install qemu-user-static"
+  fi
 
   local qemu_cpu_args=()
-  if [ -n "$qemu_cpu" ]; then
+  if [ -n "$qemu_cpu" ] && [ -n "$qemu_bin" ]; then
     qemu_cpu_args=(-cpu "$qemu_cpu")
     # qemu-arm-static's DEFAULT cpu model, when -cpu isn't given, emulates
     # a broader instruction set than a real narrow/old core — confirmed:
@@ -498,13 +510,16 @@ cmd_verify_cross() {
     log "pinning qemu CPU model to '$qemu_cpu' — a pass here is only as trustworthy as that name actually matching the real target core"
   fi
 
-  log "running unit_tests under $qemu_bin — must report all cases passed, not just exit 0"
-  "$qemu_bin" "${qemu_cpu_args[@]}" "$unit_tests_bin"
+  local -a runner=()
+  [ -n "$qemu_bin" ] && runner=("$qemu_bin" "${qemu_cpu_args[@]}")
+
+  log "running unit_tests ${qemu_bin:+under $qemu_bin }— must report all cases passed, not just exit 0"
+  "${runner[@]}" "$unit_tests_bin"
   if [ "$skip_admin_smoke" = 1 ]; then
     log "skipping --create-admin smoke test — needs a real interactive TTY (password echo disabled), which 'update' never has"
   else
-    log "running wiki-server --create-admin under $qemu_bin as a real smoke test"
-    "$qemu_bin" "${qemu_cpu_args[@]}" "$build_dir/wiki-server" --create-admin
+    log "running wiki-server --create-admin ${qemu_bin:+under $qemu_bin }as a real smoke test"
+    "${runner[@]}" "$build_dir/wiki-server" --create-admin
   fi
 }
 
@@ -556,6 +571,55 @@ cmd_verify_container_arm() {
     docker rm -f "$cid" >/dev/null
     die "container-arm verify ($platform): /healthz check failed"
   fi
+}
+
+# ============================================================
+# SECTION: package — stage a build dir into a release-shaped tree/tarball
+# ============================================================
+
+# cmd_package VARIANT TRIPLET OUT_DIR ARCHIVE — stages the exact same
+# cmake-install-shaped tree (bin/, static/, config.example.toml,
+# share/wiki/systemd/*) that `deploy` already stages right before calling
+# deploy_swap_tree; this is that same staging step, aimed at a local
+# directory/tarball instead of a live install, so a `deploy
+# --variant=release` run and a hand-run `wiki-ops.sh deploy` consume
+# IDENTICALLY shaped trees regardless of which one actually built it.
+#
+# Ships binaries UNSTRIPPED, deliberately — see deploy_swap_tree's own
+# comment: stripping a cross ARM ELF only works correctly ON THE TARGET
+# (zig objcopy --strip-all itself errors "unimplemented" for static musl
+# ARM), never on the machine that built it. Stripping stays exactly where
+# it already correctly happens — deploy_swap_tree and tools/wiki-install.sh.
+cmd_package() {
+  local variant=$1 triplet=$2 out=$3 archive=$4
+  local build_dir stage_name
+  case "$variant" in
+    native) build_dir=build; stage_name=native ;;
+    cross) build_dir=$(triplet_build_dir "$triplet" ""); stage_name=$triplet ;;
+    cross-container) build_dir=$(triplet_build_dir "$triplet" "-container"); stage_name=$triplet ;;
+    container-native) build_dir=build-container-native; stage_name=container-native ;;
+    *) die "package: unknown variant '$variant' (native|cross|cross-container|container-native)" ;;
+  esac
+  [ -d "$build_dir" ] || die "no $build_dir/ found — run 'build $variant' first"
+
+  local staging="$out/$stage_name"
+  mkdir -p "$out"
+  rm -rf "$staging"
+  case "$variant" in
+    native) run cmake --install "$build_dir" --prefix "$staging" ;;
+    container-native) mkdir -p "$staging"; cp -r "$build_dir"/. "$staging"/ ;;
+    *) stage_bare_binary_tree "$build_dir" "$staging" ;;
+  esac
+  log "staged into $staging/"
+
+  [ "$archive" = 1 ] || return 0
+
+  local version
+  version=$(grep -oP '(?<=VERSION )[0-9]+\.[0-9]+\.[0-9]+' "$SCRIPT_DIR/CMakeLists.txt") \
+    || die "could not read a version number out of CMakeLists.txt's project(...) line"
+  local archive_path="$out/wiki-$version-$stage_name.tar.gz"
+  run tar -C "$staging" -czf "$archive_path" .
+  log "archived into $archive_path"
 }
 
 # ============================================================
@@ -662,7 +726,7 @@ cmd_systemd_install() {
       if [ -n "$existing_env_file" ] && [ "$existing_env_file" != "$new_env_file" ]; then
         confirm_or_die "target's existing wiki.service reads env from '$existing_env_file', not this repo's '$new_env_file' — overwrite it anyway? (backed up first, but the running service's secrets may live at the old path)"
       fi
-      # sed 's|/opt/wiki|$install_root|g', not a plain `cp`: the shipped
+      # sed 's|=/opt/wiki|=$install_root|g', not a plain `cp`: the shipped
       # unit hardcodes /opt/wiki in ExecStart/WorkingDirectory/
       # ReadWritePaths (see systemd/wiki.service, and CMakeLists.txt's own
       # "Install layout — matches what systemd/wiki.service expects"
@@ -673,7 +737,17 @@ cmd_systemd_install() {
       # all; on a box with nothing there it would have failed to start
       # outright. $install_root = /opt/wiki (the documented default) makes
       # this a no-op substitution, so nothing changes for that case.
-      remote_sh "if [ -f /etc/systemd/system/wiki.service ]; then sudo cp /etc/systemd/system/wiki.service /etc/systemd/system/wiki.service.bak-\$(date +%Y%m%d-%H%M%S); fi; sed 's|/opt/wiki|$install_root|g' '$install_root/share/wiki/systemd/wiki.service' | sudo tee /etc/systemd/system/wiki.service >/dev/null && sudo systemctl daemon-reload"
+      #
+      # Anchored on "=/opt/wiki" (right after the "="), not a bare
+      # "/opt/wiki" — confirmed live: a bare global replace also matches
+      # inside EnvironmentFile=-/etc/opt/wiki/wiki.env, an unrelated FHS
+      # /etc/opt/<app>/ convention path that happens to contain the
+      # literal substring "/opt/wiki" and must NOT track a custom install
+      # root. That rewrote it to /etc/$install_root/wiki.env — a path
+      # that doesn't exist — and the service started anyway with none of
+      # its [embeddings]/[llm] secrets loaded, no error anywhere, because
+      # EnvironmentFile='-' makes a missing file non-fatal.
+      remote_sh "if [ -f /etc/systemd/system/wiki.service ]; then sudo cp /etc/systemd/system/wiki.service /etc/systemd/system/wiki.service.bak-\$(date +%Y%m%d-%H%M%S); fi; sed 's|=/opt/wiki|=$install_root|g' '$install_root/share/wiki/systemd/wiki.service' | sudo tee /etc/systemd/system/wiki.service >/dev/null && sudo systemctl daemon-reload"
       local is_active
       is_active=$(remote_sh_capture "systemctl is-active wiki.service 2>/dev/null || true")
       if [ "$is_active" = active ]; then
@@ -729,8 +803,11 @@ cmd_backup_timer_install() {
   copy_to_target systemd/wiki-backup.timer /tmp/wiki-backup.timer
   # Same /opt/wiki hardcoding as wiki.service (ExecStart, ReadOnlyPaths)
   # — see cmd_systemd_install's own comment on why a plain `mv` here is
-  # wrong for any install_root other than the documented default.
-  remote_sh "sed -i 's|/opt/wiki|$install_root|g' /tmp/wiki-backup.service && sudo mv /tmp/wiki-backup.service /etc/systemd/system/wiki-backup.service && sudo mv /tmp/wiki-backup.timer /etc/systemd/system/wiki-backup.timer"
+  # wrong for any install_root other than the documented default, and on
+  # why this is anchored to "=/opt/wiki" rather than a bare "/opt/wiki":
+  # wiki-backup.service's own EnvironmentFile=-/etc/opt/wiki/wiki-backup.env
+  # contains that same substring and must NOT track a custom install root.
+  remote_sh "sed -i 's|=/opt/wiki|=$install_root|g' /tmp/wiki-backup.service && sudo mv /tmp/wiki-backup.service /etc/systemd/system/wiki-backup.service && sudo mv /tmp/wiki-backup.timer /etc/systemd/system/wiki-backup.timer"
 
   local has_env
   has_env=$(remote_sh_capture "[ -f /etc/opt/wiki/wiki-backup.env ] && echo yes || echo no")
@@ -981,6 +1058,47 @@ stage_bare_binary_tree() {
   chmod +x "$staging/bin/wiki-backup.sh"
 }
 
+# fetch_release_tree TRIPLET TAG STAGING — the `release` variant's
+# equivalent of stage_bare_binary_tree: downloads the tarball
+# .github/workflows/release.yml published for TRIPLET (same
+# cmake-install-shaped tree `cmd_package` produces), verifies it against
+# that release's own SHA256SUMS, and extracts it into STAGING. TAG empty
+# means "whatever GitHub currently calls latest" — resolved from the
+# redirect target of /releases/latest, and whatever that resolves to
+# (explicit or latest) is validated to actually look like a release tag
+# before being used for anything; never trusted blind, same "validate
+# shape, don't let a curl failure read as nothing found" rule this
+# project already applies to every other helper-script output.
+fetch_release_tree() {
+  local triplet=$1 tag=$2 staging=$3
+  local repo_url="https://github.com/ashevchuk/personal-wiki"
+
+  if [ -z "$tag" ]; then
+    tag=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$repo_url/releases/latest" | sed -E 's#.*/tag/##')
+  fi
+  [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || die "release tag must look like vX.Y.Z (got '$tag') — pass --release-tag=vX.Y.Z if latest-release resolution failed"
+
+  local asset="wiki-${tag#v}-$triplet.tar.gz"
+  log "release $tag, asset $asset"
+  if [ "$DRY_RUN" = 1 ]; then
+    log "(dry-run) would download+verify+extract $asset into $staging/"
+    mkdir -p "$staging"
+    return 0
+  fi
+
+  local dl_dir
+  dl_dir=$(mktemp -d /tmp/wiki-ops-release-XXXXXX)
+  curl -fsSL -o "$dl_dir/$asset" "$repo_url/releases/download/$tag/$asset"
+  curl -fsSL -o "$dl_dir/SHA256SUMS" "$repo_url/releases/download/$tag/SHA256SUMS"
+  ( cd "$dl_dir" && grep " $asset\$" SHA256SUMS | sha256sum -c - ) \
+    || die "checksum mismatch for $asset against $tag's SHA256SUMS — refusing to deploy a corrupted or tampered download"
+
+  mkdir -p "$staging"
+  tar -C "$staging" -xzf "$dl_dir/$asset"
+  rm -rf "$dl_dir"
+}
+
 # deploy_swap_tree STAGING_DIR INSTALL_ROOT STRIP_BINS
 # Reproduces docs/sbc-deployment.md's "Update" atomic-swap sequence:
 # .bak-$STAMP the live bin/+static/, move the new ones into place, chown,
@@ -1120,14 +1238,15 @@ cmd_deploy_container() {
 
 cmd_deploy() {
   local flag_target=$1 flag_variant=$2 first_time=$3 with_backup_timer=$4 static_only=$5 skip_verify=$6 qemu_cpu=$7 port_flag=$8 triplet_flag=$9
-  local skip_admin_smoke=${10:-0}
+  local skip_admin_smoke=${10:-0} release_tag_flag=${11:-}
 
   resolve_optional WIKI_DEPLOY_HOST "$flag_target" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
-  resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm|container-native)"
+  resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm|container-native|release)"
   resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
   resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
   resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
-  resolve WIKI_DEPLOY_TRIPLET "$triplet_flag" "${WIKI_DEPLOY_TRIPLET:-}" "arm-musl" "cross/cross-container triplet (ignored for every other variant)"
+  resolve WIKI_DEPLOY_TRIPLET "$triplet_flag" "${WIKI_DEPLOY_TRIPLET:-}" "arm-musl" "cross/cross-container/release triplet (ignored for every other variant)"
+  resolve_optional WIKI_DEPLOY_RELEASE_TAG "$release_tag_flag" "${WIKI_DEPLOY_RELEASE_TAG:-}" "" "Release tag to deploy (blank = latest GitHub release; only used for --variant=release)"
 
   if [ "$static_only" = 1 ]; then
     cmd_static_redeploy "$WIKI_DEPLOY_INSTALL_ROOT" "$WIKI_DEPLOY_VARIANT"
@@ -1135,7 +1254,7 @@ cmd_deploy() {
   fi
 
   case "$WIKI_DEPLOY_VARIANT" in
-    native|cross|cross-container|container-native) ;;
+    native|cross|cross-container|container-native|release) ;;
     container|container-arm)
       # Docker owns this process's lifecycle (docker-compose.yml's own
       # restart: unless-stopped) — there is no $install_root/share/wiki/
@@ -1165,8 +1284,15 @@ cmd_deploy() {
     cross) build_dir=$(triplet_build_dir "$WIKI_DEPLOY_TRIPLET" ""); strip_bins=1; verify_kind=cross ;;
     cross-container) build_dir=$(triplet_build_dir "$WIKI_DEPLOY_TRIPLET" "-container"); strip_bins=1; verify_kind=cross ;;
     container-native) build_dir=build-container-native; strip_bins=1; verify_kind=container-native ;;
+    # release has no LOCAL build_dir at all — fetch_release_tree downloads
+    # and extracts the already-built, already-verified-by-CI tarball
+    # straight into $staging below, same shipped-unstripped tree as
+    # cross/cross-container, so it still needs stripping on the target.
+    release) strip_bins=1 ;;
   esac
-  [ -d "$build_dir" ] || die "no $build_dir/ found — run 'build $WIKI_DEPLOY_VARIANT' first"
+  if [ "$WIKI_DEPLOY_VARIANT" != release ]; then
+    [ -d "$build_dir" ] || die "no $build_dir/ found — run 'build $WIKI_DEPLOY_VARIANT' first"
+  fi
 
   if [ "$skip_verify" != 1 ]; then
     case "$verify_kind" in
@@ -1180,6 +1306,7 @@ cmd_deploy() {
   case "$WIKI_DEPLOY_VARIANT" in
     native) run cmake --install "$build_dir" --prefix "$staging" ;;
     container-native) cp -r "$build_dir"/. "$staging"/ ;;
+    release) fetch_release_tree "$WIKI_DEPLOY_TRIPLET" "$WIKI_DEPLOY_RELEASE_TAG" "$staging" ;;
     *) stage_bare_binary_tree "$build_dir" "$staging" ;;
   esac
 
@@ -1215,15 +1342,27 @@ removes the hand-typing and enforces the order).
            architecture for container-native)
   verify  cross|container|cross-container|container-arm|container-native
           [--platform=linux/arm/v7] [--qemu-cpu=NAME]
+          (x64-musl's unit_tests/wiki-server run natively, no qemu involved)
+  package --variant=native|cross|cross-container|container-native
+          [--triplet=NAME] --out=DIR [--archive]
+          (stages build V's output into DIR/<triplet-or-variant>/ in the
+           same cmake-install shape 'deploy' itself stages before shipping;
+           --archive additionally tars it as DIR/wiki-VERSION-NAME.tar.gz,
+           VERSION read from CMakeLists.txt's own project(... VERSION ...))
   deploy  [--target=HOST] [--variant=V] [--first-time] [--with-backup-timer]
           [--static-only] [--skip-verify] [--qemu-cpu=NAME] [--port=N]
-          [--yes] [--dry-run]
+          [--release-tag=vX.Y.Z] [--yes] [--dry-run]
+          (--variant=release downloads a GitHub Release tarball instead of
+           using a local build dir — see --release-tag/WIKI_DEPLOY_RELEASE_TAG;
+           blank means whatever GitHub currently calls latest)
   update  [--target=HOST] [--variant=V] [--triplet=NAME] [--platform=P]
           [--static-only] [--with-backup-timer] [--skip-verify]
           [--qemu-cpu=NAME] [--port=N] [--yes] [--dry-run]
           (git pull, then build V, then a non-first-time deploy to an
            EXISTING deployment — config.toml/vault/admin account untouched;
-           --static-only skips straight to static-redeploy instead)
+           --static-only skips straight to static-redeploy instead;
+           --variant=release isn't valid here — there's no local source
+           checkout step for a downloaded binary to rebuild from)
   static-redeploy [--target=HOST] [--variant=V] [--dry-run]
   setup-admin [--target=HOST] [--variant=V] [--yes]
           (prompts on a real TTY; non-interactively, set BOTH
@@ -1263,6 +1402,7 @@ FLAG_CROSS_DIR=""
 FLAG_PLATFORM=""
 FLAG_QEMU_CPU=""
 FLAG_PORT=""
+FLAG_RELEASE_TAG=""
 FLAG_SKIP_TESTS=0
 FLAG_LOCAL_EMBEDDINGS=0
 FLAG_CLOUD_EMBEDDINGS=0
@@ -1270,6 +1410,7 @@ FLAG_FIRST_TIME=0
 FLAG_WITH_BACKUP_TIMER=0
 FLAG_STATIC_ONLY=0
 FLAG_SKIP_VERIFY=0
+FLAG_ARCHIVE=0
 
 parse_flags() {
   while [ $# -gt 0 ]; do
@@ -1284,6 +1425,7 @@ parse_flags() {
       --platform=*) FLAG_PLATFORM=${1#*=} ;;
       --qemu-cpu=*) FLAG_QEMU_CPU=${1#*=} ;;
       --port=*) FLAG_PORT=${1#*=} ;;
+      --release-tag=*) FLAG_RELEASE_TAG=${1#*=} ;;
       --skip-tests) FLAG_SKIP_TESTS=1 ;;
       --local-embeddings) FLAG_LOCAL_EMBEDDINGS=1 ;;
       --cloud-embeddings) FLAG_CLOUD_EMBEDDINGS=1 ;;
@@ -1291,6 +1433,7 @@ parse_flags() {
       --with-backup-timer) FLAG_WITH_BACKUP_TIMER=1 ;;
       --static-only) FLAG_STATIC_ONLY=1 ;;
       --skip-verify) FLAG_SKIP_VERIFY=1 ;;
+      --archive) FLAG_ARCHIVE=1 ;;
       --yes) ASSUME_YES=1 ;;
       --dry-run) DRY_RUN=1 ;;
       *) die "unrecognized flag: $1" ;;
@@ -1385,7 +1528,14 @@ main() {
     deploy)
       parse_flags "$@"
       load_deploy_config
-      cmd_deploy "$FLAG_TARGET" "$FLAG_VARIANT" "$FLAG_FIRST_TIME" "$FLAG_WITH_BACKUP_TIMER" "$FLAG_STATIC_ONLY" "$FLAG_SKIP_VERIFY" "$FLAG_QEMU_CPU" "$FLAG_PORT" "$FLAG_TRIPLET"
+      cmd_deploy "$FLAG_TARGET" "$FLAG_VARIANT" "$FLAG_FIRST_TIME" "$FLAG_WITH_BACKUP_TIMER" "$FLAG_STATIC_ONLY" "$FLAG_SKIP_VERIFY" "$FLAG_QEMU_CPU" "$FLAG_PORT" "$FLAG_TRIPLET" 0 "$FLAG_RELEASE_TAG"
+      ;;
+
+    package)
+      parse_flags "$@"
+      [ -n "$FLAG_VARIANT" ] || die "package: --variant=native|cross|cross-container|container-native is required"
+      [ -n "$FLAG_OUT" ] || die "package: --out=DIR is required"
+      cmd_package "$FLAG_VARIANT" "${FLAG_TRIPLET:-arm-musl}" "$FLAG_OUT" "$FLAG_ARCHIVE"
       ;;
 
     static-redeploy)

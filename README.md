@@ -165,6 +165,9 @@ between a native and a cross-compiled build on a weak/old SBC, a backup
 timer — is covered end-to-end in
 [`docs/sbc-deployment.md`](docs/sbc-deployment.md), or automate the whole
 thing with `tools/wiki-ops.sh` (see [`docs/wiki-ops.md`](docs/wiki-ops.md)).
+Don't want to build anything at all? `tools/wiki-install.sh` downloads and
+installs a prebuilt release binary directly on the target device — see
+`docs/sbc-deployment.md`'s "Path C".
 
 **On a normal x86_64/arm64 machine instead of a weak/old ARM SBC** (see
 [`docs/docker.md`](docs/docker.md) for why Docker isn't the recommended path

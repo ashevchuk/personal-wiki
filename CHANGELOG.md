@@ -8,6 +8,43 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-15
+
+### Added
+
+- `.github/workflows/release.yml`: builds a fully static `wiki-server`/
+  `wiki-mcp` for `arm-musl`, `armv6-musl`, `aarch64-musl`, and the new
+  `x64-musl` target on every `vX.Y.Z` tag, and publishes one tarball per
+  target plus a `SHA256SUMS` to that tag's GitHub Release.
+- `cross/x64-musl/`: a fourth cross-compile triplet, generic static
+  x86_64 via the same zig/musl toolchain shape as the existing ARM
+  triplets — works through the existing `build cross`/`build
+  cross-container` (no `cross/Dockerfile.builder` changes needed, it was
+  already generic over the triplet).
+- `tools/wiki-ops.sh package` — stages a build's output into the
+  cmake-install-shaped tree `deploy` itself stages, as a local directory
+  or `.tar.gz`; what `release.yml` uses to produce each release asset.
+- `tools/wiki-ops.sh deploy --variant=release --release-tag=vX.Y.Z` —
+  downloads and checksum-verifies a GitHub Release tarball and feeds it
+  into the existing atomic-swap deploy path, no local build needed.
+- `tools/wiki-install.sh` — standalone installer with no dependency on
+  this repo's build tooling; downloads, verifies, and installs the
+  matching release tarball directly on the target device.
+
+### Fixed
+
+- `cmd_systemd_install`/`cmd_backup_timer_install`'s install-root
+  substitution (`sed 's|/opt/wiki|...|g'`) also matched the unrelated
+  `/etc/opt/wiki/` FHS convention path inside
+  `EnvironmentFile=-/etc/opt/wiki/wiki.env` and `wiki-backup.env`, since
+  it contains that same substring. With any `--install-root` other than
+  the default, this silently rewrote it to a path that doesn't exist —
+  the service then started with none of its `[embeddings]`/`[llm]`
+  secrets loaded, with no error at all (`EnvironmentFile=-` makes a
+  missing file non-fatal). Both substitutions are now anchored to
+  `=/opt/wiki` (right after the `=`), which matches only
+  `ExecStart`/`WorkingDirectory`/`ReadWritePaths`/`ReadOnlyPaths`.
+
 ## [0.2.1] - 2026-10-12
 
 ### Fixed

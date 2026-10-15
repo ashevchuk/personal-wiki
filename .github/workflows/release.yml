@@ -1,0 +1,86 @@
+name: Release
+
+# Builds a statically-linked wiki-server/wiki-mcp for every supported target
+# (see cross/<triplet>/, docs/sbc-deployment.md's "Path C") via the same
+# containerized zig cross-toolchain tools/wiki-ops.sh already uses for a
+# local cross-container build, then publishes one tarball per target plus
+# a SHA256SUMS to a GitHub Release — both tools/wiki-ops.sh's own
+# `deploy --variant=release` and tools/wiki-install.sh (the standalone,
+# no-dependency installer) consume exactly that tarball shape.
+#
+# Deliberately does NOT add a dynamically-linked native x86_64 lane
+# alongside x64-musl — a second glibc-dependent build would carry the
+# exact `GLIBC_2.XX not found` fragility container-native already has
+# documented, for no benefit over the static musl build.
+
+"on":
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write # gh release create
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        triplet: [arm-musl, armv6-musl, aarch64-musl, x64-musl]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Only arm-musl/armv6-musl/aarch64-musl actually run anything under
+      # qemu (see tools/wiki-ops.sh's pick_qemu_bin) — installing it
+      # unconditionally for x64-musl too is harmless and keeps this one
+      # step identical across the whole matrix.
+      - name: Install qemu-user-static
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+
+      - name: Build (cross-container)
+        run: tools/wiki-ops.sh build cross-container --triplet=${{ matrix.triplet }}
+
+      - name: Verify (qemu for ARM targets, native for x64-musl)
+        run: |
+          extra_args=()
+          if [ "${{ matrix.triplet }}" = armv6-musl ]; then
+            # ARM1176JZF-S (Pi 1/Zero/Zero W) — qemu-arm-static's bare
+            # default CPU model emulates a broader instruction set than
+            # this real core and gives a false pass. See
+            # cmd_verify_cross's own comment in tools/wiki-ops.sh.
+            extra_args+=(--qemu-cpu=arm1176)
+          fi
+          tools/wiki-ops.sh verify cross-container --triplet=${{ matrix.triplet }} "${extra_args[@]}"
+
+      - name: Package
+        run: tools/wiki-ops.sh package --variant=cross-container --triplet=${{ matrix.triplet }} --out=dist --archive
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wiki-${{ matrix.triplet }}
+          path: dist/*.tar.gz
+          retention-days: 7
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Publish GitHub Release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" *.tar.gz SHA256SUMS --generate-notes

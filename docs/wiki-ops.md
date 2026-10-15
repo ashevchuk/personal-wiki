@@ -86,6 +86,8 @@ This is the same decision as
 | x86_64/arm64 desktop, NAS, cloud VM with modern Docker | `container` | Docker | Docker | Short if built for the host's own architecture (no `--platform` override) |
 | Pi 4/5 (or any arm64/armv7 box) you'd rather not cross-compile for, via Docker | `container-arm` | Docker + buildx (+ QEMU binfmt for cross-arch) | Docker | **Very long — see the `container-arm` note below** |
 | x86_64 (or arm64 via `--platform`) target that should run a bare binary, but you'd rather not install vcpkg/cmake/ninja locally | `container-native` | Docker (+ buildx only if `--platform` overrides this host's own arch) | nothing — no Docker needed | Short with no `--platform`; with `--platform` targeting a non-host arch, same cost as `container-arm` (very long) |
+| Any x86_64, fully static (no glibc version to match) | `cross --triplet=x64-musl` or `cross-container --triplet=x64-musl` | same as `cross` | nothing | Short, same reason as `cross` — same architecture as the dev machine, so it's not really "cross" at all, just static-vs-dynamic |
+| Don't want to build at all — just install a GitHub Release | `deploy --variant=release` (dev machine) or `tools/wiki-install.sh` (directly on the device) | `curl` (+ optionally nothing else, for `wiki-install.sh`) | nothing but `curl`/`tar`/`sudo` | None — downloads a release built by `.github/workflows/release.yml` |
 
 ## `build`
 
@@ -159,6 +161,12 @@ that's now possible to pass.
   ```sh
   ./tools/wiki-ops.sh build cross-container --triplet=armv6-musl
   ```
+  `--triplet=x64-musl` builds a fully static x86_64 binary the same way
+  — same architecture as the dev machine itself, so this is really
+  "static instead of dynamic" rather than cross-compilation, but it
+  goes through the exact same `cross/x64-musl/` toolchain and
+  `cross-container` Docker image as every other triplet, for one build
+  recipe that covers all four targets.
 - **`container-arm`** — `docker buildx build --platform <platform>
   --load .` against the main `Dockerfile` (parameterized by
   `TARGETARCH`/`TARGETVARIANT` — see its own header comment).
@@ -226,8 +234,10 @@ cleanly is not the same as working.
 - **`cross`** / **`cross-container`** — runs `unit_tests` under
   `qemu-arm-static` (32-bit triplets: `arm-musl`, `armv6-musl`) or
   `qemu-aarch64-static` (`aarch64-musl`), picked from the binary's own
-  ELF machine type rather than the triplet name. It must report every
-  case passed, not just exit 0. Then it runs
+  ELF machine type rather than the triplet name. `x64-musl` runs
+  natively instead — no qemu involved at all, same architecture as the
+  machine running `verify`. It must report every case passed, not just
+  exit 0. Then it runs
   `wiki-server --create-admin` as a real smoke test, against whichever
   directory `build`'s own `--triplet`-derived naming produced
   (`build-arm/` for the default, `build-$triplet/` otherwise — pass the
@@ -271,18 +281,50 @@ cleanly is not the same as working.
   combination has no local smoke test available beyond the full
   `ctest` run that already happened *inside* the `docker build` itself).
 
+## `package`
+
+```
+package --variant=native|cross|cross-container|container-native
+        [--triplet=NAME] --out=DIR [--archive]
+```
+
+Stages a `build`'s output into `DIR/<triplet-or-variant>/` in exactly the
+same `bin/`+`static/`+`config.example.toml`+`share/wiki/systemd/` shape
+`deploy` itself stages right before shipping it to a target — the
+difference is the destination is a local directory (and, with
+`--archive`, also a `.tar.gz`) instead of a live install.
+
+This is what `.github/workflows/release.yml` runs, once per triplet, to
+produce each [Path C](sbc-deployment.md) release asset:
+
+```sh
+./tools/wiki-ops.sh build cross-container --triplet=arm-musl
+./tools/wiki-ops.sh verify cross-container --triplet=arm-musl
+./tools/wiki-ops.sh package --variant=cross-container --triplet=arm-musl --out=dist --archive
+# -> dist/wiki-<VERSION>-arm-musl.tar.gz, VERSION read from CMakeLists.txt's
+#    own project(... VERSION ...) line
+```
+
+Nothing here strips the binaries — they're shipped exactly as `build`
+produced them. Stripping a cross ARM ELF only works correctly **on the
+target**, never on the machine that built it (`zig objcopy --strip-all`
+itself errors `unimplemented` for static musl ARM) — that step stays
+where it already correctly happens, in `deploy`'s own atomic swap and in
+`tools/wiki-install.sh`.
+
 ## `deploy`
 
 ```
 deploy [--target=HOST] [--variant=V] [--triplet=NAME] [--first-time]
        [--with-backup-timer] [--static-only] [--skip-verify]
-       [--qemu-cpu=NAME] [--port=N] [--yes] [--dry-run]
+       [--qemu-cpu=NAME] [--port=N] [--release-tag=vX.Y.Z] [--yes] [--dry-run]
 ```
 
 This never builds implicitly — run the matching `build` first.
 `--target` empty means install on this machine, with no ssh involved;
 otherwise every mutating step runs over one `ssh`/`scp` session per
-command, using `WIKI_DEPLOY_SSH_PORT`.
+command, using `WIKI_DEPLOY_SSH_PORT`. **Exception: `--variant=release`
+doesn't need a prior `build` at all** — see its own paragraph below.
 
 **Binary variants (`native`/`cross`/`cross-container`/`container-native`):**
 
@@ -367,6 +409,27 @@ for a container deployment:
   see `setup-admin` below.
 - Config: baked at build time from `docker/config.docker.toml`, not
   editable through this script at all.
+
+**`--variant=release`** skips `build`/`verify` entirely — instead it
+downloads the [Path C](sbc-deployment.md) GitHub Release tarball for
+`--triplet=NAME`, verifies it against that release's own `SHA256SUMS`
+(a mismatch is a hard error, not a warning — see
+`fetch_release_tree` in `tools/wiki-ops.sh`), and feeds the extracted
+tree into the exact same step-3-onward atomic swap every other binary
+variant uses (so `--first-time`/`--with-backup-timer`/`--port=N` all
+work identically). `--release-tag=vX.Y.Z` (or
+`WIKI_DEPLOY_RELEASE_TAG`) pins a specific release; blank means
+whatever GitHub currently calls latest, resolved from the redirect
+target of that release's own `/releases/latest` URL:
+
+```sh
+./tools/wiki-ops.sh deploy --target=root@192.0.2.10 --variant=release \
+    --triplet=arm-musl --first-time --with-backup-timer
+```
+
+Not valid for `update` — there's no local source checkout for a
+downloaded binary to rebuild from, so `update --variant=release` just
+fails inside `build`'s own variant check.
 
 **`--port=N` for binary variants** sets `config.toml`'s
 `[server].port` directly (this only takes effect with `--first-time`,

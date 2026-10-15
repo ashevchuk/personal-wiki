@@ -19,6 +19,8 @@ build-*-musl-container/
 build-local-emb/
 build-cloud-emb/
 out/
+# tools/wiki-ops.sh package's own --out target (release.yml uses "dist")
+dist/
 
 graphify-out/
 
