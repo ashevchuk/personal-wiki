@@ -89,4 +89,8 @@ jobs:
         working-directory: dist
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" *.tar.gz SHA256SUMS --generate-notes
+        # --repo explicit: this job never does actions/checkout (it only
+        # needs the downloaded artifacts, not the source tree), so there's
+        # no local git repo for `gh` to infer the target repo from --
+        # confirmed live: "fatal: not a git repository" without this.
+        run: gh release create "$GITHUB_REF_NAME" *.tar.gz SHA256SUMS --generate-notes --repo "${{ github.repository }}"
