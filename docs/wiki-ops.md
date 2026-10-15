@@ -441,6 +441,16 @@ Not valid for `update` — there's no local source checkout for a
 downloaded binary to rebuild from, so `update --variant=release` just
 fails inside `build`'s own variant check.
 
+**Before swapping anything**, it also checks the TARGET's existing
+`config.toml` for an `[embeddings]`/`[llm]` `provider` other than
+`"none"` and refuses outright if it finds one (`release_embeddings_guard`
+in `tools/wiki-ops.sh`) — release binaries are the plain
+`WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/`WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF`
+build, and swapping one onto a box that already relies on either
+crash-loops the service on every restart. Confirmed live on a real
+deployment — see [Path C](sbc-deployment.md). `tools/wiki-install.sh`
+has the identical check for the same reason.
+
 **`--port=N` for binary variants** sets `config.toml`'s
 `[server].port` directly (this only takes effect with `--first-time`,
 since that's the only time this script touches `config.toml` at all).
