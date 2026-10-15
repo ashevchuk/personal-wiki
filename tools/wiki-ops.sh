@@ -1341,8 +1341,11 @@ removes the hand-typing and enforces the order).
           (--platform default: linux/arm/v7 for container-arm, this host's own
            architecture for container-native)
   verify  cross|container|cross-container|container-arm|container-native
-          [--platform=linux/arm/v7] [--qemu-cpu=NAME]
-          (x64-musl's unit_tests/wiki-server run natively, no qemu involved)
+          [--platform=linux/arm/v7] [--qemu-cpu=NAME] [--skip-admin-smoke]
+          (x64-musl's unit_tests/wiki-server run natively, no qemu involved;
+           --skip-admin-smoke skips the --create-admin step, which needs a
+           real interactive TTY -- pass this in CI, same reason 'update'
+           always has, see tools/wiki-ops.sh's cmd_update)
   package --variant=native|cross|cross-container|container-native
           [--triplet=NAME] --out=DIR [--archive]
           (stages build V's output into DIR/<triplet-or-variant>/ in the
@@ -1411,6 +1414,7 @@ FLAG_WITH_BACKUP_TIMER=0
 FLAG_STATIC_ONLY=0
 FLAG_SKIP_VERIFY=0
 FLAG_ARCHIVE=0
+FLAG_SKIP_ADMIN_SMOKE=0
 
 parse_flags() {
   while [ $# -gt 0 ]; do
@@ -1434,6 +1438,7 @@ parse_flags() {
       --static-only) FLAG_STATIC_ONLY=1 ;;
       --skip-verify) FLAG_SKIP_VERIFY=1 ;;
       --archive) FLAG_ARCHIVE=1 ;;
+      --skip-admin-smoke) FLAG_SKIP_ADMIN_SMOKE=1 ;;
       --yes) ASSUME_YES=1 ;;
       --dry-run) DRY_RUN=1 ;;
       *) die "unrecognized flag: $1" ;;
@@ -1516,11 +1521,11 @@ main() {
       [ $# -gt 0 ] && shift
       parse_flags "$@"
       case "$sub" in
-        cross) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "")" "$FLAG_QEMU_CPU" 0 ;;
-        cross-container) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "-container")" "$FLAG_QEMU_CPU" 0 ;;
+        cross) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "")" "$FLAG_QEMU_CPU" "$FLAG_SKIP_ADMIN_SMOKE" ;;
+        cross-container) cmd_verify_cross "$(triplet_build_dir "${FLAG_TRIPLET:-arm-musl}" "-container")" "$FLAG_QEMU_CPU" "$FLAG_SKIP_ADMIN_SMOKE" ;;
         container) cmd_verify_container ;;
         container-arm) cmd_verify_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" ;;
-        container-native) cmd_verify_container_native build-container-native 0 ;;
+        container-native) cmd_verify_container_native build-container-native "$FLAG_SKIP_ADMIN_SMOKE" ;;
         *) die "verify: variant must be one of cross|cross-container|container|container-arm|container-native" ;;
       esac
       ;;

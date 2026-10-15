@@ -8,6 +8,22 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-10-15
+
+### Fixed
+
+- `wiki-ops.sh verify`'s CLI had no way to skip the `--create-admin`
+  smoke test (`cmd_verify_cross`/`cmd_verify_container_native` support a
+  `skip_admin_smoke` parameter, but only `cmd_update` ever passed `1` to
+  it — the standalone `verify` subcommand hardcoded `0` always). That
+  smoke test needs a real interactive TTY (password entry, echo
+  disabled), which a CI runner's `run:` step never has, so every
+  `.github/workflows/release.yml` build job failed on `username must
+  not be empty` despite `unit_tests` already passing clean — confirmed
+  live on the `v0.3.1` tag's run. Added `--skip-admin-smoke` as a real
+  `verify` flag, wired through to `cross`/`cross-container`/
+  `container-native`; `release.yml` now passes it.
+
 ## [0.3.1] - 2026-10-15
 
 ### Fixed

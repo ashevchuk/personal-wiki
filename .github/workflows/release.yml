@@ -53,7 +53,13 @@ jobs:
             # cmd_verify_cross's own comment in tools/wiki-ops.sh.
             extra_args+=(--qemu-cpu=arm1176)
           fi
-          tools/wiki-ops.sh verify cross-container --triplet=${{ matrix.triplet }} "${extra_args[@]}"
+          # --skip-admin-smoke: the --create-admin smoke test needs a real
+          # interactive TTY (password entry, echo disabled) — a GitHub
+          # Actions `run:` step never has one, same reason `update` always
+          # skips it (see cmd_update in tools/wiki-ops.sh). The unit_tests
+          # run above it, under the same qemu invocation, still fully gates
+          # this job.
+          tools/wiki-ops.sh verify cross-container --triplet=${{ matrix.triplet }} --skip-admin-smoke "${extra_args[@]}"
 
       - name: Package
         run: tools/wiki-ops.sh package --variant=cross-container --triplet=${{ matrix.triplet }} --out=dist --archive

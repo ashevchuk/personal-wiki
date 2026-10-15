@@ -226,7 +226,17 @@ that's now possible to pass.
 ```
 verify cross|container|cross-container|container-arm|container-native
        [--triplet=NAME] [--platform=linux/arm/v7] [--qemu-cpu=NAME]
+       [--skip-admin-smoke]
 ```
+
+`--skip-admin-smoke` skips the `--create-admin` step of `cross`/
+`cross-container`/`container-native`'s smoke test — it needs a real
+interactive TTY (password entry, echo disabled), which a CI runner never
+has. `unit_tests` still runs and still fully gates the job; this is the
+same reason `update` has always skipped it internally (see `cmd_update`)
+— `.github/workflows/release.yml` passes this flag for exactly that
+reason, confirmed live: without it, every `release.yml` build failed on
+`username must not be empty` despite `unit_tests` passing clean.
 
 Run this before a binary/image ever reaches real hardware — compiling
 cleanly is not the same as working.
