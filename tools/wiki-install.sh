@@ -91,6 +91,18 @@ fi
 staging=$(mktemp -d /tmp/wiki-install-stage-XXXXXX)
 tar -C "$staging" -xzf "$dl_dir/$asset"
 
+# 4b. Release binaries are the plain WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/
+# WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF build (release.yml never passes either
+# flag) — confirmed live: swapping onto a box whose config.toml already
+# had embeddings.provider/llm.provider set to anything but "none" made
+# wiki-server exit immediately on startup ("requires this binary to be
+# built with -DWIKI_ENABLE_..."), and since Restart=on-failure just keeps
+# retrying, that's a silent crash-loop, not a clean failure. Refuse
+# outright rather than finding that out after the swap already happened.
+if [ -f "$INSTALL_ROOT/config.toml" ] && grep -Eq '^\s*provider\s*=\s*"(local|cloud)"' "$INSTALL_ROOT/config.toml"; then
+  die "$INSTALL_ROOT/config.toml has an [embeddings]/[llm] provider other than \"none\" — release binaries don't have WIKI_ENABLE_LOCAL_EMBEDDINGS/CLOUD_EMBEDDINGS compiled in and will crash-loop after this swap. Build from source instead (tools/wiki-ops.sh build ... --local-embeddings/--cloud-embeddings), or set provider = \"none\" first if you don't actually need it."
+fi
+
 # 5. Confirm before touching an existing install.
 if [ -d "$INSTALL_ROOT/bin" ] && [ "$ASSUME_YES" != 1 ]; then
   printf 'wiki-install: %s already has a bin/ — this will back it up and replace it. Continue? [y/N] ' "$INSTALL_ROOT"
@@ -151,8 +163,22 @@ log "installed into $INSTALL_ROOT/"
 sed "s|=/opt/wiki|=$INSTALL_ROOT|g" "$INSTALL_ROOT/share/wiki/systemd/wiki.service" \
   | sudo tee /etc/systemd/system/wiki.service >/dev/null
 sudo systemctl daemon-reload
-sudo systemctl enable --now wiki.service
-log "wiki.service enabled and started"
+
+# `enable --now` only STARTS a unit that isn't already running — on an
+# update (the common case: a box that already has wiki.service active)
+# it's a no-op for the "now" part, so the OLD process just keeps running
+# against the NEW binary sitting unused on disk, with every signal
+# (systemctl status, healthz, --version run standalone) looking fine
+# while the live service hasn't actually picked up the swap at all.
+# Confirmed live. An explicit restart when already active is the only
+# way this update actually takes effect.
+if sudo systemctl is-active --quiet wiki.service; then
+  sudo systemctl restart wiki.service
+  log "wiki.service restarted to pick up the new build"
+else
+  sudo systemctl enable --now wiki.service
+  log "wiki.service enabled and started"
+fi
 
 if [ "$SKIP_ADMIN" != 1 ]; then
   log "creating the admin account (interactive — password entry has echo disabled)"

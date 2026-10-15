@@ -260,6 +260,21 @@ runner), but hasn't yet been deployed to and exercised on a live x86_64
 box the way the ARM targets have. Treat it as "should work" until that
 happens once for real.
 
+`tools/wiki-install.sh` itself (Consumer 1 below) has been run live on a
+real armv7l device updating an already-running deployment — this is
+what caught two real bugs, now fixed: `systemctl enable --now` never
+actually restarts a unit that's already running (the live process kept
+serving the OLD binary with the new one sitting unused on disk until an
+explicit restart), and release binaries are the plain
+`WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/`WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF`
+build — **if your `config.toml` already has `embeddings.provider`/
+`llm.provider` set to anything but `"none"`, do not install a release
+binary over it.** `wiki-install.sh` refuses up front if it detects this
+now, but the underlying limitation is real: the prebuilt binaries don't
+have llama.cpp or the cloud-embeddings HTTP path compiled in at all. If
+you need either, build from source instead (`tools/wiki-ops.sh build ...
+--local-embeddings`/`--cloud-embeddings` — see [`docs/embeddings.md`](embeddings.md)).
+
 ### Consumer 1: directly on the device
 
 ```sh

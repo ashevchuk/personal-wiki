@@ -8,6 +8,30 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Fixed
+
+- `tools/wiki-install.sh` (no binary change, so no version bump — this
+  only touches the shell script, fetched from `main` directly, not
+  from a tagged release asset):
+  - `systemctl enable --now` only starts a unit that isn't already
+    running — on an update (a box that already has `wiki.service`
+    active, the common case) that's a no-op for the "now" part, so the
+    live process kept running the OLD binary indefinitely while the
+    new one sat unused on disk, with `systemctl status`/healthz/a
+    standalone `--version` run all looking fine. Confirmed live on a
+    real deployment. Now restarts explicitly when already active,
+    mirroring `cmd_systemd_install`'s own (already-correct) logic in
+    `tools/wiki-ops.sh`.
+  - Release binaries are the plain `WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/
+    `WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF` build (`release.yml` never
+    passes either flag). Swapping onto a box whose `config.toml`
+    already had `embeddings.provider`/`llm.provider` set to anything
+    but `"none"` made `wiki-server` exit immediately on startup, and
+    `Restart=on-failure` just kept retrying it — a silent crash-loop,
+    confirmed live, that took the service down until the pre-swap
+    backup was restored by hand. Now refuses up front if it detects
+    this, before touching anything.
+
 ## [0.3.3] - 2026-10-15
 
 ### Fixed
