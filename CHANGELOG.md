@@ -31,6 +31,11 @@ binaries — check a running/built copy with `wiki-server --version` or
     confirmed live, that took the service down until the pre-swap
     backup was restored by hand. Now refuses up front if it detects
     this, before touching anything.
+- `wiki-ops.sh deploy --variant=release` had the exact same
+  embeddings-provider gap as `wiki-install.sh` above — it's the same
+  release binary, just reached through the SSH path instead of running
+  directly on the target. Added the same `release_embeddings_guard`
+  check, confirmed against the same real deployment.
 
 ## [0.3.3] - 2026-10-15
 

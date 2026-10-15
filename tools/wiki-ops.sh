@@ -1099,6 +1099,27 @@ fetch_release_tree() {
   rm -rf "$dl_dir"
 }
 
+# release_embeddings_guard INSTALL_ROOT — same safety check as
+# tools/wiki-install.sh's own: release binaries are the plain
+# WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF
+# build (release.yml never passes either flag). Swapping one onto a
+# target whose EXISTING config.toml already has embeddings.provider/
+# llm.provider set to anything but "none" made wiki-server exit
+# immediately on startup, and Restart=on-failure just keeps retrying
+# it — a silent crash-loop, confirmed live on a real deployment via
+# wiki-install.sh (this is that exact same gap, just reachable through
+# the SSH path instead of running directly on the target). Checked on
+# the TARGET's existing config.toml, before the swap — never the
+# freshly-downloaded one, which has no config.toml of its own at all.
+release_embeddings_guard() {
+  local install_root=$1
+  local hit
+  hit=$(remote_sh_capture "grep -Eq '^[[:space:]]*provider[[:space:]]*=[[:space:]]*\"(local|cloud)\"' '$install_root/config.toml' 2>/dev/null && echo yes || true")
+  [ "$hit" = yes ] \
+    && die "$install_root/config.toml has an [embeddings]/[llm] provider other than \"none\" — release binaries don't have WIKI_ENABLE_LOCAL_EMBEDDINGS/CLOUD_EMBEDDINGS compiled in and will crash-loop after this swap. Build from source instead (build cross/cross-container ... --local-embeddings/--cloud-embeddings), or set provider = \"none\" first if you don't actually need it."
+  return 0
+}
+
 # deploy_swap_tree STAGING_DIR INSTALL_ROOT STRIP_BINS
 # Reproduces docs/sbc-deployment.md's "Update" atomic-swap sequence:
 # .bak-$STAMP the live bin/+static/, move the new ones into place, chown,
@@ -1306,7 +1327,7 @@ cmd_deploy() {
   case "$WIKI_DEPLOY_VARIANT" in
     native) run cmake --install "$build_dir" --prefix "$staging" ;;
     container-native) cp -r "$build_dir"/. "$staging"/ ;;
-    release) fetch_release_tree "$WIKI_DEPLOY_TRIPLET" "$WIKI_DEPLOY_RELEASE_TAG" "$staging" ;;
+    release) fetch_release_tree "$WIKI_DEPLOY_TRIPLET" "$WIKI_DEPLOY_RELEASE_TAG" "$staging"; release_embeddings_guard "$WIKI_DEPLOY_INSTALL_ROOT" ;;
     *) stage_bare_binary_tree "$build_dir" "$staging" ;;
   esac
 
