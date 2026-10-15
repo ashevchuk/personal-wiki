@@ -36,6 +36,10 @@ binaries — check a running/built copy with `wiki-server --version` or
   release binary, just reached through the SSH path instead of running
   directly on the target. Added the same `release_embeddings_guard`
   check, confirmed against the same real deployment.
+- Both embeddings-provider guards only matched a double-quoted TOML
+  value (`provider = "local"`) — a single-quoted one
+  (`provider = 'local'`, equally valid TOML) silently passed the check.
+  Both now match either quote style.
 
 ## [0.3.3] - 2026-10-15
 

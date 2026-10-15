@@ -1114,7 +1114,7 @@ fetch_release_tree() {
 release_embeddings_guard() {
   local install_root=$1
   local hit
-  hit=$(remote_sh_capture "grep -Eq '^[[:space:]]*provider[[:space:]]*=[[:space:]]*\"(local|cloud)\"' '$install_root/config.toml' 2>/dev/null && echo yes || true")
+  hit=$(remote_sh_capture "grep -Eq '^[[:space:]]*provider[[:space:]]*=[[:space:]]*[\"'\"'\"'](local|cloud)[\"'\"'\"']' '$install_root/config.toml' 2>/dev/null && echo yes || true")
   [ "$hit" = yes ] \
     && die "$install_root/config.toml has an [embeddings]/[llm] provider other than \"none\" — release binaries don't have WIKI_ENABLE_LOCAL_EMBEDDINGS/CLOUD_EMBEDDINGS compiled in and will crash-loop after this swap. Build from source instead (build cross/cross-container ... --local-embeddings/--cloud-embeddings), or set provider = \"none\" first if you don't actually need it."
   return 0

@@ -99,7 +99,7 @@ tar -C "$staging" -xzf "$dl_dir/$asset"
 # built with -DWIKI_ENABLE_..."), and since Restart=on-failure just keeps
 # retrying, that's a silent crash-loop, not a clean failure. Refuse
 # outright rather than finding that out after the swap already happened.
-if [ -f "$INSTALL_ROOT/config.toml" ] && grep -Eq '^\s*provider\s*=\s*"(local|cloud)"' "$INSTALL_ROOT/config.toml"; then
+if [ -f "$INSTALL_ROOT/config.toml" ] && grep -Eq '^\s*provider\s*=\s*["'"'"'](local|cloud)["'"'"']' "$INSTALL_ROOT/config.toml"; then
   die "$INSTALL_ROOT/config.toml has an [embeddings]/[llm] provider other than \"none\" — release binaries don't have WIKI_ENABLE_LOCAL_EMBEDDINGS/CLOUD_EMBEDDINGS compiled in and will crash-loop after this swap. Build from source instead (tools/wiki-ops.sh build ... --local-embeddings/--cloud-embeddings), or set provider = \"none\" first if you don't actually need it."
 fi
 
