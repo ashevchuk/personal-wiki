@@ -399,6 +399,24 @@ cmd_build_cross_container() {
   log "cross-container build artifacts in $out_dir/ (same shape as build-arm/ — verify with 'verify cross-container')"
 }
 
+# Builds via Dockerfile.release (docker-compose.release.yml overlay) —
+# fetches an already-built, already-tested release tarball instead of
+# compiling anything, same WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/
+# WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF binary release.yml always publishes
+# (release_embeddings_guard's own gap for the bare 'release' variant
+# applies here too — there is simply no flag that changes what's inside
+# this tarball, unlike 'container'/'cross'/'cross-container' which
+# actually compile). RELEASE_TAG empty means "latest", resolved by
+# Dockerfile.release itself at build time, not here.
+cmd_build_container_release() {
+  local release_tag=$1 local_embeddings=$2 cloud_embeddings=$3
+  if [ "$local_embeddings" = 1 ] || [ "$cloud_embeddings" = 1 ]; then
+    die "container-release bakes in release.yml's own prebuilt binaries, always WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF — --local-embeddings/--cloud-embeddings have no effect here; use 'container'/'cross'/'cross-container' instead if you need either compiled in"
+  fi
+  [ -n "$release_tag" ] && export WIKI_RELEASE_TAG="$release_tag"
+  run docker compose -f docker-compose.yml -f docker-compose.release.yml build
+}
+
 cmd_build_container_arm() {
   local platform=$1 local_embeddings=$2 cloud_embeddings=$3
   local tag
@@ -551,6 +569,28 @@ cmd_verify_container() {
   else
     docker rm -f "$cid" >/dev/null
     die "container verify: /healthz check failed"
+  fi
+}
+
+# Rebuilds under its own "-verify" tag, same pattern as cmd_verify_container
+# (cheap here too — no compile, just a tarball fetch+extract, usually a
+# cache hit) rather than container-arm's "assume it's already built"
+# pattern, which exists there only to avoid paying a real QEMU-emulated
+# compile twice.
+cmd_verify_container_release() {
+  local tag=personal-wiki:release-verify
+  docker compose -f docker-compose.yml -f docker-compose.release.yml config >/dev/null
+  export WIKI_IMAGE_TAG="$tag"
+  run docker compose -f docker-compose.yml -f docker-compose.release.yml build
+  local cid
+  cid=$(docker run -d -p 18082:8080 "$tag")
+  sleep 2
+  if curl -sf http://127.0.0.1:18082/healthz >/dev/null; then
+    log "container-release verify: /healthz OK"
+    docker rm -f "$cid" >/dev/null
+  else
+    docker rm -f "$cid" >/dev/null
+    die "container-release verify: /healthz check failed"
   fi
 }
 
@@ -708,7 +748,7 @@ cmd_systemd_install() {
   local with_backup_timer=$1 install_root=$2 variant=$3
 
   case "$variant" in
-    container|container-arm)
+    container|container-arm|container-release)
       log "'$variant' is a Docker deployment — Docker's own restart: unless-stopped already owns the process lifecycle; skipping the wiki.service install (see docs/wiki-ops.md's 'Container variants' notes)"
       ;;
     *)
@@ -898,7 +938,7 @@ cmd_configure_toml() {
 cmd_configure_secrets() {
   local install_root=$1 variant=$2
   case "$variant" in
-    container|container-arm)
+    container|container-arm|container-release)
       log "'$variant' is a Docker deployment — wiki.env has no meaning there; set the real key via docker-compose.yml's own environment:/env_file instead"
       return ;;
   esac
@@ -958,7 +998,7 @@ sudo chmod 600 /etc/opt/wiki/wiki.env" \
 cmd_setup_admin() {
   local install_root=$1 variant=$2
   case "$variant" in
-    container|container-arm)
+    container|container-arm|container-release)
       die "setup-admin assumes a binary install — '$variant' runs via Docker; create the admin account with: docker compose exec wiki wiki-server --create-admin" ;;
   esac
 
@@ -1005,7 +1045,7 @@ verify_static_md5() {
 cmd_static_redeploy() {
   local install_root=$1 variant=$2
   case "$variant" in
-    container|container-arm)
+    container|container-arm|container-release)
       die "static-redeploy assumes a binary install — '$variant' serves static/ from inside the image; rebuild ('build $variant') and 'deploy --variant=$variant' again instead" ;;
   esac
   local tmp_static tmp_tar remote_tar
@@ -1199,6 +1239,9 @@ cmd_deploy_container() {
   if [ "$variant" = container-arm ]; then
     extra_compose=(-f docker-compose.arm.yml)
     image_tag=$(container_arm_tag "${platform:-linux/arm/v7}")
+  elif [ "$variant" = container-release ]; then
+    extra_compose=(-f docker-compose.release.yml)
+    image_tag=personal-wiki:release
   fi
 
   if [ -z "${WIKI_DEPLOY_HOST:-}" ]; then
@@ -1233,12 +1276,20 @@ cmd_deploy_container() {
   if [ "$variant" = container-arm ]; then
     copy_to_target docker-compose.arm.yml /tmp/wiki-docker-compose.arm.yml
     remote_sh "sudo mv /tmp/wiki-docker-compose.arm.yml '$install_root/docker-compose.arm.yml'"
+  elif [ "$variant" = container-release ]; then
+    copy_to_target docker-compose.release.yml /tmp/wiki-docker-compose.release.yml
+    remote_sh "sudo mv /tmp/wiki-docker-compose.release.yml '$install_root/docker-compose.release.yml'"
   fi
   local compose_flags="-f docker-compose.yml"
-  [ "$variant" = container-arm ] && compose_flags="-f docker-compose.yml -f docker-compose.arm.yml"
+  case "$variant" in
+    container-arm) compose_flags="-f docker-compose.yml -f docker-compose.arm.yml" ;;
+    container-release) compose_flags="-f docker-compose.yml -f docker-compose.release.yml" ;;
+  esac
   local env_prefix=""
   [ -n "$host_port" ] && env_prefix="WIKI_HOST_PORT='$host_port' "
-  [ "$variant" = container-arm ] && env_prefix="${env_prefix}WIKI_IMAGE_TAG='$image_tag' "
+  case "$variant" in
+    container-arm|container-release) env_prefix="${env_prefix}WIKI_IMAGE_TAG='$image_tag' " ;;
+  esac
   # chown -R 1000:1000, not just mkdir -p: the image runs as a fixed
   # uid/gid 1000 (Dockerfile, see docker-compose.yml's own comment on
   # why) — a freshly `mkdir -p`'d directory over ssh is root:root, which
@@ -1262,7 +1313,7 @@ cmd_deploy() {
   local skip_admin_smoke=${10:-0} release_tag_flag=${11:-}
 
   resolve_optional WIKI_DEPLOY_HOST "$flag_target" "${WIKI_DEPLOY_HOST:-}" "" "Deploy target (user@host; empty = local install)"
-  resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm|container-native|release)"
+  resolve WIKI_DEPLOY_VARIANT "$flag_variant" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to deploy (native|cross|container|cross-container|container-arm|container-native|container-release|release)"
   resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
   resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
   resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
@@ -1276,7 +1327,7 @@ cmd_deploy() {
 
   case "$WIKI_DEPLOY_VARIANT" in
     native|cross|cross-container|container-native|release) ;;
-    container|container-arm)
+    container|container-arm|container-release)
       # Docker owns this process's lifecycle (docker-compose.yml's own
       # restart: unless-stopped) — there is no $install_root/share/wiki/
       # systemd/wiki.service staged anywhere for this variant (only
@@ -1356,12 +1407,17 @@ wiki-ops.sh — build+deploy orchestration for this repo (see docs/sbc-deploymen
 for the manual steps this wraps; this script doesn't change what happens, just
 removes the hand-typing and enforces the order).
 
-  build   native|cross|container|cross-container|container-arm|container-native
+  build   native|cross|container|cross-container|container-arm|container-native|container-release
           [--skip-tests] [--triplet=NAME] [--cross-dir=PATH]
-          [--platform=P] [--local-embeddings] [--cloud-embeddings] [--dry-run]
+          [--platform=P] [--local-embeddings] [--cloud-embeddings]
+          [--release-tag=vX.Y.Z] [--dry-run]
           (--platform default: linux/arm/v7 for container-arm, this host's own
-           architecture for container-native)
-  verify  cross|container|cross-container|container-arm|container-native
+           architecture for container-native; container-release ignores
+           --local-embeddings/--cloud-embeddings — it bakes in release.yml's
+           own prebuilt binaries, never compiles anything, see
+           docs/docker.md; --release-tag blank there means whatever GitHub
+           currently calls latest, resolved INSIDE the image at build time)
+  verify  cross|container|cross-container|container-arm|container-native|container-release
           [--platform=linux/arm/v7] [--qemu-cpu=NAME] [--skip-admin-smoke]
           (x64-musl's unit_tests/wiki-server run natively, no qemu involved;
            --skip-admin-smoke skips the --create-admin step, which needs a
@@ -1378,7 +1434,10 @@ removes the hand-typing and enforces the order).
           [--release-tag=vX.Y.Z] [--yes] [--dry-run]
           (--variant=release downloads a GitHub Release tarball instead of
            using a local build dir — see --release-tag/WIKI_DEPLOY_RELEASE_TAG;
-           blank means whatever GitHub currently calls latest)
+           blank means whatever GitHub currently calls latest; --variant=
+           container-release ships the image 'build container-release'
+           already built — the release tag is a build-time choice there,
+           not a deploy-time one, see docs/docker.md)
   update  [--target=HOST] [--variant=V] [--triplet=NAME] [--platform=P]
           [--static-only] [--with-backup-timer] [--skip-verify]
           [--qemu-cpu=NAME] [--port=N] [--yes] [--dry-run]
@@ -1483,7 +1542,8 @@ dispatch_build() {
     cross-container) cmd_build_cross_container "${FLAG_TRIPLET:-arm-musl}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
     container-arm) cmd_build_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
     container-native) cmd_build_container_native "$FLAG_PLATFORM" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
-    *) die "build: variant must be one of native|cross|container|cross-container|container-arm|container-native" ;;
+    container-release) cmd_build_container_release "$FLAG_RELEASE_TAG" "$FLAG_LOCAL_EMBEDDINGS" "$FLAG_CLOUD_EMBEDDINGS" ;;
+    *) die "build: variant must be one of native|cross|container|cross-container|container-arm|container-native|container-release" ;;
   esac
 }
 
@@ -1533,7 +1593,7 @@ main() {
       resolve WIKI_DEPLOY_INSTALL_ROOT "" "${WIKI_DEPLOY_INSTALL_ROOT:-}" "/opt/wiki" "Install root"
       resolve WIKI_DEPLOY_SERVICE_USER "" "${WIKI_DEPLOY_SERVICE_USER:-}" "wiki" "Service user"
       resolve WIKI_DEPLOY_SSH_PORT "" "${WIKI_DEPLOY_SSH_PORT:-}" "22" "SSH port"
-      resolve WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to update (native|cross|container|cross-container|container-arm|container-native)"
+      resolve WIKI_DEPLOY_VARIANT "$FLAG_VARIANT" "${WIKI_DEPLOY_VARIANT:-}" "cross" "Build variant to update (native|cross|container|cross-container|container-arm|container-native|container-release)"
       cmd_update "$WIKI_DEPLOY_VARIANT" "$FLAG_TARGET" "$FLAG_STATIC_ONLY" "$FLAG_WITH_BACKUP_TIMER" "$FLAG_SKIP_VERIFY" "$FLAG_QEMU_CPU" "$FLAG_PORT" "$FLAG_TRIPLET"
       ;;
 
@@ -1547,7 +1607,8 @@ main() {
         container) cmd_verify_container ;;
         container-arm) cmd_verify_container_arm "${FLAG_PLATFORM:-linux/arm/v7}" ;;
         container-native) cmd_verify_container_native build-container-native "$FLAG_SKIP_ADMIN_SMOKE" ;;
-        *) die "verify: variant must be one of cross|cross-container|container|container-arm|container-native" ;;
+        container-release) cmd_verify_container_release ;;
+        *) die "verify: variant must be one of cross|cross-container|container|container-arm|container-native|container-release" ;;
       esac
       ;;
 

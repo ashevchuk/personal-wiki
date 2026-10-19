@@ -1,0 +1,122 @@
+# syntax=docker/dockerfile:1
+#
+# Fetches an already-built, already-tested static-musl release tarball
+# (the same ones release.yml publishes to GitHub Releases — see
+# cross/Dockerfile.builder for how those are actually compiled) instead of
+# compiling wiki-server/wiki-mcp inside this image. The main `Dockerfile`
+# still exists for "build from whatever source I have checked out right
+# now"; this one is for "just give me a running image for an
+# already-released version, fast, with no compiler in sight."
+#
+# WIKI_VERSION=latest (default) resolves to whatever GitHub currently
+# reports as the latest release at BUILD time — the same image definition
+# can therefore produce a different image tomorrow than it does today,
+# with nothing in this file having changed. Pin WIKI_VERSION to an exact
+# tag (e.g. --build-arg WIKI_VERSION=v0.3.3) whenever that non-determinism
+# is a problem (CI provenance, bug reproduction, anything you need to
+# rebuild byte-identical later).
+ARG WIKI_REPO=ashevchuk/personal-wiki
+ARG WIKI_VERSION=latest
+
+# ---------------------------------------------------------------------------
+# Stage 1: fetch. Only needs curl/tar/ca-certificates — no compiler, no
+# vcpkg, no multi-minute dependency build.
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim AS fetch
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tar \
+    && rm -rf /var/lib/apt/lists/*
+
+# Same TARGETARCH/TARGETVARIANT defaulting as the main Dockerfile, for the
+# same reason: a plain `docker build .` with no buildx involved never
+# populates these on its own.
+ARG TARGETARCH=amd64
+ARG TARGETVARIANT=
+ARG WIKI_REPO
+ARG WIKI_VERSION
+
+WORKDIR /tmp/fetch
+
+# Same TARGETARCH/TARGETVARIANT-to-triplet mapping shape as the main
+# Dockerfile, but against release.yml's musl triplet names — a different
+# naming family from vcpkg's own glibc triplets the main Dockerfile uses.
+# Fails loudly on anything unmapped rather than guessing.
+RUN set -eu; \
+    case "${TARGETARCH}:${TARGETVARIANT}" in \
+      amd64:*) triplet=x64-musl ;; \
+      arm64:*) triplet=aarch64-musl ;; \
+      arm:v7)  triplet=arm-musl ;; \
+      arm:v6)  triplet=armv6-musl ;; \
+      *) echo "Dockerfile.release: no release triplet mapping for TARGETARCH=${TARGETARCH} TARGETVARIANT=${TARGETVARIANT}" >&2; exit 1 ;; \
+    esac; \
+    echo "$triplet" > triplet
+
+# Same resolution trick as tools/wiki-ops.sh's own fetch_release_tree():
+# follow the redirect GitHub's own "latest" URL issues and read the tag
+# out of its target, instead of calling api.github.com — no User-Agent
+# requirement, no separate rate limit to hit. No -f on this curl
+# deliberately: a bad repo/tag just resolves to a URL with no "/tag/..."
+# segment (or 404s with no Location at all), and letting curl itself
+# abort on that would surface only its own opaque exit code instead of
+# the clear message below. The tag is validated against an exact vX.Y.Z
+# shape before it's trusted for anything further down: a malformed or
+# empty result is an error, never silently treated as "no release".
+RUN set -eu; \
+    if [ "$WIKI_VERSION" = latest ]; then \
+      tag=$(curl -sSL -o /dev/null -w '%{url_effective}' "https://github.com/${WIKI_REPO}/releases/latest" | sed -E 's#.*/tag/##'); \
+    else \
+      tag="$WIKI_VERSION"; \
+    fi; \
+    echo "$tag" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+      || { echo "Dockerfile.release: resolved tag '$tag' doesn't look like vX.Y.Z — check WIKI_REPO/WIKI_VERSION or github.com's availability" >&2; exit 1; }; \
+    echo "$tag" > tag
+
+# Same tarball-naming contract as tools/wiki-ops.sh's cmd_package:
+# wiki-<version>-<triplet>.tar.gz, version without the leading "v".
+# Download the archive AND its SHA256SUMS sibling, then actually verify
+# the hash before trusting a single byte of it — this is the one place
+# in the whole repo that pulls a binary straight off the internet into
+# an image, so skipping this check is exactly where supply-chain risk
+# lands.
+RUN set -eu; \
+    tag=$(cat tag); triplet=$(cat triplet); \
+    asset="wiki-${tag#v}-${triplet}.tar.gz"; \
+    curl -fsSL -o "$asset" "https://github.com/${WIKI_REPO}/releases/download/${tag}/${asset}"; \
+    curl -fsSL -o SHA256SUMS "https://github.com/${WIKI_REPO}/releases/download/${tag}/SHA256SUMS"; \
+    line=$(awk -v f="$asset" '$2==f{print; found=1} END{exit !found}' SHA256SUMS) \
+      || { echo "Dockerfile.release: $asset has no entry in SHA256SUMS for release $tag" >&2; exit 1; }; \
+    echo "$line" | sha256sum -c -; \
+    mkdir -p /opt/wiki && tar -C /opt/wiki -xzf "$asset"
+
+# ---------------------------------------------------------------------------
+# Stage 2: runtime. Identical shape to the main Dockerfile's own runtime
+# stage — same uid/gid, same volume, same healthcheck — just sourced from
+# the "fetch" stage's extracted tarball instead of a "build" stage's
+# `cmake --install` output.
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 wiki \
+    && useradd --system --uid 1000 --gid 1000 --create-home --home-dir /opt/wiki \
+       --shell /usr/sbin/nologin wiki
+
+WORKDIR /opt/wiki
+COPY --from=fetch --chown=wiki:wiki /opt/wiki/bin ./bin
+COPY --from=fetch --chown=wiki:wiki /opt/wiki/static ./static
+COPY --from=fetch --chown=wiki:wiki /opt/wiki/config.example.toml ./
+COPY --chown=wiki:wiki docker/config.docker.toml ./config.toml
+
+RUN mkdir -p /data/vault && chown -R wiki:wiki /data
+
+VOLUME ["/data"]
+EXPOSE 8080
+USER wiki
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+  CMD curl -f http://127.0.0.1:8080/healthz || exit 1
+
+ENTRYPOINT ["/opt/wiki/bin/wiki-server"]

@@ -8,6 +8,19 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Added
+
+- `Dockerfile.release` + `docker-compose.release.yml` + `tools/wiki-ops.sh`'s
+  new `container-release` variant (`build`/`verify`/`deploy`) (no binary
+  change, so no version bump — this only fetches and repackages existing
+  release tarballs, never compiles anything): builds the runtime image
+  straight from a GitHub Release's static-musl tarball instead of
+  compiling from source, verifying it against the release's own
+  `SHA256SUMS` before unpacking it. Defaults to the latest release;
+  `--release-tag=vX.Y.Z` (or a direct `--build-arg WIKI_VERSION=vX.Y.Z`
+  without the script) pins an exact tag. See `docs/docker.md` and
+  `docs/wiki-ops.md`.
+
 ### Fixed
 
 - `tools/wiki-install.sh` (no binary change, so no version bump — this

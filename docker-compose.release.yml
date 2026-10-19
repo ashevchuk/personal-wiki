@@ -1,0 +1,22 @@
+# Override for the GitHub-Release-based image — layers on top of
+# docker-compose.yml: `docker compose -f docker-compose.yml -f
+# docker-compose.release.yml build` (or `up -d`). Builds via
+# Dockerfile.release (fetches an already-built, already-tested
+# static-musl release tarball and verifies it against the release's own
+# SHA256SUMS, instead of compiling from source — see docs/docker.md's
+# "Building from a release instead of source") rather than the base
+# file's default Dockerfile.
+#
+# WIKI_RELEASE_TAG blank means whatever GitHub currently calls latest,
+# resolved at build time INSIDE the image itself — see Dockerfile.release's
+# own header comment on why that's a deliberate, documented
+# non-determinism (the same build can produce a different image
+# tomorrow) rather than an oversight. WIKI_IMAGE_TAG follows the same
+# override convention docker-compose.arm.yml already uses.
+services:
+  wiki:
+    build:
+      dockerfile: Dockerfile.release
+      args:
+        WIKI_VERSION: ${WIKI_RELEASE_TAG:-latest}
+    image: ${WIKI_IMAGE_TAG:-personal-wiki:release}

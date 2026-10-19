@@ -100,6 +100,54 @@ into the image itself. Leave them unset if you're using
 OpenAI-compatible server that doesn't authenticate. See
 [`docs/embeddings.md`](embeddings.md) and [`docs/llm.md`](llm.md).
 
+## Building from a release instead of source
+
+`Dockerfile.release` skips compilation entirely: it fetches an
+already-built, already-tested static-musl tarball straight from a GitHub
+Release (the same ones `release.yml` publishes — see
+[`docs/sbc-deployment.md`](sbc-deployment.md)'s "Path C") and verifies it
+against the release's own `SHA256SUMS` before unpacking it into the same
+runtime stage the main `Dockerfile` uses. No vcpkg, no Drogon/OpenSSL
+compile, no `ctest` run inside the image — that already happened in CI
+before the release was published.
+
+```sh
+docker build -f Dockerfile.release -t personal-wiki .
+```
+
+By default this resolves to whatever GitHub currently reports as the
+**latest** release at build time — convenient, but it means the same
+`Dockerfile.release` can produce a different image tomorrow than it does
+today with nothing in the file itself having changed. Pin an exact tag
+when that matters (CI provenance, reproducing a bug report, anything you
+need to rebuild byte-identical later):
+
+```sh
+docker build -f Dockerfile.release --build-arg WIKI_VERSION=v0.3.3 -t personal-wiki:0.3.3 .
+```
+
+Cross-arch works the same way as the main `Dockerfile`, via buildx:
+
+```sh
+docker buildx build -f Dockerfile.release --platform linux/arm64 -t personal-wiki:arm64 .
+```
+
+This path needs network access to `github.com` during the build (to
+resolve the release tag and download the asset) — the main `Dockerfile`
+needs no such access beyond vcpkg's own dependency downloads. It's
+otherwise interchangeable with the main `Dockerfile`: same
+`docker-compose.yml` works by pointing `build.dockerfile` at it (see
+`docker-compose.release.yml`, the override file that actually does
+this), same runtime image shape, same `docker/config.docker.toml`.
+
+`tools/wiki-ops.sh` wraps this as the `container-release` variant —
+`build container-release [--release-tag=vX.Y.Z]`,
+`verify container-release`, `deploy --variant=container-release` — using
+the same `docker-compose.release.yml` overlay under the hood. See
+[`docs/wiki-ops.md`](wiki-ops.md) for the full flag reference; the
+`--build-arg`/`-f` commands above remain the plain-Docker equivalent for
+anyone not using that script.
+
 ## `wiki-mcp` from a container
 
 The image also ships `wiki-mcp` (in `/opt/wiki/bin/`), even though the

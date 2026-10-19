@@ -22,16 +22,18 @@ hard default. [`docs/wiki-ops.md`](wiki-ops.md) is the full reference
 fastest. The manual steps below stay the reference for what each one
 actually does under the hood, and for anyone without the script:
 
-- `build native|cross|container|cross-container|container-arm|container-native`
+- `build native|cross|container|cross-container|container-arm|container-native|container-release`
   — Path A, Path B, the Docker image below, a containerized zig
   cross-toolchain (no local zig/vcpkg install needed), a multi-arch
-  Docker image (amd64/arm64/armv7 via `--platform`), or a build done in
+  Docker image (amd64/arm64/armv7 via `--platform`), a build done in
   Docker with the result deployed as a bare binary (no Docker on the
   target — see [`docs/wiki-ops.md`](wiki-ops.md)'s glibc-compatibility
-  caveat before pointing this at an old target). `--triplet=x64-musl`
+  caveat before pointing this at an old target), or a Docker image built
+  straight from a GitHub Release tarball with no compile step at all
+  (see [`docs/docker.md`](docker.md)). `--triplet=x64-musl`
   cross-builds a fully static x86_64 binary the same way as any ARM
   triplet (see Path C above).
-- `verify cross|container|cross-container|container-arm|container-native`
+- `verify cross|container|cross-container|container-arm|container-native|container-release`
   — runs the qemu-arm-static / `docker run` checks that "Verify BEFORE
   shipping anything to real hardware" below requires, before anything
   touches a target. `--qemu-cpu=NAME` pins the emulated core explicitly

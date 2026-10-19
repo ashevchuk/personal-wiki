@@ -88,13 +88,15 @@ This is the same decision as
 | x86_64 (or arm64 via `--platform`) target that should run a bare binary, but you'd rather not install vcpkg/cmake/ninja locally | `container-native` | Docker (+ buildx only if `--platform` overrides this host's own arch) | nothing — no Docker needed | Short with no `--platform`; with `--platform` targeting a non-host arch, same cost as `container-arm` (very long) |
 | Any x86_64, fully static (no glibc version to match) | `cross --triplet=x64-musl` or `cross-container --triplet=x64-musl` | same as `cross` | nothing | Short, same reason as `cross` — same architecture as the dev machine, so it's not really "cross" at all, just static-vs-dynamic |
 | Don't want to build at all — just install a GitHub Release | `deploy --variant=release` (dev machine) or `tools/wiki-install.sh` (directly on the device) | `curl` (+ optionally nothing else, for `wiki-install.sh`) | nothing but `curl`/`tar`/`sudo` | None — downloads a release built by `.github/workflows/release.yml` |
+| Same as `container`, but you don't want to compile anything | `container-release` | Docker | Docker | Short — no compile, just fetches+verifies an already-built release tarball (see [`docs/docker.md`](docker.md)) |
 
 ## `build`
 
 ```
-build native|cross|container|cross-container|container-arm [--skip-tests]
-      [--triplet=NAME] [--cross-dir=PATH] [--platform=linux/arm/v7]
-      [--local-embeddings] [--cloud-embeddings] [--dry-run]
+build native|cross|container|cross-container|container-arm|container-release
+      [--skip-tests] [--triplet=NAME] [--cross-dir=PATH]
+      [--platform=linux/arm/v7] [--local-embeddings] [--cloud-embeddings]
+      [--release-tag=vX.Y.Z] [--dry-run]
 ```
 
 `--local-embeddings`/`--cloud-embeddings` toggle the only two real
@@ -220,11 +222,25 @@ that's now possible to pass.
   host's own architecture) hits the same QEMU-emulation cost as
   `container-arm` above, and runs just as long — this variant's short
   build time only applies with no `--platform` override.
+- **`container-release`** — `docker compose build` against
+  `Dockerfile.release` (via the `docker-compose.release.yml` overlay),
+  tagged `personal-wiki:release`. Fetches an already-built,
+  already-tested release tarball and verifies it against that release's
+  own `SHA256SUMS` — see [`docs/docker.md`](docker.md)'s "Building from a
+  release instead of source". `--release-tag=vX.Y.Z` pins an exact tag;
+  blank (the default) means whatever GitHub currently calls latest,
+  **resolved at build time inside the image itself** — the same command
+  can produce a different image tomorrow than it does today, with
+  nothing in this repo having changed; pin it whenever that matters.
+  `--local-embeddings`/`--cloud-embeddings` are refused outright here —
+  this never compiles anything, so there's no flag that changes what's
+  inside the tarball; use `container`/`cross`/`cross-container` instead
+  if you need either compiled in.
 
 ## `verify`
 
 ```
-verify cross|container|cross-container|container-arm|container-native
+verify cross|container|cross-container|container-arm|container-native|container-release
        [--triplet=NAME] [--platform=linux/arm/v7] [--qemu-cpu=NAME]
        [--skip-admin-smoke]
 ```
@@ -285,6 +301,11 @@ cleanly is not the same as working.
 
   **`verify` never respects `--dry-run`, on any variant** — it's a real
   smoke test, not a plan.
+- **`container-release`** — unlike `container-arm`, this **does**
+  rebuild (same cheap reasoning as plain `container`'s own verify: no
+  compile involved, usually a cache hit), under its own
+  `personal-wiki:release-verify` tag, on port `18082` — a temporary
+  `docker run` + `/healthz` curl check, torn down after.
 - **`container-native`** — runs `wiki-server --create-admin` directly,
   with no qemu involved (it's a native-architecture binary, assuming
   `--platform` wasn't used to cross-build it with buildx — that
@@ -390,13 +411,18 @@ which `build-*`/`build-*-container` directory `cross`/`cross-container`
 deploy from — this matters once you've ever built more than one cross
 target; it's ignored for every other variant.
 
-**Container variants (`container`/`container-arm`):** a completely
-different path for the app itself —
+**Container variants (`container`/`container-arm`/`container-release`):**
+a completely different path for the app itself —
 `docker save`+`scp`+`docker load`+`docker compose up -d` for a remote
 target, or just `docker compose up -d` locally (which builds on the fly
 if the image doesn't exist yet — remote deploys need an explicit
-`build container`/`build container-arm` first, since there's nothing
-local to `docker save` otherwise). `--port=N` here sets
+`build container`/`build container-arm`/`build container-release` first,
+since there's nothing local to `docker save` otherwise).
+**`container-release`'s release tag is a `build`-time choice, not a
+`deploy`-time one** — unlike `--variant=release` above, `deploy
+--variant=container-release` never touches `--release-tag`/
+`WIKI_DEPLOY_RELEASE_TAG` at all; it just ships whatever image `build
+container-release --release-tag=...` already produced. `--port=N` here sets
 `WIKI_HOST_PORT`, remapping only the **host**-side Docker port
 mapping — the container's own internal port stays 8080 regardless
 (`docker/config.docker.toml` and the `Dockerfile`'s
@@ -407,9 +433,9 @@ the same `cmd_backup_timer_install` ships `wiki-backup.sh`+unit/timer/env
 fresh from this repo's `systemd/` directory regardless of how the app
 itself runs; `VAULT_PATH` defaults to `$install_root/vault_data`, which
 is also exactly where `docker-compose.yml`'s bind mount puts the real
-vault on the host. `--first-time` still does nothing for these two
-variants, since there's no `config.toml`/admin-account step to run —
-for a container deployment:
+vault on the host. `--first-time` still does nothing for these variants,
+since there's no `config.toml`/admin-account step to run — for a
+container deployment:
 
 - Admin account: run `docker compose exec wiki wiki-server --create-admin`
   yourself (this needs the real TTY `exec` gives you — `-T`/detached
@@ -597,8 +623,8 @@ tree, not just the ones you think changed.
 plain directory, `systemctl restart wiki.service` as the real restart
 mechanism) — `static/` lives inside the image for a container
 deployment, not at that path on the host. If `--variant`/
-`WIKI_DEPLOY_VARIANT` resolves to `container`/`container-arm`, this
-refuses outright with a clear error instead of attempting it (it stays
+`WIKI_DEPLOY_VARIANT` resolves to `container`/`container-arm`/
+`container-release`, this refuses outright with a clear error instead of attempting it (it stays
 silent only if the variant is simply unknown — blank never errors,
 matching every other optional resolver value). Rebuild and
 `docker compose up -d` again for a container deployment instead.
@@ -616,7 +642,7 @@ and password together — there's no partial-recovery path, same as the
 manual doc says). **Binary-style installs only** — this assumes
 `$install_root/bin/wiki-server` exists directly, and refuses outright
 (same as `static-redeploy` above) if `--variant`/`WIKI_DEPLOY_VARIANT`
-resolves to `container`/`container-arm`. Use
+resolves to `container`/`container-arm`/`container-release`. Use
 `docker compose exec wiki wiki-server --create-admin` for those
 instead.
 
@@ -672,9 +698,10 @@ also runs automatically as part of `deploy --first-time` (right before
 the service unit is installed, so the very first start already has the
 real key); re-run it
 standalone any time afterward to rotate a key. **Binary-style installs
-only** — a container deployment's real key lives in
-`docker-compose.yml`'s own `environment:`/`env_file:` instead; this
-subcommand just logs that and returns.
+only** — a container deployment (`container`/`container-arm`/
+`container-release`) has its real key live in `docker-compose.yml`'s own
+`environment:`/`env_file:` instead; this subcommand just logs that and
+returns.
 
 **Non-interactive path.** With no TTY attached, `resolve_secret()`
 falls back to an env var named `WIKI_DEPLOY_SECRET_<name>` — e.g.
@@ -701,9 +728,10 @@ systemd status  [--target=HOST]
 unit files — useful to re-run idempotently (e.g. after hand-editing the
 shipped `wiki.service`), or to add `--with-backup-timer` to an existing
 deployment that didn't opt in at first. Unlike `static-redeploy`/
-`setup-admin`, this one doesn't refuse for `container`/`container-arm` —
-it just *skips* the `wiki.service` part for them (logged, not silent),
-since Docker's own `restart: unless-stopped` already owns that process.
+`setup-admin`, this one doesn't refuse for `container`/`container-arm`/
+`container-release` — it just *skips* the `wiki.service` part for them
+(logged, not silent), since Docker's own `restart: unless-stopped`
+already owns that process.
 `--with-backup-timer` works identically for every variant — see the
 container-backup example under `deploy` above.
 
