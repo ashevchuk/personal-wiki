@@ -6,7 +6,7 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
-## [Unreleased]
+## [0.3.4] - 2026-10-21
 
 ### Added
 
@@ -23,6 +23,24 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ### Fixed
 
+- Toast UI Editor's `dark` UI mode (used by both `dark.css` and
+  `green.css`) carried its own hardcoded palette and font, unrelated to
+  the active site theme's CSS variables — most visible on `green.css`,
+  where the editor rendered as a plain gray UI instead of the page's
+  own green-on-black look. `edit.css` now re-points the editor's
+  toolbar, popups, mode-switch tabs, WYSIWYG canvas, and the
+  markdown-mode code-block background at the theme's own
+  `--bg`/`--panel-bg-2`/`--border`/`--link`/`--fg` variables and font
+  stack. `classic.css` is unaffected — its editor runs in Toast UI's
+  own light mode and was not touched.
+- Every toolbar button in Toast UI Editor lost its icon on hover, in
+  all three themes. Each theme's generic `button:hover` rule set
+  `background` as a shorthand, which resets `background-image` to
+  `none` along with the hover color — and Toast UI's toolbar icons are
+  drawn as a `background-image` sprite, so the shorthand wiped them on
+  every hover regardless of theme. `classic.css`, `dark.css`, and
+  `green.css` now set `background-color` instead, which recolors the
+  same way without touching `background-image`.
 - `tools/wiki-install.sh` (no binary change, so no version bump — this
   only touches the shell script, fetched from `main` directly, not
   from a tagged release asset):

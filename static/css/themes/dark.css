@@ -524,7 +524,10 @@ button {
   letter-spacing: normal;
 }
 button:hover {
-  background: var(--fg);
+  /* background-color, not the `background` shorthand -- see classic.css's
+     identical rule for why (Toast UI Editor's toolbar icons are a
+     background-image sprite the shorthand would wipe on hover). */
+  background-color: var(--fg);
   color: var(--bg);
 }
 

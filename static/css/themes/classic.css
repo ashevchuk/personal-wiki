@@ -544,7 +544,16 @@ button {
   letter-spacing: normal;
 }
 button:hover {
-  background: var(--link);
+  /* background-color, NOT the `background` shorthand -- found live via
+     the Toast UI Editor toolbar: its icon buttons draw their glyph as a
+     background-image sprite (see js/toastui-editor/toastui-editor.css),
+     and the shorthand resets background-image to none along with
+     setting the color, wiping every toolbar icon to a blank highlighted
+     box on hover. Only `.toastui-editor-toolbar-icons` has a sprite to
+     lose; every other `<button>` here has no background-image set at
+     all, so this is a strictly safer equivalent, not a behavior change
+     for them. */
+  background-color: var(--link);
   color: var(--bg);
   border-color: var(--link);
 }
