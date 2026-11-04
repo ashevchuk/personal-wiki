@@ -6,6 +6,40 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.8.1] - 2026-11-04
+
+### Fixed
+
+- `std::to_string(mtime.time_since_epoch().count())` in
+  `LocalEmbeddingProvider.cpp` was an ambiguous overload call under
+  zig's libc++ on 64-bit targets (`long`/`long long` both 8 bytes,
+  equally viable matches) — a real cross-compile failure found on
+  `aarch64-musl`/`x64-musl` once 0.8.0 made local embeddings compile by
+  default there. Both arguments now cast to an explicit width before
+  `std::to_string`.
+- `WIKI_ENABLE_LOCAL_EMBEDDINGS`'s `-mcpu=generic+v7a+fp16` cross-compile
+  override (needed for Cortex-A7's NEON) was gated only on
+  `CMAKE_SYSTEM_PROCESSOR STREQUAL "arm"`, which `armv6-musl`'s ARM1176
+  target also reports despite having no NEON unit at all — applying
+  ARMv7+NEON codegen there crash-looped the service with an illegal
+  instruction (`qemu-arm-static --cpu arm1176`, confirmed live) rather
+  than just running slower, once 0.8.0 made this the default for that
+  triplet too. `cross/arm-musl/toolchain.cmake` and
+  `cross/armv6-musl/toolchain.cmake` now each set a
+  `WIKI_CROSS_ARM_HAS_NEON` flag the override reads instead; without it,
+  ggml's own compile-time feature probing correctly falls back to a
+  scalar implementation. All four release triplets plus the native build
+  verified clean after this fix (`qemu-arm-static`/`qemu-aarch64-static`
+  for the ARM targets).
+
+### Changed
+
+- The default `CMAKE_BUILD_TYPE` (when none is passed) is now `Release`,
+  not `RelWithDebInfo` — a statically-linked `wiki-server` carried
+  roughly 100MB of DWARF debug info under the old default. Pass
+  `-DCMAKE_BUILD_TYPE=RelWithDebInfo` explicitly for a build that keeps
+  symbols for `addr2line`/`gdb`.
+
 ## [0.8.0] - 2026-11-04
 
 ### Changed

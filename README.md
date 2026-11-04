@@ -153,7 +153,7 @@ git clone https://github.com/microsoft/vcpkg.git vcpkg
 # own; see overlay-ports/md4c/portfile.cmake for details.
 cmake -S . -B build -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+  -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
 ctest --test-dir build --output-on-failure   # unit tests + a real HTTP security suite

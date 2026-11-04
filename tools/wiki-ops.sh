@@ -328,7 +328,7 @@ cmd_build_native() {
   local skip_tests=$1 local_embeddings=$2 cloud_embeddings=$3
   run cmake -S . -B build -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_BUILD_TYPE=Release \
     $(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
   run cmake --build build -j"$(nproc)"
   if [ "$skip_tests" != 1 ]; then
@@ -359,7 +359,7 @@ cmd_build_cross() {
     -DCMAKE_PREFIX_PATH="$SCRIPT_DIR/vcpkg_installed_arm/$triplet" \
     -DCMAKE_FIND_ROOT_PATH="$SCRIPT_DIR/vcpkg_installed_arm/$triplet" \
     -DDROGON_CTL_COMMAND="$drogon_ctl" \
-    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_BUILD_TYPE=Release \
     $(embeddings_cmake_args "$local_embeddings" "$cloud_embeddings")
   run cmake --build "$build_dir" -j"$(nproc)"
 

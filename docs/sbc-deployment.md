@@ -337,7 +337,7 @@ git clone https://github.com/microsoft/vcpkg.git vcpkg
 
 cmake -S . -B build -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+  -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j"$(nproc)"
 
 ctest --test-dir build --output-on-failure   # don't skip this before trusting the build
@@ -397,7 +397,7 @@ cmake -S . -B build-arm -G Ninja \
   -DCMAKE_PREFIX_PATH=$PWD/vcpkg_installed_arm/arm-musl \
   -DCMAKE_FIND_ROOT_PATH=$PWD/vcpkg_installed_arm/arm-musl \
   -DDROGON_CTL_COMMAND=$PWD/build/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl \
-  -DCMAKE_BUILD_TYPE=RelWithDebInfo
+  -DCMAKE_BUILD_TYPE=Release
 cmake --build build-arm -j"$(nproc)"
 ```
 
@@ -852,15 +852,17 @@ ssh root@<target> '
 ```
 
 **Strip the binaries on the target device itself, never on the dev
-machine.** `CMAKE_BUILD_TYPE=RelWithDebInfo` keeps debug symbols in the
-statically-linked ELF — `wiki-server` ships at roughly 116M,
-`wiki-mcp` at roughly 61M. `strip --strip-all` drops that down to around
-14M for `wiki-server` (roughly 8x smaller), with no behavior change. The
-dev machine's own `strip` doesn't recognize this cross-compiled ARM
-ELF's architecture, and `zig objcopy --strip-all` errors `unimplemented`
-for this static-musl-ARM shape — the target's own native `strip` (real
-GNU binutils, correct architecture) is what actually works. The
-unstripped `build-arm/wiki-server`/`wiki-mcp` stay on the dev machine,
+machine.** The default `CMAKE_BUILD_TYPE=Release` already carries no
+DWARF debug info, so this step has much less to reclaim than it used to
+— it's still run as a safety net (the remaining symbol table, and a
+full win for anyone who deliberately built with
+`-DCMAKE_BUILD_TYPE=RelWithDebInfo`/`Debug` instead and is deploying
+that). The dev machine's own `strip` doesn't recognize this
+cross-compiled ARM ELF's architecture, and `zig objcopy --strip-all`
+errors `unimplemented` for this static-musl-ARM shape regardless of
+build type — the target's own native `strip` (real GNU binutils,
+correct architecture) is what actually works. A `build-arm/` built with
+`-DCMAKE_BUILD_TYPE=RelWithDebInfo` stays on the dev machine unstripped,
 kept around for `addr2line`/`gdb` if a crash ever needs symbols.
 
 The `.bak-$STAMP` copies are never cleaned up automatically — sweep old

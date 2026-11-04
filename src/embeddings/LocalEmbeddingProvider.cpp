@@ -59,9 +59,16 @@ LocalEmbeddingProvider::LocalEmbeddingProvider(const std::string& modelPath,
     std::error_code ec;
     const auto mtime = std::filesystem::last_write_time(modelPath, ec);
     const auto size = std::filesystem::file_size(modelPath, ec);
+    // Explicit casts: zig's libc++ (the musl cross toolchain) has long
+    // and long long as the same 8-byte width on 64-bit targets, making
+    // mtime.time_since_epoch().count()'s (and file_size's) unqualified
+    // integer type match std::to_string(long) and std::to_string(long
+    // long) equally well -- an ambiguous-overload compile error found
+    // live on aarch64-musl/x64-musl, absent on the 32-bit ARM triplets
+    // where long/long long actually differ in width.
     modelIdentifier_ = "local:" + modelPath + ":" +
-                        std::to_string(mtime.time_since_epoch().count()) + ":" +
-                        std::to_string(size);
+                        std::to_string(static_cast<long long>(mtime.time_since_epoch().count())) + ":" +
+                        std::to_string(static_cast<unsigned long long>(size));
   }
 
   llama_model_params modelParams = llama_model_default_params();

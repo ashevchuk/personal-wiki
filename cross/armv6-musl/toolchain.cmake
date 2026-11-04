@@ -19,6 +19,19 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
+# ARM1176JZF-S has NO NEON unit — root CMakeLists.txt's
+# WIKI_ENABLE_LOCAL_EMBEDDINGS block reads this to skip the
+# -mcpu=generic+v7a+fp16 override ../arm-musl/'s own toolchain sets
+# WIKI_CROSS_ARM_HAS_NEON=TRUE for. Applying that override here forces
+# ARMv7+NEON codegen onto a true ARMv6 core, which illegal-instruction-
+# crashes outright rather than just running slower — confirmed live
+# (qemu-arm-static --cpu arm1176, SIGILL in ggml's own ARM NEON code).
+# Without the override, ggml's own compile-time feature probing (see
+# ggml-cpu/CMakeLists.txt's ARM branch) correctly detects this compiler
+# target has no NEON/dotprod/fp16-vector support and falls back to a
+# plain scalar implementation instead.
+set(WIKI_CROSS_ARM_HAS_NEON FALSE)
+
 set(CMAKE_C_COMPILER ${CMAKE_CURRENT_LIST_DIR}/cc)
 set(CMAKE_CXX_COMPILER ${CMAKE_CURRENT_LIST_DIR}/c++)
 set(CMAKE_AR ${CMAKE_CURRENT_LIST_DIR}/ar CACHE FILEPATH "")

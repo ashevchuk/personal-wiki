@@ -85,7 +85,7 @@ RUN cmake -S . -B build-arm -G Ninja \
       -DCMAKE_PREFIX_PATH="/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}" \
       -DCMAKE_FIND_ROOT_PATH="/src/vcpkg_installed_arm/${WIKI_CROSS_TRIPLET}" \
       -DDROGON_CTL_COMMAND=/src/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl \
-      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DCMAKE_BUILD_TYPE=Release \
       ${WIKI_CMAKE_EXTRA_ARGS} \
     && cmake --build build-arm -j"$(nproc)"
 

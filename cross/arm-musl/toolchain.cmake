@@ -13,6 +13,14 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 
+# Cortex-A7 has NEON — root CMakeLists.txt's WIKI_ENABLE_LOCAL_EMBEDDINGS
+# block reads this to decide whether its -mcpu=generic+v7a+fp16 override
+# applies. CMAKE_SYSTEM_PROCESSOR alone can't tell this target apart from
+# ../armv6-musl/'s ARM1176 (also reports "arm") even though the latter
+# has no NEON unit at all and would illegal-instruction-crash on code
+# built assuming it.
+set(WIKI_CROSS_ARM_HAS_NEON TRUE)
+
 set(CMAKE_C_COMPILER ${CMAKE_CURRENT_LIST_DIR}/cc)
 set(CMAKE_CXX_COMPILER ${CMAKE_CURRENT_LIST_DIR}/c++)
 set(CMAKE_AR ${CMAKE_CURRENT_LIST_DIR}/ar CACHE FILEPATH "")

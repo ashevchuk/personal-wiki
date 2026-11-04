@@ -2,14 +2,21 @@ cmake_minimum_required(VERSION 3.21)
 # Bump this on every user-visible fix/feature and record it in
 # CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
 # `wiki-mcp --version`) and reported as the MCP serverInfo.version.
-project(personal_wiki VERSION 0.8.0 LANGUAGES CXX)
+project(personal_wiki VERSION 0.8.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Release (optimized, no debug info), not RelWithDebInfo: a statically-
+# linked RelWithDebInfo wiki-server carries roughly 100MB of DWARF debug
+# info alone (confirmed live — see docs/sbc-deployment.md's "Strip the
+# binaries..." note for the exact before/after numbers a target-side
+# `strip` used to need to claw back). Pass -DCMAKE_BUILD_TYPE=
+# RelWithDebInfo explicitly for a build that keeps symbols around for
+# addr2line/gdb.
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
-  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type" FORCE)
+  set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
 # Prefer static linking of our own code + light dependencies; system libc/libstdc++/
@@ -311,11 +318,22 @@ endif()
 # fixes it (clang honors the LAST -mcpu on the command line). Scoped to
 # only this FetchContent_MakeAvailable call, restored immediately after —
 # see the comment on why this must NOT be a global toolchain change.
+#
+# Gated on WIKI_CROSS_ARM_HAS_NEON (set by cross/arm-musl/toolchain.cmake,
+# TRUE — Cortex-A7), not just CMAKE_SYSTEM_PROCESSOR STREQUAL "arm": that
+# alone can't distinguish this target from cross/armv6-musl/'s ARM1176,
+# which reports the same "arm" processor name but has no NEON unit at
+# all. Applying this override there forced ARMv7+NEON codegen onto a
+# true ARMv6 core — illegal-instruction crash, not just slower (confirmed
+# live, qemu-arm-static --cpu arm1176). Without the override on that
+# target, ggml's own compile-time feature probing (ggml-cpu/CMakeLists.txt)
+# correctly detects no NEON/dotprod/fp16-vector support and falls back to
+# a plain scalar implementation instead.
 # ---------------------------------------------------------------------------
 if(WIKI_ENABLE_LOCAL_EMBEDDINGS)
   set(_wiki_saved_c_flags "${CMAKE_C_FLAGS}")
   set(_wiki_saved_cxx_flags "${CMAKE_CXX_FLAGS}")
-  if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm")
+  if(CMAKE_CROSSCOMPILING AND CMAKE_SYSTEM_PROCESSOR STREQUAL "arm" AND WIKI_CROSS_ARM_HAS_NEON)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mcpu=generic+v7a+fp16")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mcpu=generic+v7a+fp16")
   endif()

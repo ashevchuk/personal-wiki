@@ -112,7 +112,7 @@ COPY config.example.toml ./
 RUN cmake -S . -B build -G Ninja \
       -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
       -DVCPKG_TARGET_TRIPLET="$(cat /tmp/vcpkg-triplet)" \
-      -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+      -DCMAKE_BUILD_TYPE=Release \
       ${WIKI_CMAKE_EXTRA_ARGS} \
     && cmake --build build -j"$(nproc)"
 
