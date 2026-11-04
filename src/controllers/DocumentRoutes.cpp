@@ -249,6 +249,46 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 
+  // --- POST /api/documents/parse-import — decode an uploaded .md file ----
+  // Exact path for the same reason as /move below. Stateless: nothing is
+  // read from or written to the vault, the caller's own text is parsed with
+  // the same yaml-cpp reader the vault uses, so the edit page's Upload
+  // button has no YAML parser of its own to drift from it.
+  app.registerHandler(
+      "/api/documents/parse-import",
+      [](const HttpRequestPtr& req, std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("content") || !(*json)["content"].isString()) {
+          callback(jsonError(k400BadRequest, "expected {content} string"));
+          return;
+        }
+        const std::string content = (*json)["content"].asString();
+        constexpr size_t kMaxImportBytes = 16u * 1024u * 1024u;
+        if (content.size() > kMaxImportBytes) {
+          callback(jsonError(k413RequestEntityTooLarge, "file too large"));
+          return;
+        }
+
+        const ImportedDocument imported = parseForImport(content);
+        Json::Value fields(Json::objectValue);
+        const auto& f = imported.fields;
+        if (f.title) fields["title"] = *f.title;
+        if (f.type) fields["type"] = *f.type;
+        if (f.visibility) fields["visibility"] = *f.visibility;
+        if (f.due) fields["due"] = *f.due;
+        if (f.recur) fields["recur"] = *f.recur;
+        if (f.tags) fields["tags"] = tagsToJson(*f.tags);
+        Json::Value out;
+        out["fields"] = fields;
+        out["body"] = imported.body;
+        callback(HttpResponse::newHttpJsonResponse(out));
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
   // --- POST /api/documents/move — rename/move ----------------------------
   // Exact path, not a regex: PUT/GET `^/api/documents/(.*)$` would
   // otherwise treat "move" as a document path. Same {oldPath, newPath}

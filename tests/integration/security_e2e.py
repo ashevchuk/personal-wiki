@@ -251,6 +251,8 @@ def run_checks(sandbox, vault):
     check("anon delete -> 401", status == 401, f"got {status}")
     status, _, _ = anon.post_json("/api/documents/move", {"oldPath": "x.md", "newPath": "y.md"})
     check("anon document move -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/documents/parse-import", {"content": "---\ntitle: x\n---\n"})
+    check("anon parse-import -> 401", status == 401, f"got {status}")
     status, _, _ = anon.upload("/api/attachments/x.md", "a.png", b"data")
     check("anon upload -> 401", status == 401, f"got {status}")
     status, _, _ = anon.delete("/api/attachments/x.assets/a.png")
@@ -339,6 +341,29 @@ def run_checks(sandbox, vault):
     check("mutating request without csrf header -> 403", status == 403, f"got {status}")
     status, _, _ = admin.post_json("/api/documents/move", {"oldPath": "x.md", "newPath": "y.md"})
     check("document move without csrf header -> 403", status == 403, f"got {status}")
+    status, _, _ = admin.post_json("/api/documents/parse-import", {"content": "x"})
+    check("parse-import without csrf header -> 403", status == 403, f"got {status}")
+    imported_cases = [
+        ("single-quoted apostrophe", "---\ntitle: 'Note: it''s here'\n---\nBody\n",
+         {"title": "Note: it's here"}, "Body\n"),
+        ("double-quoted \\n escape", '---\ntitle: "line1\\nline2"\n---\nBody\n',
+         {"title": "line1\nline2"}, "Body\n"),
+        ("CRLF line endings", "---\r\ntitle: Hi\r\ntags: [a]\r\n---\r\nBody\r\n",
+         {"title": "Hi", "tags": ["a"]}, "Body\r\n"),
+        ("block-style tags", "---\ntags:\n  - a\n  - b\n---\nBody\n",
+         {"tags": ["a", "b"]}, "Body\n"),
+        ("no front matter", "Just text\n", {}, "Just text\n"),
+    ]
+    for label, content, want_fields, want_body in imported_cases:
+        status, _, raw = admin.post_json("/api/documents/parse-import", {"content": content},
+                                          headers={"X-CSRF-Token": csrf})
+        got = json.loads(raw) if raw else None
+        check(f"parse-import: {label}",
+              status == 200 and got == {"fields": want_fields, "body": want_body},
+              f"got {status} {got}")
+    status, _, _ = admin.post_json("/api/documents/parse-import", {"content": 5},
+                                    headers={"X-CSRF-Token": csrf})
+    check("parse-import: non-string content -> 400", status == 400, f"got {status}")
     status, _, _ = admin.post_json("/api/agent/sessions", {"instruction": "x"})
     check("agent start without csrf header -> 403", status == 403, f"got {status}")
     status, _, raw = admin.post_json("/api/agent/sessions", {"instruction": "x"},

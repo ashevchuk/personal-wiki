@@ -6,6 +6,20 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.4.1] - 2026-11-04
+
+### Fixed
+
+- The editor's Upload button no longer reads front matter with its own
+  hand-written parser. The file is decoded by the new
+  `POST /api/documents/parse-import` using the same yaml-cpp reader as the
+  vault, so the two can no longer disagree. Values the old reader got wrong
+  now import correctly: escapes in double-quoted values (`\n`, `\t`,
+  `\x01`), single-quoted values with a doubled apostrophe, tags containing
+  a comma, CRLF line endings (the whole block was imported as body text),
+  `...` as the block terminator, and block-style tag lists (which cleared
+  the Tags field).
+
 ## [0.4.0] - 2026-11-04
 
 ### Added

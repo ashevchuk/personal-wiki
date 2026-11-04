@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,5 +51,30 @@ ParsedDocument parseFrontMatter(std::string_view rawContent);
 // parseFrontMatter for any FrontMatter produced by this codebase — this is
 // what DocumentService writes to disk.
 std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body);
+
+// The editable fields of an uploaded .md file. A field is set only when the
+// file's front matter actually has that key, so a caller can leave its own
+// value alone for a key the file has no opinion about (unlike FrontMatter,
+// whose defaults can't tell "absent" from "empty").
+struct ImportedFields {
+  std::optional<std::string> title;
+  std::optional<std::string> type;
+  std::optional<std::string> visibility;  // "public" or "private" only
+  std::optional<std::string> due;
+  std::optional<std::string> recur;
+  std::optional<std::vector<std::string>> tags;
+};
+
+struct ImportedDocument {
+  ImportedFields fields;
+  std::string body;
+};
+
+// Reads an externally supplied .md file with the same YAML parser that reads
+// the vault, so a file saved by serializeFrontMatter or by another tool
+// decodes identically to how it would on disk. Like parseFrontMatter, a
+// missing, malformed, or non-mapping front-matter block is not an error: no
+// field is set and the whole input is the body. Never throws.
+ImportedDocument parseForImport(std::string_view rawContent);
 
 }  // namespace wikicore::vault

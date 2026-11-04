@@ -22,64 +22,6 @@ window.WikiPages = window.WikiPages || {};
     }
   }
 
-  // Strips one layer of YAML scalar quoting ('...'/"...") — yaml-cpp
-  // (FrontMatter.cpp's serializeFrontMatter, the server side of this same
-  // round trip) only quotes a scalar when it actually needs to (a title
-  // containing ": ", a leading special character, etc.), so most values
-  // arrive bare and this is a no-op for them.
-  function unquoteYaml(s) {
-    var m = /^'(.*)'$/.exec(s) || /^"(.*)"$/.exec(s);
-    return m ? m[1] : s;
-  }
-
-  // A small, deliberately flat parser for exactly the shape
-  // FrontMatter::serializeFrontMatter (src/vault/FrontMatter.cpp) writes
-  // on disk -- NOT a general YAML parser. Only pulls out title/type/
-  // visibility/tags/due/recur, the fields this form actually has inputs
-  // for; id/created/updated are read back from the file too but
-  // intentionally ignored here, same as the save path already never
-  // sends them -- the server owns those. Returns { fields: {...}, body:
-  // "..." };
-  // `fields` only contains keys actually found, so a caller can tell
-  // "not present in the file" apart from "present but empty" and leave
-  // the corresponding form input alone in the former case. A file with
-  // no "---" front-matter block at all is treated as pure body.
-  function parseFrontMatterClientSide(raw) {
-    if (raw.slice(0, 4) !== "---\n") return { fields: {}, body: raw };
-    var closeIdx = raw.indexOf("\n---\n", 4);
-    if (closeIdx === -1) return { fields: {}, body: raw };
-
-    var block = raw.slice(4, closeIdx);
-    var body = raw.slice(closeIdx + 5);
-    var fields = {};
-
-    block.split("\n").forEach(function (line) {
-      var colon = line.indexOf(":");
-      if (colon === -1) return;
-      var key = line.slice(0, colon).trim();
-      var value = line.slice(colon + 1).trim();
-      if (key === "title" || key === "type" || key === "visibility" || key === "due" ||
-          key === "recur") {
-        fields[key] = unquoteYaml(value);
-      } else if (key === "tags") {
-        // Flow-sequence form only ("tags: [a, b]") -- the only shape
-        // serializeFrontMatter ever writes (YAML::Flow). A block-style
-        // list, hand-edited outside this app, is out of scope for this
-        // deliberately flat parser -- falls through as an empty list
-        // rather than guessing wrong.
-        var m = /^\[(.*)\]$/.exec(value);
-        fields.tags = m
-          ? m[1]
-              .split(",")
-              .map(function (t) { return unquoteYaml(t.trim()); })
-              .filter(function (t) { return t.length > 0; })
-          : [];
-      }
-    });
-
-    return { fields: fields, body: body };
-  }
-
   window.WikiPages.renderEdit = function (container, docPath, session) {
     if (!session.authenticated) {
       window.location.href = basePath() + "/login";
@@ -1601,9 +1543,10 @@ window.WikiPages = window.WikiPages || {};
 
     // "Upload" button — imports a whole .md file (front-matter + body)
     // as this document's content, the reverse of the view page's
-    // "Download" button. Purely client-side: FileReader reads the file,
-    // parseFrontMatterClientSide splits it, nothing touches the network
-    // until the user hits Save themselves. `path` is deliberately left
+    // "Download" button. FileReader reads the file and
+    // POST /api/documents/parse-import decodes it with the vault's own
+    // YAML parser (no second parser lives here); nothing is saved until
+    // the user hits Save themselves. `path` is deliberately left
     // alone -- for an existing document it's read-only anyway, and for a
     // new one it may already carry a folder prefix from "+ New" that the
     // uploaded file has no opinion about.
@@ -1620,16 +1563,33 @@ window.WikiPages = window.WikiPages || {};
       function applyFile() {
         var reader = new FileReader();
         reader.onload = function () {
-          var parsed = parseFrontMatterClientSide(String(reader.result));
-          var f = parsed.fields;
-          if (f.title !== undefined) titleInput.value = f.title;
-          if (f.type !== undefined) typeInput.value = f.type;
-          if (f.due !== undefined) setDueFields(f.due);
-          if (f.recur !== undefined) setRecurFields(f.recur);
-          if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
-          if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");
-          editor.setMarkdown(parsed.body);
-          setStatus("Loaded " + file.name + ".", "ok");
+          fetch(basePath() + "/api/documents/parse-import", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": getCookie("wiki_csrf_token"),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ content: String(reader.result) }),
+          })
+            .then(function (resp) {
+              if (!resp.ok) return errorFromResponse(resp).then(function (err) { throw err; });
+              return resp.json();
+            })
+            .then(function (parsed) {
+              var f = parsed.fields;
+              if (f.title !== undefined) titleInput.value = f.title;
+              if (f.type !== undefined) typeInput.value = f.type;
+              if (f.due !== undefined) setDueFields(f.due);
+              if (f.recur !== undefined) setRecurFields(f.recur);
+              if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
+              if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");
+              editor.setMarkdown(parsed.body);
+              setStatus("Loaded " + file.name + ".", "ok");
+            })
+            .catch(function (err) {
+              setStatus("Failed to import " + file.name + ": " + err.message, "error");
+            });
         };
         reader.onerror = function () {
           setStatus("Failed to read " + file.name + ".", "error");

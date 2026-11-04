@@ -63,6 +63,12 @@ std::string readScalarOr(const YAML::Node& node, const std::string& fallback) {
   return node.as<std::string>();
 }
 
+std::optional<std::string> readScalarIfPresent(const YAML::Node& node) {
+  if (!node.IsDefined() || node.IsMap() || node.IsSequence()) return std::nullopt;
+  if (node.IsNull()) return std::string();
+  return node.as<std::string>();
+}
+
 }  // namespace
 
 ParsedDocument parseFrontMatter(std::string_view rawContent) {
@@ -106,6 +112,39 @@ ParsedDocument parseFrontMatter(std::string_view rawContent) {
   fm.visibility = (rawVisibility == "public") ? "public" : "private";
 
   result.frontMatter = std::move(fm);
+  return result;
+}
+
+ImportedDocument parseForImport(std::string_view rawContent) {
+  ImportedDocument result;
+  result.body = std::string(rawContent);
+
+  const auto split = splitFrontMatterBlock(rawContent);
+  if (!split) return result;
+
+  YAML::Node doc;
+  try {
+    doc = YAML::Load(split->first);
+  } catch (const YAML::Exception&) {
+    return result;
+  }
+  if (!doc.IsMap()) return result;
+
+  result.body = std::string(rawContent.substr(split->second));
+  ImportedFields& fields = result.fields;
+  fields.title = readScalarIfPresent(doc["title"]);
+  fields.type = readScalarIfPresent(doc["type"]);
+  fields.due = readScalarIfPresent(doc["due"]);
+  fields.recur = readScalarIfPresent(doc["recur"]);
+  if (const auto visibility = readScalarIfPresent(doc["visibility"])) {
+    fields.visibility = (*visibility == "public") ? "public" : "private";
+  }
+  const YAML::Node tags = doc["tags"];
+  if (tags.IsSequence()) {
+    fields.tags = readTags(tags);
+  } else if (tags.IsDefined() && tags.IsNull()) {
+    fields.tags = std::vector<std::string>{};
+  }
   return result;
 }
 
