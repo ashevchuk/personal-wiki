@@ -96,6 +96,24 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
             -DCMAKE_BUILD_TYPE=Release
 
+      # Same reasoning as the Configure step above, for a dependency vcpkg
+      # doesn't own: llama.cpp/ggml (WIKI_ENABLE_LOCAL_EMBEDDINGS, ON by
+      # default since 0.8.0) is pulled in via FetchContent, not vcpkg --
+      # vcpkg's own packages get fully built by `cmake` configure itself
+      # (manifest-mode install), untraced, but a FetchContent subproject
+      # only gets ADDED to the build graph at configure time; its actual
+      # .cpp/.c files compile during `cmake --build`, the one step that's
+      # traced. Left alone, every llama.cpp/ggml translation unit gets
+      # CodeQL-analyzed on every single run (not just an occasional
+      # cold-cache one, unlike the vcpkg case) -- confirmed live, 100+
+      # alerts in build/_deps/llama_cpp-src/ after 0.8.0 made this
+      # dependency part of the default build. Building its real library
+      # targets here, before CodeQL starts tracing, means the traced Build
+      # step below only has wikicore/wiki-server/wiki-mcp/tests left to
+      # compile (Ninja sees these targets already up to date).
+      - name: Build llama.cpp/ggml (untraced)
+        run: cmake --build build --target llama ggml ggml-cpu ggml-base vendor-hash -j"$(nproc)"
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
