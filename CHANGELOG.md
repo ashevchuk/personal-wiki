@@ -6,6 +6,30 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.8.2] - 2026-11-04
+
+### Fixed
+
+- 0.8.1's `CMAKE_BUILD_TYPE=Release` default didn't actually produce a
+  debug-info-free cross-compiled binary: `zig cc`/`zig c++` emit DWARF
+  debug info by default even with no `-g` flag at all (confirmed live —
+  a trivial `int main(){}` compiled with zero flags already had
+  `.debug_info`; unlike gcc/clang, omitting `-g` is not "no debug info"
+  for zig). Every `cross/*/{cc,c++}` wrapper now passes `-g0`
+  unconditionally. Verified against a genuinely clean rebuild (shared
+  vcpkg install root wiped, `VCPKG_BINARY_SOURCES=clear`, so nothing
+  was silently restored from a pre-fix binary cache) for all four
+  release triplets: `wiki-server` dropped from ~143MB to ~25-28MB
+  unstripped, all `unit_tests` still pass under
+  `qemu-arm-static`/`qemu-aarch64-static` with each target's real CPU
+  model. A small remainder (~12MB on `x64-musl`) comes from zig's own
+  bundled musl runtime (confirmed with a minimal reproduction — a
+  statically-linked, already-`-g0`-compiled "hello world" still carries
+  it), unrelated to this project's own code or dependencies, and
+  already handled by the existing target-side `strip --strip-all` step.
+
+Bump to 0.8.2.
+
 ## [0.8.1] - 2026-11-04
 
 ### Fixed

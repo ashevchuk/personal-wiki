@@ -1,2 +1,9 @@
 #!/bin/sh
-exec zig cc -target aarch64-linux-musl -mcpu=generic "$@"
+# -g0: zig cc/c++ emits DWARF debug info by default even with no -g flag
+# at all (confirmed live -- a plain 'int main(){}' compile with zero flags
+# had .debug_info; unlike gcc/clang, omitting -g is NOT "no debug info" for
+# zig). -g0 is sticky regardless of position -- a LATER -g in "$@" (e.g.
+# from -DCMAKE_BUILD_TYPE=RelWithDebInfo) does NOT re-enable it (tested both
+# orderings). This wrapper always strips debug info; there is currently no
+# flag to opt back in for a cross build specifically.
+exec zig cc -target aarch64-linux-musl -mcpu=generic -g0 "$@"
