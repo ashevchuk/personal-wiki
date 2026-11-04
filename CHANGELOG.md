@@ -6,6 +6,28 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.4.0] - 2026-11-04
+
+### Added
+
+- The Account page is split into tabs (Password, Backup & Trash, Remote MCP,
+  Agents, Embeddings). The active tab is kept in the URL hash
+  (`/account#mcp`), so it survives the full page reload every navigation
+  does and can be linked to directly.
+- The Remote MCP tab has a "Connect a client" block: the endpoint URL
+  derived from the page's own origin and base path, plus copyable examples
+  for `claude mcp add`, an `mcpServers` JSON config, and a `curl`
+  `tools/list` call. Examples use a `<TOKEN>` placeholder; the token itself
+  is never rendered there.
+
+### Changed
+
+- Folder names no longer carry a trailing `/`, and tags no longer carry a
+  leading `#`, in the sidebar tree, the folder page (list and heading) and
+  search results. A tag group's expand arrow already marks it as a group.
+  The `/` inside a multi-level tag such as `lang/python` is the hierarchy
+  separator and is unchanged where the full tag is shown.
+
 ## [0.3.4] - 2026-10-21
 
 ### Added

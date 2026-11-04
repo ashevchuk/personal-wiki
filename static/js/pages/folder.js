@@ -65,7 +65,7 @@ window.WikiPages = window.WikiPages || {};
       folderNames.forEach(function (name) {
         var li = el("li");
         var a = el("a", { href: basePath() + "/folder/" + encodeVaultPath(prefix + name) });
-        a.textContent = name + "/";
+        a.textContent = name;
         li.appendChild(a);
         folderUl.appendChild(li);
       });
@@ -164,7 +164,7 @@ window.WikiPages = window.WikiPages || {};
     document.getElementById("page-title").textContent =
       (folderPath || "Browse") + " — wiki";
 
-    var heading = folderPath ? escapedPath + "/" : "All documents";
+    var heading = folderPath ? escapedPath : "All documents";
     container.innerHTML =
       renderBreadcrumbs(folderPath) +
       "<h1>" +

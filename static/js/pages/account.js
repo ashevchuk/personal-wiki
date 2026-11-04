@@ -297,6 +297,10 @@ window.WikiPages = window.WikiPages || {};
       "app displays it again.</p>" +
       '<input type="text" id="mcp-remote-token-value" readonly ' +
       'style="width:100%" onclick="this.select()"></div>' +
+      "<h3>Connect a client</h3>" +
+      "<p>Endpoint (the token is not shown here — replace <code>&lt;TOKEN&gt;</code> " +
+      "in the examples below with the one from Regenerate token):</p>" +
+      '<div id="mcp-remote-connect"></div>' +
       "<h3>Allowed IPs / CIDRs</h3>" +
       "<p>Empty means no IP restriction — the bearer token is the actual gate; " +
       "this is an optional extra layer.</p>" +
@@ -462,7 +466,93 @@ window.WikiPages = window.WikiPages || {};
       });
   }
 
+  // navigator.clipboard only exists in secure contexts, and this app is
+  // commonly served over plain http on a LAN.
+  function copyText(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      if (ok) resolve();
+      else reject(new Error("copy failed"));
+    });
+  }
+
+  function mcpConnectExamples(url) {
+    return [
+      { label: "Endpoint", text: url },
+      {
+        label: "Claude Code",
+        text:
+          "claude mcp add --transport http personal-wiki-remote " +
+          url +
+          ' --header "Authorization: Bearer <TOKEN>"',
+      },
+      {
+        label: "mcpServers JSON (Claude Desktop/Code config)",
+        text: JSON.stringify(
+          {
+            mcpServers: {
+              "personal-wiki-remote": {
+                type: "http",
+                url: url,
+                headers: { Authorization: "Bearer <TOKEN>" },
+              },
+            },
+          },
+          null,
+          2
+        ),
+      },
+      {
+        label: "curl (list tools)",
+        text:
+          "curl -X POST " +
+          url +
+          ' \\\n  -H "Authorization: Bearer <TOKEN>" \\\n  -H "Content-Type: application/json" \\\n' +
+          "  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'",
+      },
+    ];
+  }
+
+  function renderMcpConnectExamples() {
+    var host = document.getElementById("mcp-remote-connect");
+    var url = window.location.origin + basePath() + "/mcp";
+    mcpConnectExamples(url).forEach(function (ex) {
+      var label = document.createElement("p");
+      label.textContent = ex.label + " ";
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Copy";
+      btn.addEventListener("click", function () {
+        copyText(ex.text).then(
+          function () {
+            btn.textContent = "Copied";
+            setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+          },
+          function () {
+            btn.textContent = "Copy failed";
+          }
+        );
+      });
+      label.appendChild(btn);
+      var pre = document.createElement("pre");
+      pre.textContent = ex.text;
+      host.appendChild(label);
+      host.appendChild(pre);
+    });
+  }
+
   function wireRemoteMcpSection() {
+    renderMcpConnectExamples();
     var errorEl = document.getElementById("mcp-remote-error");
     var successEl = document.getElementById("mcp-remote-success");
     var enabledCb = document.getElementById("mcp-remote-enabled");
@@ -695,7 +785,11 @@ window.WikiPages = window.WikiPages || {};
         return resp.json();
       })
       .then(function (status) {
-        if (!status) return;  // 404 case above — nothing to render
+        if (!status) {
+          container.innerHTML =
+            '<p class="empty">Semantic search is not compiled into this build.</p>';
+          return;
+        }
 
         var section = document.createElement("div");
         section.innerHTML = embeddingsSectionHtml;
@@ -859,8 +953,8 @@ window.WikiPages = window.WikiPages || {};
       return;
     }
 
-    container.innerHTML =
-      '<h1>Change password</h1>' +
+    var passwordPanelHtml =
+      "<h2>Change password</h2>" +
       '<p id="account-error" style="color:#ff5555"></p>' +
       '<p id="account-success" style="color:#50fa7b"></p>' +
       '<form id="account-form">' +
@@ -871,18 +965,68 @@ window.WikiPages = window.WikiPages || {};
       '<p><label>Confirm new password ' +
       '<input type="password" name="confirmPassword" autocomplete="new-password" required></label></p>' +
       '<p><button type="submit">Change password</button></p>' +
-      "</form>" +
-      renderBackupSection() +
-      renderTrashSection() +
-      renderRemoteMcpSection() +
-      renderDraftAuditSection() +
-      renderChatAuditSection();
+      "</form>";
+
+    var tabs = [
+      { id: "password", label: "Password", html: passwordPanelHtml },
+      { id: "data", label: "Backup & Trash", html: renderBackupSection() + renderTrashSection() },
+      { id: "mcp", label: "Remote MCP", html: renderRemoteMcpSection() },
+      { id: "agents", label: "Agents", html: renderDraftAuditSection() + renderChatAuditSection() },
+      { id: "embeddings", label: "Embeddings", html: "" },
+    ];
+
+    container.innerHTML =
+      "<h1>Account</h1>" +
+      '<div id="account-status"></div>' +
+      '<div class="account-tabs" role="tablist">' +
+      tabs
+        .map(function (t) {
+          return (
+            '<button type="button" class="account-tab" role="tab" data-tab="' +
+            t.id +
+            '">' +
+            WikiCommon.escapeHtml(t.label) +
+            "</button>"
+          );
+        })
+        .join("") +
+      "</div>" +
+      tabs
+        .map(function (t) {
+          return (
+            '<div class="account-panel" role="tabpanel" id="account-panel-' +
+            t.id +
+            '">' +
+            t.html +
+            "</div>"
+          );
+        })
+        .join("");
+
+    function showTab(id) {
+      if (!tabs.some(function (t) { return t.id === id; })) id = tabs[0].id;
+      tabs.forEach(function (t) {
+        document.getElementById("account-panel-" + t.id).hidden = t.id !== id;
+        document
+          .querySelector('.account-tab[data-tab="' + t.id + '"]')
+          .setAttribute("aria-selected", String(t.id === id));
+      });
+    }
+    Array.prototype.forEach.call(container.querySelectorAll(".account-tab"), function (btn) {
+      btn.addEventListener("click", function () {
+        window.location.hash = btn.getAttribute("data-tab");
+      });
+    });
+    window.addEventListener("hashchange", function () {
+      showTab(window.location.hash.slice(1));
+    });
+    showTab(window.location.hash.slice(1));
 
     wireBackupSection();
     wireTrashSection(container);
     wireRemoteMcpSection();
-    wireReindexStatusSection(container);
-    wireEmbeddingsSection(container);
+    wireReindexStatusSection(document.getElementById("account-status"));
+    wireEmbeddingsSection(document.getElementById("account-panel-embeddings"));
 
     var errorEl = document.getElementById("account-error");
     var successEl = document.getElementById("account-success");

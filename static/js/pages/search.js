@@ -128,7 +128,7 @@ window.WikiPages = window.WikiPages || {};
       if (item.tags && item.tags.length > 0) {
         html += '<p class="tags">';
         item.tags.forEach(function (t) {
-          html += "#" + escapeHtml(t) + " ";
+          html += escapeHtml(t) + " ";
         });
         html += "</p>";
       }

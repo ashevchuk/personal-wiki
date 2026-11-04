@@ -110,7 +110,7 @@
           var label = el("a", {
             class: "nav-folder-label",
             href: bp + "/folder/" + encodeVaultPath(childPrefix),
-            text: name + "/",
+            text: name,
           });
           var wrap = el("span", { class: "nav-folder-btn" });
           wrap.appendChild(arrowBtn);
@@ -216,7 +216,7 @@
           });
           var arrow = el("span", { class: "nav-arrow", text: isExpanded ? "▾" : "▸" });
           var label = el("span", {
-            text: name + "/ (" + totalCount(childNode) + ")",
+            text: name + " (" + totalCount(childNode) + ")",
           });
           // The WHOLE row toggles here, unlike buildTree's document
           // folders (separate arrow-button vs. label-link) — a tag
@@ -255,7 +255,7 @@
           // only ever shows a filename once inside a folder, never the
           // whole path again.
           var leafName = t.tag.slice(pathPrefix.length);
-          a.textContent = "#" + leafName + " (" + t.count + ")";
+          a.textContent = leafName + " (" + t.count + ")";
           li.appendChild(a);
           ul.appendChild(li);
         });

@@ -529,6 +529,35 @@ button {
   color-scheme: light;
   padding: 0.4rem 0.5rem;
 }
+.account-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 1rem;
+}
+.account-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.account-tab:hover {
+  background: none;
+  color: var(--fg);
+}
+.account-tab[aria-selected="true"] {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+#mcp-remote-connect pre {
+  overflow-x: auto;
+  background: var(--panel-bg-2);
+  border: 1px solid var(--border);
+  padding: 0.5rem;
+}
 input:focus,
 textarea:focus,
 select:focus {
