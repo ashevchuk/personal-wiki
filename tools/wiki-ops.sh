@@ -305,12 +305,22 @@ triplet_build_dir() {
 # embeddings_cmake_args LOCAL_EMBEDDINGS CLOUD_EMBEDDINGS — the only two real
 # WIKI_ENABLE_* flags that belong on a build/deploy command (CMakeLists.txt's
 # third one, WIKI_ENABLE_FUZZING, is a dev-only tests/fuzz/ flag, needs Clang,
-# and has no place here). Both OFF by default, matching CMakeLists.txt's own
+# and has no place here). Both ON by default, matching CMakeLists.txt's own
 # option() defaults — see docs/embeddings.md for what each actually requires.
+# Each argument is tri-state: empty emits no -D flag at all (so an existing
+# build dir's own cached value, or CMakeLists.txt's default on a fresh one,
+# governs); 1/0 force an explicit ON/OFF, the latter for a deliberately
+# lighter build (--no-local-embeddings/--no-cloud-embeddings).
 embeddings_cmake_args() {
   local local_embeddings=$1 cloud_embeddings=$2 args=""
-  [ "$local_embeddings" = 1 ] && args="$args -DWIKI_ENABLE_LOCAL_EMBEDDINGS=ON"
-  [ "$cloud_embeddings" = 1 ] && args="$args -DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON"
+  case "$local_embeddings" in
+    1) args="$args -DWIKI_ENABLE_LOCAL_EMBEDDINGS=ON" ;;
+    0) args="$args -DWIKI_ENABLE_LOCAL_EMBEDDINGS=OFF" ;;
+  esac
+  case "$cloud_embeddings" in
+    1) args="$args -DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON" ;;
+    0) args="$args -DWIKI_ENABLE_CLOUD_EMBEDDINGS=OFF" ;;
+  esac
   printf '%s' "${args# }"
 }
 
@@ -332,7 +342,7 @@ cmd_build_cross() {
   build_dir=$(triplet_build_dir "$triplet" "")
   local drogon_ctl="$SCRIPT_DIR/build/vcpkg_installed/x64-linux/tools/drogon/drogon_ctl"
   [ -x "$drogon_ctl" ] || die "native drogon_ctl not found at $drogon_ctl — run '$0 build native' first (classic-mode cross builds reuse the host's own drogon_ctl, see docs/sbc-deployment.md's Path B)"
-  if [ "$local_embeddings" = 1 ]; then
+  if [ "$local_embeddings" != 0 ]; then
     log "WIKI_ENABLE_LOCAL_EMBEDDINGS under zig/$triplet is UNVERIFIED — llama.cpp's own CMake has never been exercised against this cross-compilation path, see docs/wiki-ops.md"
   fi
 
@@ -375,7 +385,7 @@ cmd_build_cross_container() {
   local out_dir
   out_dir=$(triplet_build_dir "$triplet" "-container")
   out_dir="$SCRIPT_DIR/$out_dir"
-  if [ "$local_embeddings" = 1 ]; then
+  if [ "$local_embeddings" != 0 ]; then
     log "WIKI_ENABLE_LOCAL_EMBEDDINGS under this zig toolchain is UNVERIFIED — see docs/wiki-ops.md"
   fi
   local extra_args build_args=(--build-arg "WIKI_CROSS_TRIPLET=$triplet")
@@ -401,17 +411,21 @@ cmd_build_cross_container() {
 
 # Builds via Dockerfile.release (docker-compose.release.yml overlay) —
 # fetches an already-built, already-tested release tarball instead of
-# compiling anything, same WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/
-# WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF binary release.yml always publishes
-# (release_embeddings_guard's own gap for the bare 'release' variant
-# applies here too — there is simply no flag that changes what's inside
-# this tarball, unlike 'container'/'cross'/'cross-container' which
-# actually compile). RELEASE_TAG empty means "latest", resolved by
-# Dockerfile.release itself at build time, not here.
+# compiling anything, same binary release.yml always publishes: both
+# WIKI_ENABLE_LOCAL_EMBEDDINGS/WIKI_ENABLE_CLOUD_EMBEDDINGS ON, since
+# that's CMakeLists.txt's own default and release.yml builds with no
+# embeddings flags of its own (see that file's own comment on why ON —
+# a release binary needs to actually support whatever [embeddings]/
+# [llm] provider a target's config.toml already has, or swapping one
+# onto such a target crash-loops the service). There is simply no flag
+# that changes what's inside this tarball, unlike 'container'/'cross'/
+# 'cross-container' which actually compile. RELEASE_TAG empty means
+# "latest", resolved by Dockerfile.release itself at build time, not
+# here.
 cmd_build_container_release() {
   local release_tag=$1 local_embeddings=$2 cloud_embeddings=$3
-  if [ "$local_embeddings" = 1 ] || [ "$cloud_embeddings" = 1 ]; then
-    die "container-release bakes in release.yml's own prebuilt binaries, always WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF — --local-embeddings/--cloud-embeddings have no effect here; use 'container'/'cross'/'cross-container' instead if you need either compiled in"
+  if [ -n "$local_embeddings" ] || [ -n "$cloud_embeddings" ]; then
+    die "container-release bakes in release.yml's own prebuilt binaries, which already have WIKI_ENABLE_LOCAL_EMBEDDINGS/WIKI_ENABLE_CLOUD_EMBEDDINGS both ON — --local-embeddings/--no-local-embeddings/--cloud-embeddings/--no-cloud-embeddings have no effect here; use 'container'/'cross'/'cross-container' instead if you need to build with different flags"
   fi
   [ -n "$release_tag" ] && export WIKI_RELEASE_TAG="$release_tag"
   run docker compose -f docker-compose.yml -f docker-compose.release.yml build
@@ -1139,27 +1153,6 @@ fetch_release_tree() {
   rm -rf "$dl_dir"
 }
 
-# release_embeddings_guard INSTALL_ROOT — same safety check as
-# tools/wiki-install.sh's own: release binaries are the plain
-# WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF
-# build (release.yml never passes either flag). Swapping one onto a
-# target whose EXISTING config.toml already has embeddings.provider/
-# llm.provider set to anything but "none" made wiki-server exit
-# immediately on startup, and Restart=on-failure just keeps retrying
-# it — a silent crash-loop, confirmed live on a real deployment via
-# wiki-install.sh (this is that exact same gap, just reachable through
-# the SSH path instead of running directly on the target). Checked on
-# the TARGET's existing config.toml, before the swap — never the
-# freshly-downloaded one, which has no config.toml of its own at all.
-release_embeddings_guard() {
-  local install_root=$1
-  local hit
-  hit=$(remote_sh_capture "grep -Eq '^[[:space:]]*provider[[:space:]]*=[[:space:]]*[\"'\"'\"'](local|cloud)[\"'\"'\"']' '$install_root/config.toml' 2>/dev/null && echo yes || true")
-  [ "$hit" = yes ] \
-    && die "$install_root/config.toml has an [embeddings]/[llm] provider other than \"none\" — release binaries don't have WIKI_ENABLE_LOCAL_EMBEDDINGS/CLOUD_EMBEDDINGS compiled in and will crash-loop after this swap. Build from source instead (build cross/cross-container ... --local-embeddings/--cloud-embeddings), or set provider = \"none\" first if you don't actually need it."
-  return 0
-}
-
 # deploy_swap_tree STAGING_DIR INSTALL_ROOT STRIP_BINS
 # Reproduces docs/sbc-deployment.md's "Update" atomic-swap sequence:
 # .bak-$STAMP the live bin/+static/, move the new ones into place, chown,
@@ -1378,7 +1371,7 @@ cmd_deploy() {
   case "$WIKI_DEPLOY_VARIANT" in
     native) run cmake --install "$build_dir" --prefix "$staging" ;;
     container-native) cp -r "$build_dir"/. "$staging"/ ;;
-    release) fetch_release_tree "$WIKI_DEPLOY_TRIPLET" "$WIKI_DEPLOY_RELEASE_TAG" "$staging"; release_embeddings_guard "$WIKI_DEPLOY_INSTALL_ROOT" ;;
+    release) fetch_release_tree "$WIKI_DEPLOY_TRIPLET" "$WIKI_DEPLOY_RELEASE_TAG" "$staging" ;;
     *) stage_bare_binary_tree "$build_dir" "$staging" ;;
   esac
 
@@ -1409,12 +1402,16 @@ removes the hand-typing and enforces the order).
 
   build   native|cross|container|cross-container|container-arm|container-native|container-release
           [--skip-tests] [--triplet=NAME] [--cross-dir=PATH]
-          [--platform=P] [--local-embeddings] [--cloud-embeddings]
+          [--platform=P] [--local-embeddings] [--no-local-embeddings]
+          [--cloud-embeddings] [--no-cloud-embeddings]
           [--release-tag=vX.Y.Z] [--dry-run]
-          (--platform default: linux/arm/v7 for container-arm, this host's own
-           architecture for container-native; container-release ignores
-           --local-embeddings/--cloud-embeddings — it bakes in release.yml's
-           own prebuilt binaries, never compiles anything, see
+          (both embeddings providers are ON by default, matching
+           CMakeLists.txt's own option() defaults — pass --no-local-embeddings/
+           --no-cloud-embeddings for a deliberately lighter build without
+           either; --platform default: linux/arm/v7 for container-arm, this
+           host's own architecture for container-native; container-release
+           refuses any of the four embeddings flags outright — it bakes in
+           release.yml's own prebuilt binaries, never compiles anything, see
            docs/docker.md; --release-tag blank there means whatever GitHub
            currently calls latest, resolved INSIDE the image at build time)
   verify  cross|container|cross-container|container-arm|container-native|container-release
@@ -1487,8 +1484,10 @@ FLAG_QEMU_CPU=""
 FLAG_PORT=""
 FLAG_RELEASE_TAG=""
 FLAG_SKIP_TESTS=0
-FLAG_LOCAL_EMBEDDINGS=0
-FLAG_CLOUD_EMBEDDINGS=0
+# Tri-state, not a plain 0/1: empty means "use CMakeLists.txt's own
+# default (ON)", 1 forces ON, 0 forces OFF -- see embeddings_cmake_args.
+FLAG_LOCAL_EMBEDDINGS=
+FLAG_CLOUD_EMBEDDINGS=
 FLAG_FIRST_TIME=0
 FLAG_WITH_BACKUP_TIMER=0
 FLAG_STATIC_ONLY=0
@@ -1512,7 +1511,9 @@ parse_flags() {
       --release-tag=*) FLAG_RELEASE_TAG=${1#*=} ;;
       --skip-tests) FLAG_SKIP_TESTS=1 ;;
       --local-embeddings) FLAG_LOCAL_EMBEDDINGS=1 ;;
+      --no-local-embeddings) FLAG_LOCAL_EMBEDDINGS=0 ;;
       --cloud-embeddings) FLAG_CLOUD_EMBEDDINGS=1 ;;
+      --no-cloud-embeddings) FLAG_CLOUD_EMBEDDINGS=0 ;;
       --first-time) FLAG_FIRST_TIME=1 ;;
       --with-backup-timer) FLAG_WITH_BACKUP_TIMER=1 ;;
       --static-only) FLAG_STATIC_ONLY=1 ;;

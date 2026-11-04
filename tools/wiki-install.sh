@@ -91,18 +91,6 @@ fi
 staging=$(mktemp -d /tmp/wiki-install-stage-XXXXXX)
 tar -C "$staging" -xzf "$dl_dir/$asset"
 
-# 4b. Release binaries are the plain WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/
-# WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF build (release.yml never passes either
-# flag) — confirmed live: swapping onto a box whose config.toml already
-# had embeddings.provider/llm.provider set to anything but "none" made
-# wiki-server exit immediately on startup ("requires this binary to be
-# built with -DWIKI_ENABLE_..."), and since Restart=on-failure just keeps
-# retrying, that's a silent crash-loop, not a clean failure. Refuse
-# outright rather than finding that out after the swap already happened.
-if [ -f "$INSTALL_ROOT/config.toml" ] && grep -Eq '^\s*provider\s*=\s*["'"'"'](local|cloud)["'"'"']' "$INSTALL_ROOT/config.toml"; then
-  die "$INSTALL_ROOT/config.toml has an [embeddings]/[llm] provider other than \"none\" — release binaries don't have WIKI_ENABLE_LOCAL_EMBEDDINGS/CLOUD_EMBEDDINGS compiled in and will crash-loop after this swap. Build from source instead (tools/wiki-ops.sh build ... --local-embeddings/--cloud-embeddings), or set provider = \"none\" first if you don't actually need it."
-fi
-
 # 5. Confirm before touching an existing install.
 if [ -d "$INSTALL_ROOT/bin" ] && [ "$ASSUME_YES" != 1 ]; then
   printf 'wiki-install: %s already has a bin/ — this will back it up and replace it. Continue? [y/N] ' "$INSTALL_ROOT"

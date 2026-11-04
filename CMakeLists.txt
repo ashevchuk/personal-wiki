@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 # Bump this on every user-visible fix/feature and record it in
 # CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
 # `wiki-mcp --version`) and reported as the MCP serverInfo.version.
-project(personal_wiki VERSION 0.7.5 LANGUAGES CXX)
+project(personal_wiki VERSION 0.8.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,18 +42,28 @@ find_package(OpenSSL REQUIRED)
 
 # ---------------------------------------------------------------------------
 # Semantic search (embeddings) — build-time-optional, independent of each
-# other. Both default OFF: an SBC build stays exactly as light as today's
-# until someone opts in. See docs/embeddings.md for the full rationale
-# (why two provider kinds, the fail-loudly runtime contract, and the real
-# zig/arm-musl -march= bug found and worked around below when spiking
-# llama.cpp against cross/arm-musl before committing to it).
+# other. Both default ON: every build this project ships (a plain
+# `cmake -S . -B build`, native/cross, and the GitHub Release binaries
+# release.yml publishes) supports whatever [embeddings]/[llm] provider a
+# config.toml sets. A release binary NOT supporting the provider a
+# target's existing config.toml already uses is what crash-loops the
+# service after a swap (see docs/sbc-deployment.md's "Path C") — the same
+# defaults everywhere, rather than release.yml alone opting in, is what
+# keeps a plain dev/CI build from silently drifting out of sync with what
+# actually ships. Pass -DWIKI_ENABLE_LOCAL_EMBEDDINGS=OFF/
+# -DWIKI_ENABLE_CLOUD_EMBEDDINGS=OFF explicitly for a deliberately lighter
+# build (faster compile, no llama.cpp). See docs/embeddings.md for the
+# full rationale (why two provider kinds, the fail-loudly runtime
+# contract, and the real zig/arm-musl -march= bug found and worked around
+# below when spiking llama.cpp against cross/arm-musl before committing
+# to it).
 # ---------------------------------------------------------------------------
 option(WIKI_ENABLE_LOCAL_EMBEDDINGS
        "Build the local (llama.cpp-backed) embedding provider — see docs/embeddings.md"
-       OFF)
+       ON)
 option(WIKI_ENABLE_CLOUD_EMBEDDINGS
        "Build the cloud (HTTP API) embedding provider — see docs/embeddings.md"
-       OFF)
+       ON)
 
 # ---------------------------------------------------------------------------
 # libwikicore — config, vault, index/search, MCP tool logic. NO Drogon/

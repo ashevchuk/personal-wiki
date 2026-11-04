@@ -102,9 +102,13 @@ build native|cross|container|cross-container|container-arm|container-release
 `--local-embeddings`/`--cloud-embeddings` toggle the only two real
 build-time feature flags that exist
 (`CMakeLists.txt`'s `WIKI_ENABLE_LOCAL_EMBEDDINGS`/
-`WIKI_ENABLE_CLOUD_EMBEDDINGS`, both `OFF` by default — see
-[`docs/embeddings.md`](embeddings.md)). They're independent, not
-mutually exclusive — you can pass either, both, or neither. There is
+`WIKI_ENABLE_CLOUD_EMBEDDINGS`, both `ON` by default — see
+[`docs/embeddings.md`](embeddings.md)). Passing either flag here is a
+no-op by default — it only matters if you've reconfigured an existing
+`build`/`build-arm` directory with `-DWIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/
+`-DWIKI_ENABLE_CLOUD_EMBEDDINGS=OFF` (there's no `--no-local-embeddings`
+flag here; pass `-D...=OFF` directly to `cmake` for a deliberately
+lighter build without either). There is
 **no** LLM/chat build flag: the Draft panel and sidebar Chat are
 always compiled in, and toggled
 purely at runtime via `config.toml`'s `[llm]` section

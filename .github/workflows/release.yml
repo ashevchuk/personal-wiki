@@ -40,6 +40,13 @@ jobs:
       - name: Install qemu-user-static
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
 
+      # No --local-embeddings/--cloud-embeddings here -- CMakeLists.txt's
+      # WIKI_ENABLE_LOCAL_EMBEDDINGS/WIKI_ENABLE_CLOUD_EMBEDDINGS default
+      # to ON (see that file's own comment on why: a release binary that
+      # doesn't support whatever [embeddings]/[llm] provider a target's
+      # config.toml already uses crash-loops the service after a swap --
+      # docs/sbc-deployment.md's "Path C"), same as every other build this
+      # project produces.
       - name: Build (cross-container)
         run: tools/wiki-ops.sh build cross-container --triplet=${{ matrix.triplet }}
 

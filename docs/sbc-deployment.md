@@ -263,20 +263,20 @@ box the way the ARM targets have. Treat it as "should work" until that
 happens once for real.
 
 Both consumers below have been run live on a real armv7l device
-updating an already-running deployment — this is what caught two real
-bugs, now fixed in both: `systemctl enable --now` never actually
-restarts a unit that's already running (the live process kept serving
-the OLD binary with the new one sitting unused on disk until an
-explicit restart), and release binaries are the plain
-`WIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/`WIKI_ENABLE_CLOUD_EMBEDDINGS=OFF`
-build — **if your `config.toml` already has `embeddings.provider`/
-`llm.provider` set to anything but `"none"`, do not install a release
-binary over it.** Both `wiki-install.sh` and `deploy --variant=release`
-refuse up front if they detect this now, but the underlying limitation
-is real: the prebuilt binaries don't have llama.cpp or the
-cloud-embeddings HTTP path compiled in at all. If you need either,
-build from source instead (`tools/wiki-ops.sh build ...
---local-embeddings`/`--cloud-embeddings` — see [`docs/embeddings.md`](embeddings.md)).
+updating an already-running deployment — this caught a real bug, now
+fixed: `systemctl enable --now` never actually restarts a unit that's
+already running (the live process kept serving the OLD binary with the
+new one sitting unused on disk until an explicit restart).
+
+Release binaries have both `WIKI_ENABLE_LOCAL_EMBEDDINGS` and
+`WIKI_ENABLE_CLOUD_EMBEDDINGS` compiled in (`CMakeLists.txt`'s own
+default, not something release.yml opts into specially) — installing
+one over an existing deployment that already has `embeddings.provider`/
+`llm.provider` set to `"local"`/`"cloud"` works the same as any other
+update. For a deliberately lighter custom build without either, pass
+`-DWIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/`-DWIKI_ENABLE_CLOUD_EMBEDDINGS=OFF`
+and build from source (`tools/wiki-ops.sh build ...` — see
+[`docs/embeddings.md`](embeddings.md)).
 
 ### Consumer 1: directly on the device
 

@@ -6,6 +6,26 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.8.0] - 2026-11-04
+
+### Changed
+
+- `WIKI_ENABLE_LOCAL_EMBEDDINGS`/`WIKI_ENABLE_CLOUD_EMBEDDINGS` now
+  default to `ON` (`CMakeLists.txt`), not opt-in — every build this
+  project ships, including the GitHub Release binaries
+  `.github/workflows/release.yml` publishes, now supports whatever
+  `[embeddings]`/`[llm]` provider a `config.toml` sets. This removes the
+  crash-loop risk a release binary previously had when swapped onto a
+  target that already used either (`release_embeddings_guard`, now
+  removed from `tools/wiki-ops.sh`/`tools/wiki-install.sh` along with the
+  refusal it enforced — there's nothing left to guard against). Pass
+  `tools/wiki-ops.sh build ... --no-local-embeddings
+  --no-cloud-embeddings` (or `-DWIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/
+  `-DWIKI_ENABLE_CLOUD_EMBEDDINGS=OFF` directly) for a deliberately
+  lighter build without either — flags that didn't exist before this
+  change, since there was previously no way to opt back OUT once the
+  default flipped.
+
 ## [0.7.5] - 2026-11-04
 
 ### Fixed

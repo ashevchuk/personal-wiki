@@ -30,8 +30,15 @@ either.
 -DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON   # just an HTTP client — no new heavy dependency
 ```
 
-Both default to **OFF**, so an SBC build stays as light as it is today
-unless you opt in.
+Both default to **ON** — every build this project ships (a plain
+`cmake -S . -B build`, native/cross, and the GitHub Release binaries
+`release.yml` publishes) supports whatever `[embeddings]`/`[llm]`
+provider a `config.toml` sets, so a release binary never crash-loops
+after landing on a box that already relies on either (see
+[`sbc-deployment.md`](sbc-deployment.md)'s "Path C"). Pass
+`-DWIKI_ENABLE_LOCAL_EMBEDDINGS=OFF`/`-DWIKI_ENABLE_CLOUD_EMBEDDINGS=OFF`
+(or `tools/wiki-ops.sh build ... --no-local-embeddings
+--no-cloud-embeddings`) for a deliberately lighter build without either.
 
 ### What happens for each build/config combination
 
@@ -49,10 +56,12 @@ refuses to start, with an error naming the missing build flag. It never
 silently falls back to `"none"` — that would leave FTS5 working fine
 with no visible sign that semantic search never actually turned on.
 
-**One caveat for cross-compiled ARM builds:** local embeddings
-(`--local-embeddings`) via the zig toolchain is unverified — it builds,
-but hasn't been exercised as thoroughly as the cloud path on that
-target. `build cross --local-embeddings` prints a warning saying so.
+**One caveat for cross-compiled ARM builds:** local embeddings via the
+zig toolchain is unverified — it builds, but hasn't been exercised as
+thoroughly as the cloud path on that target. `build cross`/`build
+cross-container` print a warning saying so whenever local embeddings
+end up ON, which is every build unless `--no-local-embeddings` was
+passed.
 
 ## Runtime config (`config.toml`)
 
