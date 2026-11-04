@@ -12,7 +12,10 @@
   "use strict";
 
   var THEME_KEY = "wiki.theme";
-  var THEMES = ["classic", "dark", "green"];
+  // Same window.__WIKI_THEMES__ shell.html's own bootstrap script reads —
+  // injected by PageRoutes.cpp from static/css/themes/*.css, so a new
+  // theme file needs no change here.
+  var THEMES = window.__WIKI_THEMES__ || [];
 
   document.addEventListener("DOMContentLoaded", function () {
     var toggleBtn = document.getElementById("theme-toggle-btn");

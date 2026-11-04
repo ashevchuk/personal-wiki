@@ -13,6 +13,13 @@
    SITE theme is active (see pages/edit.js), so that fix belongs there,
    not duplicated across all three site themes. */
 
+/* fouc-bg: #14161a; fouc-fg: #e6e6e6; -- read by PageRoutes.cpp's
+   discoverThemes() for shell.html's pre-stylesheet-load placeholder
+   background, matching --bg/--fg below. Keep in sync by hand: this
+   exists specifically because those colors aren't available from this
+   stylesheet yet at the point they're needed (shell.html's anti-FOUC
+   <style> block comment explains why). */
+
 * {
   box-sizing: border-box;
 }

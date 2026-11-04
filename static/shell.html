@@ -134,7 +134,16 @@
 <script>
 (function () {
   "use strict";
-  var THEMES = ["classic", "dark", "green"];
+  // window.__WIKI_THEMES__ is injected by PageRoutes.cpp itself, right
+  // after <head>, from the same scan of static/css/themes/*.css that
+  // generates the anti-FOUC <style> block below and the theme-menu
+  // buttons further down this file -- see discoverThemes() in
+  // PageRoutes.cpp. Unlike __WIKI_KNOWN_BASE_PATH__/__WIKI_DEFAULT_THEME__
+  // below (optional config), it's always injected when this file is
+  // served through its registered routes -- the fallback here only
+  // matters for static/shell.html fetched directly (setDocumentRoot
+  // serves it raw, uninjected, same as any other file under static/).
+  var THEMES = Array.isArray(window.__WIKI_THEMES__) ? window.__WIKI_THEMES__ : ["classic", "dark", "green"];
   var THEME_KEY = "wiki.theme";
   // window.__WIKI_DEFAULT_THEME__ is injected by PageRoutes.cpp itself
   // (see AppConfig.h's own comment on [server].theme) only when that
@@ -212,12 +221,7 @@
 <style>
   html:not(.is-ready) body { margin: 0; }
   html:not(.is-ready) .layout { visibility: hidden; }
-  html[data-theme="green"]:not(.is-ready),
-  html[data-theme="green"]:not(.is-ready) body { background: #000; color: #00ff00; }
-  html[data-theme="dark"]:not(.is-ready),
-  html[data-theme="dark"]:not(.is-ready) body { background: #14161a; color: #e6e6e6; }
-  html[data-theme="classic"]:not(.is-ready),
-  html[data-theme="classic"]:not(.is-ready) body { background: #fff; color: #202122; }
+  /* THEME_FOUC_RULES */
   .nav-icon { width: 0.95em; height: 0.95em; vertical-align: -0.15em; }
 </style>
 <title id="page-title">wiki</title>
@@ -327,7 +331,10 @@
     <!-- theme.js wires this up: toggles .theme-menu's `hidden` property,
          persists the choice to localStorage, and reloads the page (the
          synchronous <script> up in <head> is what actually APPLIES a
-         saved choice on every load — this is only the picker UI). Sits
+         saved choice on every load — this is only the picker UI). The
+         theme-menu marker below is replaced by PageRoutes.cpp's
+         discoverThemes() with one button per static/css/themes/*.css
+         file — adding a theme needs no edit here. Sits
          INSIDE .sidebar-links, not in its own row — a dedicated row
          (even styled to look invisible at rest) still READS as a
          distinct control claiming its own space; folded in among
@@ -354,9 +361,7 @@
         </svg>
       </button>
       <div class="theme-menu" id="theme-menu" hidden>
-        <button type="button" data-theme="classic">Classic</button>
-        <button type="button" data-theme="dark">Dark</button>
-        <button type="button" data-theme="green">Green</button>
+        <!--THEME_MENU_BUTTONS-->
       </div>
     </span>
   </div>

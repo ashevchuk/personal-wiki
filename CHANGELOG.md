@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.6.0] - 2026-11-04
+
+### Changed
+
+- Site themes (classic/dark/green) are no longer hand-maintained in three
+  separate places (`shell.html` twice, `theme.js` once). `PageRoutes.cpp`'s
+  `discoverThemes()` now scans `static/css/themes/*.css` once at startup
+  and generates the theme list, the sidebar's theme-menu buttons, and the
+  pre-stylesheet-load anti-FOUC placeholder colors from whatever files
+  are actually present. Each theme file declares its own placeholder
+  colors via a `fouc-bg`/`fouc-fg` metadata comment near its top (those
+  can't be read from the theme's real `--bg`/`--fg` custom properties,
+  since the stylesheet hasn't loaded yet at the point they're needed).
+  Adding a fourth theme now only needs a new CSS file plus that one
+  comment — no JS or HTML to touch.
+
 ## [0.5.1] - 2026-11-04
 
 ### Fixed

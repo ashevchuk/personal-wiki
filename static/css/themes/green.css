@@ -12,6 +12,13 @@
    regardless of which SITE theme is active (see pages/edit.js), so that
    fix isn't this file's concern to duplicate three times over. */
 
+/* fouc-bg: #000; fouc-fg: #00ff00; -- read by PageRoutes.cpp's
+   discoverThemes() for shell.html's pre-stylesheet-load placeholder
+   background, matching --bg/--fg below. Keep in sync by hand: this
+   exists specifically because those colors aren't available from this
+   stylesheet yet at the point they're needed (shell.html's anti-FOUC
+   <style> block comment explains why). */
+
 /* Vendored (static/fonts/ubuntu-sans-mono/, see its own VENDORED.md) --
    used to be a live @import from fonts.googleapis.com; self-hosted now
    so this theme carries zero external network dependency and doesn't
