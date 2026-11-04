@@ -35,7 +35,12 @@ Pick a theme from the small 🎨 icon in the sidebar. The choice is remembered
 per browser (`localStorage`), with no server round-trip. Each theme is a
 complete, independent stylesheet, not one shared palette with variables
 swapped underneath — so adding a fourth theme later means adding one file,
-not refactoring three.
+not refactoring three. The server scans `static/css/themes/*.css` at
+startup and builds the theme list, the sidebar's picker menu, and the
+loading-placeholder colors from whatever's actually there — a new theme
+file needs a one-line `/* fouc-bg: ...; fouc-fg: ...; */` comment near its
+top (the color its own `--bg`/`--fg` use) and nothing else; no JS or HTML
+to touch.
 
 | Green (default) | Dark | Classic |
 |---|---|---|
