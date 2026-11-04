@@ -764,12 +764,16 @@ window.WikiPages = window.WikiPages || {};
     // vendored bundle's own toolbar-item rendering (branches on `.el`)
     // after a first version using `onClick:` silently did nothing,
     // since the library never read that property at all.
+    //
+    // No className/inline sizing here -- toastui-editor.css's own
+    // ".toastui-editor-defaultUI-toolbar button" rule (a bare element
+    // selector, not scoped to any particular class) already gives every
+    // button in this toolbar a fixed 32x32 box, which is what keeps them
+    // all aligned in the row; a first version's inline width:auto/
+    // padding override broke exactly that, leaving this one button a
+    // different height than its siblings and visibly out of line.
     var youtubeToolbarButton = document.createElement("button");
     youtubeToolbarButton.type = "button";
-    youtubeToolbarButton.className = "toastui-editor-toolbar-icons";
-    youtubeToolbarButton.style.backgroundImage = "none";
-    youtubeToolbarButton.style.width = "auto";
-    youtubeToolbarButton.style.padding = "0 6px";
     youtubeToolbarButton.textContent = "YT";
     youtubeToolbarButton.addEventListener("click", insertYouTubeVideo);
 

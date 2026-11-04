@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.7.3] - 2026-11-04
+
+### Fixed
+
+- The "YT" toolbar button sat visibly lower than its neighbors.
+  `toastui-editor.css`'s own `.toastui-editor-defaultUI-toolbar button`
+  rule (a bare element selector) gives every toolbar button a fixed
+  32x32 box, which is what keeps them aligned in the row — the button
+  added in 0.7.0 set its own inline `width: auto` / padding, overriding
+  that box for just this one button. Removed the override; it now
+  inherits the same fixed box as every other toolbar button.
+
 ## [0.7.2] - 2026-11-04
 
 ### Fixed
