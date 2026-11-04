@@ -758,6 +758,21 @@ window.WikiPages = window.WikiPages || {};
       });
     }
 
+    // A custom toolbar item is a real DOM element with its own click
+    // listener (the `el` property), not a declarative onClick/command
+    // field the library wires up itself -- confirmed against the
+    // vendored bundle's own toolbar-item rendering (branches on `.el`)
+    // after a first version using `onClick:` silently did nothing,
+    // since the library never read that property at all.
+    var youtubeToolbarButton = document.createElement("button");
+    youtubeToolbarButton.type = "button";
+    youtubeToolbarButton.className = "toastui-editor-toolbar-icons";
+    youtubeToolbarButton.style.backgroundImage = "none";
+    youtubeToolbarButton.style.width = "auto";
+    youtubeToolbarButton.style.padding = "0 6px";
+    youtubeToolbarButton.textContent = "YT";
+    youtubeToolbarButton.addEventListener("click", insertYouTubeVideo);
+
     var editor = new toastui.Editor({
       el: document.getElementById("editor"),
       height: computeEditorHeight(),
@@ -781,10 +796,7 @@ window.WikiPages = window.WikiPages || {};
           {
             name: "youtube",
             tooltip: "Insert a YouTube video",
-            text: "YT",
-            className: "toastui-editor-toolbar-icons",
-            style: { backgroundImage: "none", width: "auto", padding: "0 6px" },
-            onClick: insertYouTubeVideo,
+            el: youtubeToolbarButton,
           },
         ],
         ["code", "codeblock"],

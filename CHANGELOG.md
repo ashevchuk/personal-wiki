@@ -6,6 +6,17 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.7.1] - 2026-11-04
+
+### Fixed
+
+- The new "YT" toolbar button (added in 0.7.0) did nothing when clicked.
+  Toast UI Editor's custom toolbar items are wired up via a real DOM
+  element on the item's `el` property, with the click listener attached
+  to that element directly — not a declarative `onClick` field the
+  library reads itself, which is what the first version passed and which
+  the library silently ignored.
+
 ## [0.7.0] - 2026-11-04
 
 ### Added
