@@ -75,6 +75,14 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      # fetch-depth 0: tools/gen-release-notes.sh needs CHANGELOG.md's
+      # content plus `git describe` on the full tag history to find the
+      # previous release's tag for the compare link.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -85,12 +93,18 @@ jobs:
         working-directory: dist
         run: sha256sum *.tar.gz > SHA256SUMS
 
+      - name: Generate release notes
+        run: tools/gen-release-notes.sh "$GITHUB_REF_NAME" > release-notes.md
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
       - name: Publish GitHub Release
         working-directory: dist
         env:
           GH_TOKEN: ${{ github.token }}
-        # --repo explicit: this job never does actions/checkout (it only
-        # needs the downloaded artifacts, not the source tree), so there's
-        # no local git repo for `gh` to infer the target repo from --
-        # confirmed live: "fatal: not a git repository" without this.
-        run: gh release create "$GITHUB_REF_NAME" *.tar.gz SHA256SUMS --generate-notes --repo "${{ github.repository }}"
+        # --repo explicit: historically this job did no checkout, so `gh`
+        # had no local git repo to infer the target repo from -- confirmed
+        # live: "fatal: not a git repository" without this. Kept even now
+        # that a checkout exists, since it costs nothing and removes the
+        # dependency on that checkout step's working directory.
+        run: gh release create "$GITHUB_REF_NAME" *.tar.gz SHA256SUMS --notes-file ../release-notes.md --repo "${{ github.repository }}"
