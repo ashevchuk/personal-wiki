@@ -765,15 +765,21 @@ window.WikiPages = window.WikiPages || {};
     // after a first version using `onClick:` silently did nothing,
     // since the library never read that property at all.
     //
-    // No className/inline sizing here -- toastui-editor.css's own
-    // ".toastui-editor-defaultUI-toolbar button" rule (a bare element
-    // selector, not scoped to any particular class) already gives every
-    // button in this toolbar a fixed 32x32 box, which is what keeps them
-    // all aligned in the row; a first version's inline width:auto/
-    // padding override broke exactly that, leaving this one button a
-    // different height than its siblings and visibly out of line.
+    // toastui-editor.css's own ".toastui-editor-defaultUI-toolbar button"
+    // rule (a bare element selector, not scoped to any particular class)
+    // already gives every button in this toolbar a fixed 32x32 box --
+    // an inline width:auto/padding override in a first version broke
+    // that box outright, visibly misaligning this one button (fixed by
+    // removing it). That rule sets no line-height on the BUTTON itself
+    // though (only toastui-editor.css's .toastui-editor-toolbar-item-
+    // wrapper, the DIV around it, gets line-height: 32px) -- every other
+    // button's icon is a background-image, indifferent to line-height,
+    // but this one's "YT" is real text, so it still needs its own
+    // line-height set to center vertically inside that 32px box
+    // regardless of whatever font actually ends up loaded.
     var youtubeToolbarButton = document.createElement("button");
     youtubeToolbarButton.type = "button";
+    youtubeToolbarButton.style.lineHeight = "32px";
     youtubeToolbarButton.textContent = "YT";
     youtubeToolbarButton.addEventListener("click", insertYouTubeVideo);
 

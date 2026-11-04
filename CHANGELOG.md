@@ -6,6 +6,19 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.7.4] - 2026-11-04
+
+### Fixed
+
+- The "YT" toolbar button's text still sat visibly lower than its
+  neighbors' icons after 0.7.3's box-size fix. The fixed 32x32 box every
+  toolbar button gets (`.toastui-editor-defaultUI-toolbar button`) sets
+  no `line-height` on the button itself — only on the wrapper `div`
+  around it — which every other button never needed since its icon is a
+  `background-image`, indifferent to line-height. This button's "YT" is
+  real text, so its own vertical position depends on line-height and the
+  loaded font's metrics. Set `line-height: 32px` directly on it.
+
 ## [0.7.3] - 2026-11-04
 
 ### Fixed
