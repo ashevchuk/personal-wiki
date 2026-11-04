@@ -742,6 +742,22 @@ window.WikiPages = window.WikiPages || {};
       return Math.max(available, 300) + "px";
     }
 
+    // Prompts for a URL and inserts it as "![youtube](url)" via the same
+    // editor.exec("addImage") command insertAttachmentLink uses above (see
+    // its own comment: insertText() leaves literal "![youtube](url)" text
+    // visible in WYSIWYG instead of a real node). altText MUST be exactly
+    // "youtube" -- that's the sentinel util/YouTubeEmbed.h's
+    // rewriteYouTubeEmbeds looks for server-side on save+view. The
+    // customHTMLRenderer.image hook below (WikiYouTubeEmbedPreview) is what
+    // keeps this from showing as a broken image icon while editing.
+    function insertYouTubeVideo() {
+      WikiDialog.prompt("YouTube video URL:").then(function (url) {
+        if (!url) return;
+        editor.focus();
+        editor.exec("addImage", { imageUrl: url.trim(), altText: "youtube" });
+      });
+    }
+
     var editor = new toastui.Editor({
       el: document.getElementById("editor"),
       height: computeEditorHeight(),
@@ -749,6 +765,30 @@ window.WikiPages = window.WikiPages || {};
       previewStyle: "tab",
       theme: editorTheme,
       initialValue: window.WikiCommon.wikiBodyToEditor(data.body || ""),
+      // Default toolbar plus one custom item (Toast UI's own built-in
+      // groups, spelled out so inserting "youtube" into the image/link
+      // group doesn't depend on positional insertToolbarItem() indices
+      // matching whatever the vendored library's internal default layout
+      // happens to be this version.
+      toolbarItems: [
+        ["heading", "bold", "italic", "strike"],
+        ["hr", "quote"],
+        ["ul", "ol", "task", "indent", "outdent"],
+        [
+          "table",
+          "image",
+          "link",
+          {
+            name: "youtube",
+            tooltip: "Insert a YouTube video",
+            text: "YT",
+            className: "toastui-editor-toolbar-icons",
+            style: { backgroundImage: "none", width: "auto", padding: "0 6px" },
+            onClick: insertYouTubeVideo,
+          },
+        ],
+        ["code", "codeblock"],
+      ],
       // Fires on paste/drag-drop of an image straight into the editor.
       // Toast UI's default with no hook is to inline the image as a
       // base64 data URI in the markdown — bad for a wiki (bloats the

@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.7.0] - 2026-11-04
+
+### Added
+
+- The WYSIWYG editor toolbar has a "YT" button next to Image/Link for
+  inserting a YouTube video: prompts for a URL, then inserts it the same
+  way an attachment's Image button does (`editor.exec("addImage", ...)`
+  with `altText: "youtube"`, the sentinel `util/YouTubeEmbed.h` already
+  looks for on save). The existing `customHTMLRenderer.image` preview
+  hook (added for hand-typed `![youtube](url)`) shows the real thumbnail
+  immediately instead of a broken-image icon.
+
 ## [0.6.0] - 2026-11-04
 
 ### Changed
