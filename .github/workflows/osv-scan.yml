@@ -1,0 +1,59 @@
+name: OSV dependency scan
+
+# No automated CVE scanner covers this project's vcpkg C/C++ dependencies
+# as a whole (see tools/osv-scan.py's own module docstring for the full
+# "no vcpkg extractor in OSV-Scanner/Trivy, not in GitHub's Dependency
+# Graph" story, and what this script does and does NOT catch). This
+# workflow is what actually runs it, weekly plus on demand -- a finding
+# here means a pinned vcpkg dependency's version matches a known
+# OSS-Fuzz-sourced advisory, not an automatic "something is broken."
+
+"on":
+  schedule:
+    - cron: '17 5 * * 3'  # Wednesday 05:17 UTC, offset from codeql.yml's Monday run
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - vcpkg.json
+      - vcpkg-configuration.json
+      - tools/osv-scan.py
+      - .github/workflows/osv-scan.yml
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Same FULL-clone reasoning as ci.yml/codeql.yml's own comment --
+      # builtin-baseline resolution needs real history, not a shallow tip.
+      - name: Clone vcpkg
+        run: git clone https://github.com/microsoft/vcpkg.git vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Cache vcpkg installed packages
+        uses: actions/cache@v4
+        with:
+          path: build/vcpkg_installed
+          key: vcpkg-installed-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
+          restore-keys: |
+            vcpkg-installed-${{ runner.os }}-
+
+      # Installs every dependency without compiling this project's own
+      # code at all -- tools/osv-scan.py only needs the resulting
+      # build/vcpkg_installed/x64-linux tree (for `vcpkg list`) and
+      # vcpkg/ itself (for `git show <baseline>:ports/...`), nothing this
+      # project builds.
+      - name: Install dependencies
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_TOOLCHAIN_FILE=vcpkg/scripts/buildsystems/vcpkg.cmake \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Scan pinned dependencies against OSV.dev
+        run: python3 tools/osv-scan.py
