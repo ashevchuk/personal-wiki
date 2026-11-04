@@ -6,6 +6,22 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.7.2] - 2026-11-04
+
+### Fixed
+
+- The sidebar's theme-selection menu rendered behind the edit page's own
+  form fields. `.theme-menu` was a plain `position: absolute` child of
+  the (non-positioned) sidebar — a non-positioned ancestor can't win a
+  page-level stacking fight against ANY positioned element elsewhere on
+  the page with an explicit `z-index`, regardless of what `z-index` the
+  menu itself sets. `.field-row` on the edit page (`position: relative;
+  z-index: 1`, added for an unrelated reason — beating Toast UI Editor's
+  own internal layers) was exactly such an element. Fixed the same way
+  as the Type/Tags typeahead dropdown: `theme.js` now moves `#theme-menu`
+  to `document.body` as a "portal" and positions it with `position:
+  fixed` from the toggle button's own `getBoundingClientRect()`.
+
 ## [0.7.1] - 2026-11-04
 
 ### Fixed

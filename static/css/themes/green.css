@@ -1373,14 +1373,20 @@ a.btn:focus {
   height: 0.95em;
   vertical-align: -0.15em;
 }
-/* Decoupled from the trigger's own (now icon-sized) width — "Classic"/
-   "Dark"/"Green" need real room regardless of how small the button that
-   opens them is. */
+/* A "portal" (theme.js moves #theme-menu to document.body, sets
+   top/left from the toggle button's own getBoundingClientRect() before
+   each open) — see edit.css's identical .typeahead-menu comment for why
+   a plain position:absolute child of .theme-picker isn't enough: a
+   NON-positioned ancestor (the sidebar) can't win a stacking fight
+   against any positioned sibling elsewhere on the page with an explicit
+   z-index, regardless of this menu's own. Found live on the edit page,
+   where .field-row's position+z-index (set for an unrelated reason —
+   beating Toast UI Editor's own internal layers) was exactly such a
+   sibling. z-index 20 matches .typeahead-menu's own value, the same
+   "comfortably above ordinary content" margin. */
 .theme-menu {
-  position: absolute;
-  z-index: 5;
-  top: calc(100% + 0.25rem);
-  left: 0;
+  position: fixed;
+  z-index: 20;
   min-width: 140px;
   display: flex;
   flex-direction: column;

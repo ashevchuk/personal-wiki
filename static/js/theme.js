@@ -22,6 +22,21 @@
     var menu = document.getElementById("theme-menu");
     if (!toggleBtn || !menu) return;
 
+    // A "portal": moved out of .theme-picker (the sidebar) into
+    // document.body, same technique and same reason as edit.js's
+    // typeahead dropdown (see css/themes/*.css's .theme-menu comment) --
+    // a non-positioned ancestor can't win a page-level stacking fight
+    // against ANY positioned element elsewhere with an explicit
+    // z-index, no matter what z-index this menu sets on itself.
+    // position:fixed + coordinates computed here, not CSS, since the
+    // toggle button's screen position varies by viewport/scroll.
+    document.body.appendChild(menu);
+    function positionMenu() {
+      var rect = toggleBtn.getBoundingClientRect();
+      menu.style.top = rect.bottom + 4 + "px";
+      menu.style.left = rect.left + "px";
+    }
+
     // Marks whichever entry matches the theme <head>'s script already
     // applied (via <html data-theme>) — reading that attribute back here
     // rather than re-reading localStorage directly, so this stays correct
@@ -37,6 +52,7 @@
 
     toggleBtn.addEventListener("click", function (e) {
       e.stopPropagation();
+      if (menu.hidden) positionMenu();
       menu.hidden = !menu.hidden;
       toggleBtn.setAttribute("aria-expanded", menu.hidden ? "false" : "true");
     });
