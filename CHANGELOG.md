@@ -6,7 +6,33 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
-## [0.5.0] - 2026-11-04
+## [0.5.1] - 2026-11-04
+
+### Fixed
+
+- The Tags/Type dropdowns on the search page could both be open at once,
+  with one visually covering the other — opening one now closes any
+  other open dropdown of the same kind.
+- Account page audit-log pagers (Remote MCP, Draft agent, Chat) jumped
+  position page to page because entries wrapped to different line
+  counts; entries are now truncated to one line (full text still
+  reachable via a hover tooltip). The Trash pager had the same jump for
+  a different reason (a short last page having fewer rows than a full
+  one) — fixed separately with invisible filler rows, since the path
+  column there must stay fully visible (unlike the audit log, truncating
+  it would hide the detail the list exists to show).
+- Every floating popup that used the same background color as ordinary
+  buttons/inputs (account dialogs, the calendar date pickers, the
+  month/year dropdown, the trash hover preview, the theme menu) now uses
+  a dedicated, theme-defined `--popup-bg` instead, consolidating three
+  different ad-hoc copies of the same fix that had drifted across the
+  CSS. In the green theme specifically this replaces a green tint that
+  read as an unwanted wash on a floating panel-sized surface; the other
+  two themes keep their existing color, unchanged.
+- The pressed Month/Week/Day calendar view button lost its text on
+  hover — its own rule set a background but not a text color, so the
+  page-wide hover-invert rule's color won by default and landed on
+  near-black against that button's own dark background.
 
 ### Added
 

@@ -126,6 +126,17 @@ window.WikiPages = window.WikiPages || {};
       return items.length ? Math.ceil(items.length / TRASH_PAGE_SIZE) : 1;
     }
 
+    function renderFillerRow() {
+      var tr = document.createElement("tr");
+      tr.className = "trash-filler-row";
+      tr.setAttribute("aria-hidden", "true");
+      var td = document.createElement("td");
+      td.colSpan = 3;
+      td.innerHTML = "&nbsp;";
+      tr.appendChild(td);
+      return tr;
+    }
+
     function renderRow(item) {
       var tr = document.createElement("tr");
 
@@ -240,6 +251,17 @@ window.WikiPages = window.WikiPages || {};
       slice.forEach(function (item) {
         tbody.appendChild(renderRow(item));
       });
+      // A page with fewer than TRASH_PAGE_SIZE rows (almost always the
+      // last one) would otherwise make the table shorter and the pager
+      // buttons below it jump up a page-to-page -- invisible filler rows
+      // keep every page the same number of row-slots tall. This is about
+      // row COUNT, not per-row wrap height: a long path still wraps to
+      // two lines same as before, that residual wobble is accepted (see
+      // .trash-table td's own word-break: break-all comment on why the
+      // path is never truncated to avoid it).
+      for (var i = slice.length; i < TRASH_PAGE_SIZE; i++) {
+        tbody.appendChild(renderFillerRow());
+      }
 
       pager.hidden = pages <= 1;
       pager.querySelector(".audit-pager-status").textContent = page + 1 + " / " + pages;
@@ -381,6 +403,11 @@ window.WikiPages = window.WikiPages || {};
         var detail = e.detail ? ": " + e.detail : "";
         li.textContent =
           formatAuditAt(e.at) + " — " + e.toolName + " " + path + "(" + status + detail + ")";
+        // One line per entry (see .audit-log li's CSS truncation) means a
+        // long detail string gets clipped with an ellipsis -- the title
+        // attribute keeps the full text reachable on hover instead of
+        // just losing it.
+        li.title = li.textContent;
         if (!e.success) li.className = "fail";
         list.appendChild(li);
       });

@@ -1132,7 +1132,7 @@ body.chat-sidebar-resizing * {
   position: fixed;
   z-index: 1;
   padding: 0.5rem;
-  background: var(--panel-bg-2);
+  background: var(--popup-bg);
   border: 1px solid var(--border);
   box-shadow: var(--glow);
 }

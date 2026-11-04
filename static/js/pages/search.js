@@ -32,6 +32,16 @@ window.WikiPages = window.WikiPages || {};
   // string[]) fires on every checkbox toggle — no debounce here, unlike
   // the free-text `q` input, since a checkbox click is already a single
   // discrete action, not a keystroke stream.
+  // Every createMultiSelect() instance's own menu, so opening one can
+  // close the others -- otherwise each instance only knows to close
+  // itself on an outside click, and since the toggle button's own click
+  // handler calls stopPropagation() (so clicking a checkbox's label
+  // doesn't also register as "outside"), clicking one dropdown's toggle
+  // never reaches the other's close-on-outside-click listener at all.
+  // Two menus open at once then don't even just visually overlap --
+  // the covered one is still fully "open" underneath, catching nothing.
+  var openDropdownMenus = [];
+
   function createMultiSelect(mount, label, opts, initialSelected, onChange) {
     var selected = {};
     initialSelected.forEach(function (v) {
@@ -87,8 +97,14 @@ window.WikiPages = window.WikiPages || {};
       menu.appendChild(row);
     });
 
+    openDropdownMenus.push(menu);
     toggle.addEventListener("click", function (evt) {
       evt.stopPropagation();
+      if (menu.hidden) {
+        openDropdownMenus.forEach(function (m) {
+          if (m !== menu) m.hidden = true;
+        });
+      }
       menu.hidden = !menu.hidden;
     });
     menu.addEventListener("click", function (evt) {
