@@ -766,19 +766,31 @@ window.WikiPages = window.WikiPages || {};
     // since the library never read that property at all.
     //
     // toastui-editor.css's own ".toastui-editor-defaultUI-toolbar button"
-    // rule (a bare element selector, not scoped to any particular class)
-    // already gives every button in this toolbar a fixed 32x32 box --
-    // an inline width:auto/padding override in a first version broke
-    // that box outright, visibly misaligning this one button (fixed by
-    // removing it). That rule sets no line-height on the BUTTON itself
-    // though (only toastui-editor.css's .toastui-editor-toolbar-item-
-    // wrapper, the DIV around it, gets line-height: 32px) -- every other
-    // button's icon is a background-image, indifferent to line-height,
-    // but this one's "YT" is real text, so it still needs its own
-    // line-height set to center vertically inside that 32px box
-    // regardless of whatever font actually ends up loaded.
+    // rule (a bare element selector) gives every button in this toolbar
+    // a fixed 32x32 box AND its own margin: 7px 5px -- confirmed live via
+    // getComputedStyle (not guessed) that a built-in button's effective
+    // top offset only ever counts ONE 7px margin, while a custom `el`
+    // button gets that same button-level margin-top from this generic
+    // rule ON TOP OF its wrapping ".toastui-editor-toolbar-item-wrapper"
+    // div's OWN margin: 7px 5px -- Toast UI's own buttons apparently
+    // don't double up on this, ours did, 7px too low. Canceled on just
+    // this button (not the shared .toastui-editor-toolbar-item-wrapper
+    // rule) so no other toolbar item's spacing is touched.
+    //
+    // className "toastui-editor-toolbar-icons" is also needed for the
+    // dark-theme border-color fix (edit.css's
+    // ".toastui-editor-toolbar-icons:not(:disabled):hover" and whatever
+    // else in the vendored bundle keys off this exact class) -- without
+    // it this button kept the vendored default's light #f7f9fc resting
+    // border, visible as a pale box against the dark/green themes'
+    // panels while every bordered built-in icon blends in. That class
+    // also turns on a background-image sprite position, which must be
+    // cleared or some unrelated icon frame shows behind "YT"'s text.
     var youtubeToolbarButton = document.createElement("button");
     youtubeToolbarButton.type = "button";
+    youtubeToolbarButton.className = "toastui-editor-toolbar-icons";
+    youtubeToolbarButton.style.backgroundImage = "none";
+    youtubeToolbarButton.style.marginTop = "0";
     youtubeToolbarButton.style.lineHeight = "32px";
     youtubeToolbarButton.textContent = "YT";
     youtubeToolbarButton.addEventListener("click", insertYouTubeVideo);

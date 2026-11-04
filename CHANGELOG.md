@@ -6,6 +6,24 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.7.5] - 2026-11-04
+
+### Fixed
+
+- The "YT" toolbar button's real root cause, found via `getComputedStyle`
+  in a real browser (0.7.3/0.7.4 guessed wrong): it sat 7px lower than
+  its neighbors because both its own button-level `margin: 7px 5px`
+  (from `.toastui-editor-defaultUI-toolbar button`, which every custom
+  `el`-based toolbar item still gets) AND its wrapping
+  `.toastui-editor-toolbar-item-wrapper` div's own `margin: 7px 5px`
+  applied — Toast UI's own built-in buttons don't double up on this.
+  Canceled the button's own `margin-top` directly, not the shared
+  wrapper rule, so no other toolbar item is affected. It also lacked the
+  `toastui-editor-toolbar-icons` class every built-in icon button has,
+  which is what recolors the resting-state border for the dark/green
+  themes — without it the button kept the vendored default's pale
+  `#f7f9fc` border, visible against those themes' dark panels.
+
 ## [0.7.4] - 2026-11-04
 
 ### Fixed
