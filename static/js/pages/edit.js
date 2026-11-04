@@ -443,9 +443,9 @@ window.WikiPages = window.WikiPages || {};
       (session && session.agentEnabled
         ? '<button type="button" id="f-draft-btn">Draft</button>'
         : "") +
-      '<button type="button" id="f-attach-btn">Attach file</button>' +
+      '<button type="button" id="f-attach-btn" title="Attach a file (image, PDF, …) for this document to link to">Attach file</button>' +
       '<input type="file" id="f-attach" hidden>' +
-      '<button type="button" id="f-upload-btn">Upload</button>' +
+      '<button type="button" id="f-upload-btn" title="Replace Path/Title/Tags/body above with a .md file\'s front matter and content">Upload</button>' +
       '<input type="file" id="f-upload" hidden accept=".md,text/markdown">' +
       (isNew
         ? ""

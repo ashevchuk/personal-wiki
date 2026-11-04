@@ -7,6 +7,37 @@ window.WikiAgent = (function () {
   var MIN_W = 280;
   var MIN_H = 220;
 
+  // Whether the editor's caret position / text selection is sent to the
+  // agent as insert-point context at all. Persisted the same way as the
+  // sidebar's theme/expanded-folder choices -- a per-browser convenience,
+  // never sent anywhere itself. Defaults to on (existing behavior); off
+  // means snapshotPayload() strips selection/caretBefore before every
+  // send, so the agent always falls back to a full draft_note rewrite
+  // instead of a caret insert the user didn't actually want.
+  var CONTEXT_TOGGLE_KEY = "wiki.agentUseCaretContext";
+
+  function loadContextToggle() {
+    try {
+      var raw = localStorage.getItem(CONTEXT_TOGGLE_KEY);
+      return raw === null ? true : raw === "1";
+    } catch (e) {
+      return true;
+    }
+  }
+
+  function saveContextToggle(on) {
+    try {
+      localStorage.setItem(CONTEXT_TOGGLE_KEY, on ? "1" : "0");
+    } catch (e) {
+      // Blocked/unavailable localStorage -- the toggle still works for
+      // the rest of this page view, it just won't stick past a reload.
+    }
+  }
+
+  function contextEnabled() {
+    return !contextToggleEl || contextToggleEl.checked;
+  }
+
   var basePath = function () {
     return window.WikiCommon.basePath();
   };
@@ -24,6 +55,7 @@ window.WikiAgent = (function () {
   var pendingEl = null;
   var selectionEl = null;
   var selectionTextEl = null;
+  var contextToggleEl = null;
   var sessionId = null;
   var lastSentBody = "";
   var pendingDraft = null;
@@ -124,6 +156,7 @@ window.WikiAgent = (function () {
       "<li>New note or a full rewrite: describe it and Send (Ctrl/Cmd+Enter).</li>" +
       "<li>Insert at the caret: click in the editor with no selection. The caret itself disappears when this panel takes focus (Toast UI); a chip remembers the insert point, same idea as a selection.</li>" +
       "<li>Change a fragment: select it in the editor first. This panel remembers the selection after the editor loses focus — a chip appears; Clear drops it and the highlight in the editor.</li>" +
+      "<li>Uncheck \"Use caret/selection position\" to always get a full rewrite, ignoring wherever the cursor happens to be.</li>" +
       "<li>Follow-ups like \"add a paragraph\" or \"fix that span\" change only that part.</li>" +
       "<li>If the request is unclear, the agent asks here. Answer in this box; the editor will not change until you do.</li>" +
       "<li>Stop cancels a run. Replies stream into this log as they arrive. Revert undoes the last applied draft in the editor (Toast UI cannot).</li>" +
@@ -141,6 +174,9 @@ window.WikiAgent = (function () {
       '<p class="agent-selection" id="agent-selection" hidden>' +
       '<span class="agent-selection-text"></span>' +
       '<button type="button" class="agent-selection-clear">Clear</button></p>' +
+      '<p class="agent-context-toggle"><label class="checkbox-label">' +
+      '<input type="checkbox" id="agent-context-toggle" checked> ' +
+      "Use caret/selection position</label></p>" +
       "<textarea id=\"agent-input\" rows=\"4\" placeholder=\"Describe the note to draft…\"></textarea>" +
       '<div class="agent-panel-actions">' +
       '<button type="button" id="agent-stop" hidden>Stop</button>' +
@@ -158,6 +194,12 @@ window.WikiAgent = (function () {
     pendingEl = panel.querySelector("#agent-pending");
     selectionEl = panel.querySelector("#agent-selection");
     selectionTextEl = panel.querySelector(".agent-selection-text");
+    contextToggleEl = panel.querySelector("#agent-context-toggle");
+    contextToggleEl.checked = loadContextToggle();
+    contextToggleEl.addEventListener("change", function () {
+      saveContextToggle(contextToggleEl.checked);
+      refreshSelectionChip();
+    });
     panel.addEventListener(
       "pointerdown",
       function (ev) {
@@ -266,6 +308,11 @@ window.WikiAgent = (function () {
 
   function refreshSelectionChip() {
     if (!selectionEl) return;
+    if (!contextEnabled()) {
+      selectionEl.hidden = true;
+      selectionEl.classList.remove("agent-selection--caret");
+      return;
+    }
     var text = hooks && hooks.currentSelection ? hooks.currentSelection() : "";
     if (text) {
       selectionEl.hidden = false;
@@ -628,6 +675,10 @@ window.WikiAgent = (function () {
 
   function snapshotPayload(instruction) {
     var snap = hooks && hooks.snapshot ? hooks.snapshot() : {};
+    if (!contextEnabled()) {
+      snap.selection = "";
+      snap.caretBefore = null;
+    }
     snap.instruction = instruction;
     lastSentBody = snap.body || "";
     return snap;

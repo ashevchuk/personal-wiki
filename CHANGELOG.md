@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.5.0] - 2026-11-04
+
+### Added
+
+- The Draft panel has a "Use caret/selection position" checkbox
+  (persisted per browser). Unchecked, the editor's caret and any text
+  selection are no longer sent as insert-point context, so the agent
+  always produces a full rewrite instead of an unexpected caret insert
+  or selection replace at a stale cursor position.
+- "Attach file" and "Upload" on the edit page now have tooltips
+  explaining what each does, since the two were easy to mix up.
+
 ## [0.4.1] - 2026-11-04
 
 ### Fixed
