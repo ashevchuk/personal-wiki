@@ -27,6 +27,7 @@ Raspberry Pi or similar ARM/x86_64 single-board computer.
 | ![Search](docs/screenshots/search.png) **Full-text search** — FTS5 with prefix matching, `bm25()` ranking, tag/type filters | ![Editor](docs/screenshots/editor.png) **WYSIWYG editor** — Toast UI Editor, undo/redo, syntax-highlighted code blocks |
 | ![Graph view](docs/screenshots/graph.png) **Graph view** — every `[[wiki-link]]` as an edge, force-directed layout, filter by title/content | ![Account page](docs/screenshots/account-mcp.png) **Admin panel** — one-click vault backup, remote MCP with a bearer token and IP allowlist |
 | ![Calendar](docs/screenshots/calendar.png) **Calendar** — admin-only month/week/day view of every document's due date, recurring events included | ![Calendar event picker](docs/screenshots/calendar-picker.png) **Custom date/time/recurrence picker** — no native `<input type="date">`, every control themeable |
+| ![Mermaid diagram](docs/screenshots/mermaid-diagram.png) **Mermaid diagrams** — ` ```mermaid ` fenced code blocks render as real flowcharts/sequence diagrams, in the active theme's own colors | ![Circuit simulator](docs/screenshots/circuit-sim.png) **Circuit simulator** — ` ```circuit ` fenced code blocks embed a live, running CircuitJS1 simulation |
 
 ### Themes
 
@@ -80,6 +81,10 @@ not refactoring three.
 - ` ```mermaid ` code blocks render as real diagrams (flowcharts, sequence
   diagrams, anything [mermaid](https://mermaid.js.org/) supports), rendered
   client-side and loaded only on documents that actually use one.
+- ` ```circuit ` code blocks embed a live, running
+  [CircuitJS1](https://github.com/pfalstad/circuitjs1) simulation
+  (view-only, not editable from the page), loaded the same lazy,
+  same-origin way as the mermaid blocks above.
 - Syntax-highlighted code blocks on every document view (Prism.js, loaded
   lazily, themed to match the active site theme).
 
