@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.9.4] - 2026-11-06
+
+### Fixed
+
+- On the Account page's Remote MCP tab, a token row with a long label no
+  longer pushes its Agent access / Regenerate / Delete controls onto a
+  separate line; the label wraps inside its own block instead.
+
 ## [0.9.3] - 2026-11-06
 
 ### Fixed

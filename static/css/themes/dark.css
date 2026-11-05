@@ -1059,6 +1059,7 @@ a.btn:focus {
   align-items: baseline;
   gap: 0.1rem 0.6rem;
   min-width: 0;
+  flex: 1 1 16rem;
 }
 .mcp-token-info code {
   font-size: 0.85rem;
