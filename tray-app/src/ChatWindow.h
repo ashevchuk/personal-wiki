@@ -47,6 +47,7 @@ class ChatWindow {
 
   void startSend(const std::string& text);
   void drawHistory(int x, int y, int width, int height);
+  void pollClipboard();
 
   Font font_;
 
@@ -62,6 +63,7 @@ class ChatWindow {
   bool clipboardOfferShown_ = false;
   std::string clipboardOfferText_;
   bool clipboardIncluded_ = false;
+  int clipboardPollCounter_ = 0;
 
   std::string lastError_;
 };

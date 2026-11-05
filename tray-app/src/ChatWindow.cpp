@@ -144,10 +144,24 @@ void ChatWindow::onShow() {
   scrollOffset_ = 0.0f;
   lastError_.clear();
   clipboardIncluded_ = false;
+  clipboardOfferText_.clear();
+  clipboardOfferShown_ = false;
+  clipboardPollCounter_ = 0;
+  pollClipboard();
+}
 
+void ChatWindow::pollClipboard() {
   const char* clip = GetClipboardText();
-  clipboardOfferText_ = clip ? clip : "";
-  clipboardOfferShown_ = !clipboardOfferText_.empty();
+  const std::string current = clip ? clip : "";
+  if (current == clipboardOfferText_) {
+    return;  // unchanged — leaves a user's own Dismiss alone
+  }
+  clipboardOfferText_ = current;
+  clipboardOfferShown_ = !current.empty();
+  // A clipboard change invalidates any earlier Include commitment —
+  // sending the OLD clipboard text because the user copied something
+  // new since clicking Include would be a silent correctness bug.
+  clipboardIncluded_ = false;
 }
 
 void ChatWindow::startSend(const std::string& text) {
@@ -243,6 +257,14 @@ void ChatWindow::drawHistory(int x, int y, int width, int height) {
 void ChatWindow::update(bool* quitRequested) {
   *quitRequested = false;
   ClearBackground(kBg);
+
+  // Live clipboard refresh while the window stays open — throttled to a
+  // few times a second rather than every frame, since each check is an
+  // X11 selection round-trip.
+  if (++clipboardPollCounter_ >= 15) {
+    clipboardPollCounter_ = 0;
+    pollClipboard();
+  }
 
   if (GuiButton({kWindowWidth - kButtonWidth - kPadding, kPadding,
                   static_cast<float>(kButtonWidth), 24},
