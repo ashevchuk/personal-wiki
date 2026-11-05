@@ -6,6 +6,18 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.9.1] - 2026-11-05
+
+### Fixed
+
+- Search excerpts stored for documents are now cut on a character boundary.
+  The 240-byte excerpt limit could land inside a multi-byte UTF-8 character
+  (every Cyrillic letter is two bytes), leaving an invalid sequence in the
+  index; serializing a search result carrying it failed, so `POST
+  /mcp/agent` answered `502 agent request failed` whenever the model
+  searched and a hit had such an excerpt. Existing excerpts are rebuilt by
+  the full rescan that runs at every startup.
+
 ## [0.9.0] - 2026-11-05
 
 ### Added
