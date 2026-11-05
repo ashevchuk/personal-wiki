@@ -6,6 +6,34 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.9.0] - 2026-11-05
+
+### Added
+
+- Remote MCP (`POST /mcp`) now supports multiple independently labeled bearer
+  tokens instead of one singleton token shared by every client. Each token can
+  be created, regenerated, or deleted on its own from the Account page's
+  Remote MCP section without affecting any other token; `enabled`,
+  write-access, and the IP allowlist remain global settings shared by all
+  tokens. `GET /api/admin/mcp-audit-log` now records which token's label made
+  each remote write. Upgrading carries the previous singleton token forward
+  as a migrated row so already-configured clients keep working without
+  reconfiguration.
+- New remote agent endpoint, `POST /mcp/agent`: hands a short conversation to
+  the wiki's own configured `[llm]`, which can search/browse/read documents
+  and the calendar, then decides on its own when to call `create_document`.
+  Deliberately excludes `update_document`/`attach_file` — letting a model
+  rewrite existing content from free text is a bigger mistake-blast-radius
+  than creating something new. Gated per-token by a new "Agent access"
+  opt-in (default off, independent of a token's existing write access) on
+  top of everything `POST /mcp` already requires. Every tool call, reads
+  included, is recorded in `mcp_audit_log` with tool name prefixed
+  `remote-agent:`.
+- Account page: the token list renders as structured per-token rows
+  (label, prefix, timestamps, controls) instead of one unstructured line;
+  the reveal box for a newly created or regenerated token now has a Copy
+  button matching the other connect-examples fields.
+
 ## [0.8.2] - 2026-11-04
 
 ### Fixed

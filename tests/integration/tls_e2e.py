@@ -208,13 +208,13 @@ def enable_remote_mcp(admin):
         raise RuntimeError("no csrf cookie after login")
 
     status, _, body = admin.post_json(
-        "/api/admin/mcp-remote-config/regenerate-token", {},
+        "/api/admin/mcp-remote-config/tokens", {"label": "tls_e2e"},
         headers={"X-CSRF-Token": csrf})
     if status != 200:
-        raise RuntimeError(f"regenerate-token failed: {status}")
+        raise RuntimeError(f"create token failed: {status}")
     token = json.loads(body).get("token")
     if not token:
-        raise RuntimeError(f"regenerate-token returned no token: {body!r}")
+        raise RuntimeError(f"create token returned no token: {body!r}")
 
     status, _, _ = admin.put_json(
         "/api/admin/mcp-remote-config", {"enabled": True},

@@ -20,6 +20,7 @@
 #include "controllers/GraphRoutes.h"
 #include "controllers/CalendarRoutes.h"
 #include "controllers/SearchRoutes.h"
+#include "controllers/RemoteAgentRoutes.h"
 #include "controllers/RemoteMcpRoutes.h"
 #include "controllers/VersionRoutes.h"
 #include "core/wikicore.h"
@@ -271,11 +272,21 @@ int main(int argc, char** argv) {
   // the same way embeddings.provider does, rather than serving a Draft
   // button that 500s on first use.
   std::unique_ptr<wikicore::llm::CloudChatClient> chatClient;
+  // A SECOND, independent client for POST /mcp/agent (RemoteAgentRoutes.cpp)
+  // — same [llm] config, but never the same instance as chatClient above:
+  // CloudChatClient::complete()'s cancel bookkeeping (activeClient_/
+  // stopRequested_) is per-instance, shared mutable state that two
+  // unrelated callers (the in-app Draft/Chat agent vs. a remote bearer-
+  // token caller) driving concurrently would race on.
+  std::unique_ptr<wikicore::llm::CloudChatClient> remoteAgentChatClient;
   if (cfg.llmProvider.empty() || cfg.llmProvider == "none") {
-    // leave chatClient null — AgentRuntime::enabled() is false
+    // leave both null — AgentRuntime::enabled() is false, and
+    // registerRemoteAgentRoutes() answers 503 instead of running the loop
   } else if (cfg.llmProvider == "cloud") {
     try {
       chatClient = std::make_unique<wikicore::llm::CloudChatClient>(
+          cfg.llmApiKeyEnv, cfg.llmApiBase, cfg.llmModel);
+      remoteAgentChatClient = std::make_unique<wikicore::llm::CloudChatClient>(
           cfg.llmApiKeyEnv, cfg.llmApiBase, cfg.llmModel);
     } catch (const std::exception& e) {
       LOG_ERROR << "failed to initialize llm.provider = \"cloud\": " << e.what();
@@ -611,6 +622,10 @@ int main(int argc, char** argv) {
                                                   mcpUploadStaging, mcpAuditLog, queryBlocks,
                                                   calendarQueries, graphQueries,
                                                   /*trustProxyHeaders=*/!cfg.tls.enabled);
+  wikicore::controllers::registerRemoteAgentRoutes(
+      drogon::app(), remoteMcpConfig, remoteMcpRateLimiter, remoteAgentChatClient.get(),
+      documentService, ftsSearch, navQueries, calendarQueries, indexUpdater, mcpAuditLog,
+      cfg.llmRemoteAgentSystemPrompt, /*trustProxyHeaders=*/!cfg.tls.enabled);
   wikicore::controllers::registerAgentRoutes(drogon::app(), agentRuntime);
 
   if (cfg.tls.enabled) {

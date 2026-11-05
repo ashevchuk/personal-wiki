@@ -20,23 +20,24 @@ void pruneOld(Database& db) {
 }  // namespace
 
 void McpAuditLog::record(const std::string& toolName, const std::string& path, bool success,
-                          const std::string& detail) {
+                          const std::string& detail, const std::string& tokenLabel) {
   Statement insert(db_.handle(),
-                    "INSERT INTO mcp_audit_log(at, tool_name, path, success, detail) "
-                    "VALUES (?1, ?2, ?3, ?4, ?5);");
+                    "INSERT INTO mcp_audit_log(at, tool_name, path, success, detail, token_label) "
+                    "VALUES (?1, ?2, ?3, ?4, ?5, ?6);");
   insert.bind(1, util::nowIso8601())
       .bind(2, toolName)
       .bind(3, path)
       .bind(4, static_cast<int64_t>(success ? 1 : 0))
-      .bind(5, detail);
+      .bind(5, detail)
+      .bind(6, tokenLabel);
   insert.run();
   pruneOld(db_);
 }
 
 std::vector<McpAuditEntry> McpAuditLog::listRecent(int limit) const {
   Statement stmt(db_.handle(),
-                  "SELECT id, at, tool_name, path, success, detail FROM mcp_audit_log "
-                  "ORDER BY id DESC LIMIT ?1;");
+                  "SELECT id, at, tool_name, path, success, detail, token_label "
+                  "FROM mcp_audit_log ORDER BY id DESC LIMIT ?1;");
   stmt.bind(1, static_cast<int64_t>(limit));
 
   std::vector<McpAuditEntry> results;
@@ -48,6 +49,7 @@ std::vector<McpAuditEntry> McpAuditLog::listRecent(int limit) const {
         stmt.columnText(3),
         stmt.columnInt64(4) != 0,
         stmt.columnText(5),
+        stmt.columnText(6),
     });
   }
   return results;

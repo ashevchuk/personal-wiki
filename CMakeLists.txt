@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.21)
 # Bump this on every user-visible fix/feature and record it in
 # CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
 # `wiki-mcp --version`) and reported as the MCP serverInfo.version.
-project(personal_wiki VERSION 0.8.2 LANGUAGES CXX)
+project(personal_wiki VERSION 0.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -116,6 +116,7 @@ add_library(wikicore STATIC
   src/embeddings/EmbeddingProviderFactory.cpp
   src/embeddings/EmbeddingChunks.cpp
   src/llm/AgentRuntime.cpp
+  src/llm/RemoteAgentRuntime.cpp
   src/llm/ChatStreamParser.cpp
 )
 target_include_directories(wikicore PUBLIC src)
@@ -170,6 +171,7 @@ add_executable(wiki-server
   src/controllers/FolderRoutes.cpp
   src/controllers/PageRoutes.cpp
   src/controllers/RemoteMcpRoutes.cpp
+  src/controllers/RemoteAgentRoutes.cpp
   src/controllers/VersionRoutes.cpp
   src/controllers/QueryRoutes.cpp
   src/controllers/GraphRoutes.cpp

@@ -194,6 +194,11 @@ struct AppConfig {
   std::string llmSystemPrompt;
   // Same shape for the floating vault-chat panel (not the editor Draft).
   std::string llmChatSystemPrompt;
+  // Same shape again, for POST /mcp/agent (RemoteAgentRoutes.cpp) — the
+  // remote, bearer-token-gated agent that decides on its own when to
+  // call create_document. Empty keeps RemoteAgentRuntime's own built-in
+  // default.
+  std::string llmRemoteAgentSystemPrompt;
 
   // [log]
   std::string logLevel = "info";

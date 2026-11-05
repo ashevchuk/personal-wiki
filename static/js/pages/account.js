@@ -311,14 +311,25 @@ window.WikiPages = window.WikiPages || {};
       '<p><label class="checkbox-label"><input type="checkbox" id="mcp-remote-write"> ' +
       "Allow create/update through remote MCP (independent of the local " +
       "stdio server's own write-access setting)</label></p>" +
-      "<p>Bearer token: " +
-      '<span id="mcp-remote-token-status">&hellip;</span> ' +
-      '<button type="button" id="mcp-remote-regen-btn">Regenerate token</button></p>' +
-      '<div id="mcp-remote-token-reveal" hidden>' +
+      "<h3>Tokens</h3>" +
+      "<p>One token per client (Claude Desktop, a Claude Code remote connection, " +
+      "a tray app, ...) — each can be regenerated or deleted on its own without " +
+      "affecting the others. Enabled/write-access/IP allowlist above apply to " +
+      "every token alike. \"Agent access\" is different: it lets that one token " +
+      "call POST /mcp/agent, where the wiki's own configured model can search/" +
+      "browse/read documents and the calendar, then decides on its own when to " +
+      "create a new one — off by default even for a token that already has " +
+      "ordinary create/update/attach access.</p>" +
+      '<ul id="mcp-remote-token-list" class="mcp-token-list"></ul>' +
+      '<p class="mcp-token-create-row">' +
+      '<input type="text" id="mcp-remote-token-label-input" placeholder="Label, e.g. tray-app">' +
+      ' <button type="button" id="mcp-remote-token-create-btn">Create token</button></p>' +
+      '<div id="mcp-remote-token-reveal" class="mcp-token-reveal" hidden>' +
       "<p>New token — shown once, right here. Copy it now; nothing in this " +
       "app displays it again.</p>" +
-      '<input type="text" id="mcp-remote-token-value" readonly ' +
-      'style="width:100%" onclick="this.select()"></div>' +
+      '<p class="mcp-token-value-row">' +
+      '<input type="text" id="mcp-remote-token-value" readonly onclick="this.select()">' +
+      ' <button type="button" id="mcp-remote-token-copy-btn">Copy</button></p></div>' +
       "<h3>Connect a client</h3>" +
       "<p>Endpoint (the token is not shown here — replace <code>&lt;TOKEN&gt;</code> " +
       "in the examples below with the one from Regenerate token):</p>" +
@@ -401,8 +412,10 @@ window.WikiPages = window.WikiPages || {};
         var status = e.success ? "ok" : "FAILED";
         var path = e.path ? e.path + " " : "";
         var detail = e.detail ? ": " + e.detail : "";
+        var tokenTag = e.tokenLabel ? " [" + e.tokenLabel + "]" : "";
         li.textContent =
-          formatAuditAt(e.at) + " — " + e.toolName + " " + path + "(" + status + detail + ")";
+          formatAuditAt(e.at) + " — " + e.toolName + tokenTag + " " + path + "(" + status +
+          detail + ")";
         // One line per entry (see .audit-log li's CSS truncation) means a
         // long detail string gets clipped with an ellipsis -- the title
         // attribute keeps the full text reachable on hover instead of
@@ -584,7 +597,7 @@ window.WikiPages = window.WikiPages || {};
     var successEl = document.getElementById("mcp-remote-success");
     var enabledCb = document.getElementById("mcp-remote-enabled");
     var writeCb = document.getElementById("mcp-remote-write");
-    var tokenStatus = document.getElementById("mcp-remote-token-status");
+    var tokenList = document.getElementById("mcp-remote-token-list");
     var cidrList = document.getElementById("mcp-remote-cidr-list");
 
     function showError(err) {
@@ -599,9 +612,6 @@ window.WikiPages = window.WikiPages || {};
     function renderSettings(settings) {
       enabledCb.checked = settings.enabled;
       writeCb.checked = settings.writeEnabled;
-      tokenStatus.textContent = settings.hasToken
-        ? "a token is set (hidden — regenerate to see a new one)"
-        : "no token generated yet";
 
       cidrList.innerHTML = "";
       if (settings.allowedCidrs.length === 0) {
@@ -649,6 +659,166 @@ window.WikiPages = window.WikiPages || {};
         .catch(showError);
     }
 
+    function revealToken(token) {
+      document.getElementById("mcp-remote-token-reveal").hidden = false;
+      document.getElementById("mcp-remote-token-value").value = token;
+    }
+
+    document.getElementById("mcp-remote-token-copy-btn").addEventListener("click", function (e) {
+      var btn = e.currentTarget;
+      copyText(document.getElementById("mcp-remote-token-value").value).then(
+        function () {
+          btn.textContent = "Copied";
+          setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+        },
+        function () {
+          btn.textContent = "Copy failed";
+        }
+      );
+    });
+
+    function renderTokens(data) {
+      var tokens = data.tokens || [];
+      tokenList.innerHTML = "";
+      if (tokens.length === 0) {
+        tokenList.innerHTML = '<li class="empty">No tokens yet.</li>';
+        return;
+      }
+      tokens.forEach(function (t) {
+        var li = document.createElement("li");
+        li.className = "mcp-token-row";
+
+        var info = document.createElement("div");
+        info.className = "mcp-token-info";
+        var label = document.createElement("strong");
+        label.textContent = t.label;
+        info.appendChild(label);
+        if (t.tokenPrefix) {
+          var prefix = document.createElement("code");
+          prefix.textContent = t.tokenPrefix + "…";
+          info.appendChild(prefix);
+        }
+        var meta = document.createElement("span");
+        meta.className = "mcp-token-meta";
+        meta.textContent =
+          "created " + formatAuditAt(t.createdAt) +
+          (t.lastUsedAt ? ", last used " + formatAuditAt(t.lastUsedAt) : ", never used");
+        info.appendChild(meta);
+        li.appendChild(info);
+
+        var actions = document.createElement("div");
+        actions.className = "mcp-token-actions";
+
+        var agentLabel = document.createElement("label");
+        agentLabel.className = "checkbox-label";
+        var agentCb = document.createElement("input");
+        agentCb.type = "checkbox";
+        agentCb.checked = !!t.agentAccess;
+        agentCb.addEventListener("change", function () {
+          fetch(basePath() + "/api/admin/mcp-remote-config/tokens/agent-access", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-CSRF-Token": getCookie("wiki_csrf_token"),
+            },
+            credentials: "same-origin",
+            body: JSON.stringify({ id: t.id, enabled: agentCb.checked }),
+          })
+            .then(function (resp) {
+              if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+              return resp.json();
+            })
+            .then(function (data) {
+              renderTokens(data);
+              showSuccess('Agent access for "' + t.label + '" ' +
+                (agentCb.checked ? "enabled" : "disabled") + ".");
+            })
+            .catch(function (e) {
+              agentCb.checked = !agentCb.checked;
+              showError(e);
+            });
+        });
+        agentLabel.appendChild(agentCb);
+        agentLabel.appendChild(document.createTextNode(" Agent access"));
+        actions.appendChild(agentLabel);
+
+        var regenBtn = document.createElement("button");
+        regenBtn.type = "button";
+        regenBtn.textContent = "Regenerate";
+        regenBtn.addEventListener("click", function () {
+          WikiDialog.confirm(
+            'Regenerate the token "' + t.label +
+              '"? The CURRENT value stops working immediately; other tokens are unaffected.',
+            { danger: true, okLabel: "Regenerate" }
+          ).then(function (ok) {
+            if (!ok) return;
+            fetch(basePath() + "/api/admin/mcp-remote-config/tokens/regenerate", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                "X-CSRF-Token": getCookie("wiki_csrf_token"),
+              },
+              credentials: "same-origin",
+              body: JSON.stringify({ id: t.id }),
+            })
+              .then(function (resp) {
+                if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+                return resp.json();
+              })
+              .then(function (data) {
+                revealToken(data.token);
+                showSuccess('New value for "' + t.label + '" — copy it now, it won\'t be shown again.');
+                loadTokens();
+              })
+              .catch(showError);
+          });
+        });
+
+        var deleteBtn = document.createElement("button");
+        deleteBtn.type = "button";
+        deleteBtn.textContent = "Delete";
+        deleteBtn.addEventListener("click", function () {
+          WikiDialog.confirm(
+            'Delete the token "' + t.label + '"? Any client using it loses access immediately.',
+            { danger: true, okLabel: "Delete" }
+          ).then(function (ok) {
+            if (!ok) return;
+            fetch(
+              basePath() + "/api/admin/mcp-remote-config/tokens?id=" + encodeURIComponent(t.id),
+              {
+                method: "DELETE",
+                headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
+                credentials: "same-origin",
+              }
+            )
+              .then(function (resp) {
+                if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+                return resp.json();
+              })
+              .then(function (data) {
+                renderTokens(data);
+                showSuccess('Deleted "' + t.label + '".');
+              })
+              .catch(showError);
+          });
+        });
+
+        actions.appendChild(regenBtn);
+        actions.appendChild(deleteBtn);
+        li.appendChild(actions);
+        tokenList.appendChild(li);
+      });
+    }
+
+    function loadTokens() {
+      fetch(basePath() + "/api/admin/mcp-remote-config/tokens", { credentials: "same-origin" })
+        .then(function (r) {
+          return r.json();
+        })
+        .then(renderTokens)
+        .catch(showError);
+    }
+
     function putFlag(field, value) {
       var body = {};
       body[field] = value;
@@ -679,29 +849,30 @@ window.WikiPages = window.WikiPages || {};
       putFlag("writeEnabled", writeCb.checked);
     });
 
-    document.getElementById("mcp-remote-regen-btn").addEventListener("click", function () {
-      WikiDialog.confirm(
-        "Regenerate the remote MCP bearer token? The CURRENT token stops working immediately.",
-        { danger: true, okLabel: "Regenerate" }
-      ).then(function (ok) {
-        if (!ok) return;
-        fetch(basePath() + "/api/admin/mcp-remote-config/regenerate-token", {
-          method: "POST",
-          headers: { "X-CSRF-Token": getCookie("wiki_csrf_token") },
-          credentials: "same-origin",
+    document.getElementById("mcp-remote-token-create-btn").addEventListener("click", function () {
+      var input = document.getElementById("mcp-remote-token-label-input");
+      var label = input.value.trim();
+      if (!label) return;
+      fetch(basePath() + "/api/admin/mcp-remote-config/tokens", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-CSRF-Token": getCookie("wiki_csrf_token"),
+        },
+        credentials: "same-origin",
+        body: JSON.stringify({ label: label }),
+      })
+        .then(function (resp) {
+          if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
+          return resp.json();
         })
-          .then(function (resp) {
-            if (!resp.ok) return errorFromResponse(resp).then(function (e) { throw e; });
-            return resp.json();
-          })
-          .then(function (data) {
-            document.getElementById("mcp-remote-token-reveal").hidden = false;
-            document.getElementById("mcp-remote-token-value").value = data.token;
-            tokenStatus.textContent = "a token is set (hidden — regenerate to see a new one)";
-            showSuccess("New token generated — copy it now, it won't be shown again.");
-          })
-          .catch(showError);
-      });
+        .then(function (data) {
+          input.value = "";
+          revealToken(data.token);
+          showSuccess('Created "' + label + '" — copy it now, it won\'t be shown again.');
+          loadTokens();
+        })
+        .catch(showError);
     });
 
     document.getElementById("mcp-remote-cidr-add-btn").addEventListener("click", function () {
@@ -730,6 +901,7 @@ window.WikiPages = window.WikiPages || {};
     });
 
     loadSettings();
+    loadTokens();
     loadAuditLogs();
   }
 

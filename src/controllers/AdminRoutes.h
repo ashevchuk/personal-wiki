@@ -42,18 +42,38 @@ namespace wikicore::controllers {
 // effect immediately (no restart, the whole point of storing this in
 // SQLite instead of config.toml):
 //   GET    /api/admin/mcp-remote-config
-//     -> {enabled, writeEnabled, hasToken, allowedCidrs: [...]}. Never
-//        returns the token itself or its hash — hasToken is the only
-//        signal a client gets that one exists.
+//     -> {enabled, writeEnabled, allowedCidrs: [...]}. These three stay
+//        global, shared by every token — see the per-token endpoints
+//        below for the tokens themselves.
 //   PUT    /api/admin/mcp-remote-config   body: {enabled?, writeEnabled?}
 //     -> flips only the field(s) present in the body; omitted fields are
 //        left exactly as they were (see McpRemoteConfig::setEnabled/
 //        setWriteEnabled's own "each setter only touches its own
 //        column" guarantee).
-//   POST   /api/admin/mcp-remote-config/regenerate-token
-//     -> {token: "..."} — the RAW token, shown ONCE, right here. Nothing
-//        else in this app ever displays it again; losing it means
-//        regenerating a new one (which immediately invalidates the old).
+//   GET    /api/admin/mcp-remote-config/tokens
+//     -> {tokens: [{id, label, tokenPrefix, createdAt, lastUsedAt,
+//        agentAccess}, ...]}. Never the token itself or its hash —
+//        tokenPrefix (first 8 hex chars of the raw value) is purely
+//        cosmetic, just enough for an admin to tell two tokens apart
+//        without re-pasting the secret.
+//   POST   /api/admin/mcp-remote-config/tokens   body: {label}
+//     -> creates a new, independent token (agentAccess starts false) ->
+//        {id, token: "..."}. The RAW token is shown ONCE, right here.
+//   POST   /api/admin/mcp-remote-config/tokens/regenerate   body: {id}
+//     -> same row/label, fresh secret -> {id, token: "..."}. The old raw
+//        value for THIS token stops working immediately; every other
+//        token is untouched.
+//   POST   /api/admin/mcp-remote-config/tokens/agent-access
+//          body: {id, enabled}
+//     -> opts this one token into/out of POST /mcp/agent
+//        (RemoteAgentRoutes.cpp) — a materially different risk from
+//        ordinary create_document/update_document/attach_file (there the
+//        caller names the exact tool; here the model decides for
+//        itself), so it's off by default even for a token that already
+//        has writeEnabled's deterministic CRUD.
+//   DELETE /api/admin/mcp-remote-config/tokens?id=...
+//     -> revokes exactly that one token, immediately, with no effect on
+//        any other token.
 //   POST   /api/admin/mcp-remote-config/allowed-cidrs   body: {cidr}
 //     -> adds one allowlist entry (idempotent — adding the same one twice
 //        is a no-op, not an error).

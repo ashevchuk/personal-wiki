@@ -220,6 +220,16 @@ write_access = false
 # chat_system_prompt = """
 # You answer questions about a personal wiki.
 # """
+#
+# Same shape again, for POST /mcp/agent — the remote, bearer-token-gated
+# endpoint that turns free text into a new document on its own (Account
+# page → Remote MCP → a token's "Agent access" toggle gates who may call
+# it; this is off by default even for a token that already has
+# writeEnabled's ordinary create/update/attach). Omit to keep the
+# built-in default (see RemoteAgentRuntime.cpp).
+# remote_agent_system_prompt = """
+# You turn a piece of text into one new wiki document.
+# """
 
 [log]
 level = "info"   # trace | debug | info | warn | error

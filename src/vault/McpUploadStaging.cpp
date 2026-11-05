@@ -60,13 +60,16 @@ void McpUploadStaging::expireStale() {
 }
 
 std::string McpUploadStaging::begin(const std::string& documentPath,
-                                     const std::string& filename) {
+                                     const std::string& filename,
+                                     const std::string& tokenLabel) {
   expireStale();
   const std::string id = util::newUuidV4();
   std::string meta;
   meta += documentPath;
   meta += '\n';
   meta += filename;
+  meta += '\n';
+  meta += tokenLabel;
   meta += '\n';
   vault_.writeRawAtomic(metaRelative(id), meta);
   return id;
@@ -88,6 +91,9 @@ std::optional<McpUploadTicket> McpUploadStaging::get(std::string_view id) const 
   t.id = std::string(id);
   if (!std::getline(in, t.documentPath) || t.documentPath.empty()) return std::nullopt;
   if (!std::getline(in, t.filename) || t.filename.empty()) return std::nullopt;
+  // tokenLabel may legitimately be empty (a label is optional), so no
+  // emptiness check here -- only that the line exists at all.
+  std::getline(in, t.tokenLabel);
   return t;
 }
 

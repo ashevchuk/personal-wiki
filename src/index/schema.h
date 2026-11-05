@@ -283,4 +283,53 @@ ALTER TABLE documents ADD COLUMN recur TEXT NOT NULL DEFAULT '';
 CREATE INDEX idx_documents_due_at ON documents(due_at) WHERE due_at != '';
 )sql";
 
+// Migration 10: multiple, independently labeled/revocable remote-MCP
+// bearer tokens, replacing mcp_remote_config's old singleton token_hash
+// column (left in place below, just unused from now on -- this project's
+// migrations never drop columns). One admin, no roles anywhere else in
+// this app, so enabled/write_enabled/the CIDR allowlist stay global and
+// shared by every token on purpose -- only the secret itself, and the
+// ability to revoke ONE client without touching the others, is
+// per-token. token_prefix is a cosmetic slice of the raw value (first 8
+// of 64 hex chars) so an admin can tell tokens apart in the Web UI
+// without re-pasting the real secret anywhere; leaking 32 bits of a
+// 256-bit-equivalent random token costs nothing real.
+//
+// The INSERT below carries the current live singleton token forward as
+// a token_hash-only row so upgrading this schema doesn't lock out every
+// already-configured remote client (Claude Desktop, any existing Claude
+// Code remote connection) -- there is no raw value to derive a prefix
+// from for this one row, hence the empty token_prefix and a label that
+// says so.
+inline constexpr const char* kMigration10 = R"sql(
+CREATE TABLE mcp_remote_tokens (
+  id            INTEGER PRIMARY KEY,
+  label         TEXT NOT NULL,
+  token_hash    TEXT NOT NULL,
+  token_prefix  TEXT NOT NULL,
+  created_at    TEXT NOT NULL,
+  last_used_at  TEXT
+);
+CREATE INDEX idx_mcp_remote_tokens_created ON mcp_remote_tokens(created_at DESC);
+
+INSERT INTO mcp_remote_tokens (label, token_hash, token_prefix, created_at, last_used_at)
+SELECT 'Migrated token (pre-dates per-token tracking)', token_hash, '',
+       strftime('%Y-%m-%dT%H:%M:%SZ', 'now'), NULL
+FROM mcp_remote_config WHERE id = 1 AND token_hash IS NOT NULL AND token_hash != '';
+
+ALTER TABLE mcp_audit_log ADD COLUMN token_label TEXT;
+)sql";
+
+// Migration 11: per-token opt-in for the remote agent endpoint
+// (POST /mcp/agent, RemoteAgentRoutes.cpp) -- a materially different
+// risk from the deterministic create_document/update_document/
+// attach_file tools (there, the caller names the exact tool and
+// arguments; here, the model itself decides what to write from free
+// text), so it's gated per-token rather than folded into the global
+// write_enabled every token already shares. Default 0: a token that
+// already does ordinary CRUD does not automatically get this too.
+inline constexpr const char* kMigration11 = R"sql(
+ALTER TABLE mcp_remote_tokens ADD COLUMN agent_access INTEGER NOT NULL DEFAULT 0;
+)sql";
+
 }  // namespace wikicore::index::schema

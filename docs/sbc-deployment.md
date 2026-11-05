@@ -687,9 +687,9 @@ cold-start edge case is acceptable to leave unstyled.
 This is an admin-toggleable, bearer-token-protected `POST /mcp` HTTP
 endpoint (see [`docs/mcp.md`](mcp.md)) that lets an MCP client reach
 this wiki over the network, instead of only through a local stdio
-spawn. Enabling or disabling it, write access, the token, and the IP
-allowlist are all managed live from the Account page — no `config.toml`
-edit, no restart.
+spawn. Enabling or disabling it, write access, individual tokens, and the
+IP allowlist are all managed live from the Account page — no
+`config.toml` edit, no restart.
 
 **This requires TLS in front of the app** — either the reverse proxy
 above, or `wiki-server`'s own standalone TLS mode (see "Standalone TLS
@@ -729,12 +729,22 @@ between the internet and this vault.
 
 Whether remote MCP is currently enabled, and with what settings, isn't
 tracked in this doc — check the Account page's Remote MCP section
-directly; that's also the only place the raw bearer token is ever shown,
-exactly once, at the moment it's generated
-(`McpRemoteConfig::regenerateToken()`). To rotate it: Account page →
-Remote MCP section → Regenerate (this invalidates the old value
-immediately), or `POST /api/admin/mcp-remote-config/regenerate-token`
-as admin.
+directly; that's also the only place a raw bearer token value is ever
+shown, exactly once, at the moment it's created or regenerated
+(`McpRemoteConfig::createToken()`/`regenerateToken()`). Give each client
+its own labeled token rather than sharing one: Account page → Remote MCP
+→ Tokens → Create token. To rotate one client's token without affecting
+any other: the same section's Regenerate button for that row (this
+invalidates the old value immediately), or
+`POST /api/admin/mcp-remote-config/tokens/regenerate` as admin.
+
+Each token also has its own **Agent access** checkbox, off by default, gating
+a second endpoint (`POST /mcp/agent`, see [`docs/mcp.md`](mcp.md)'s "Remote
+agent endpoint" section) where the wiki's own configured `[llm]` decides on
+its own what to write, rather than the client naming the exact tool. Leave it
+off for a client that only ever calls `create_document`/`update_document`
+directly — there's no reason to widen that token's risk for a capability it
+doesn't use.
 
 ## Backup
 

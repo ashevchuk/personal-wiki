@@ -13,7 +13,8 @@ struct McpAuditEntry {
   std::string toolName;
   std::string path;
   bool success;
-  std::string detail;  // error message on failure; a short summary on success
+  std::string detail;      // error message on failure; a short summary on success
+  std::string tokenLabel;  // which remote-MCP token made the call; "" if not applicable
 };
 
 // Records every call to an MCP write tool (create_document/
@@ -47,8 +48,13 @@ class McpAuditLog {
   // shape as SessionStore::create()'s own pruneExpired()).
   static constexpr int64_t kMaxRows = 2000;
 
+  // `tokenLabel` identifies which remote-MCP token authorized the call
+  // (McpRemoteConfig::TokenMatch::label) -- left at its default "" for
+  // every caller that isn't the remote HTTP transport (local stdio MCP,
+  // Draft/Chat's own "compose:"/"chat:"-prefixed entries, the "admin:"
+  // re-embed actions), none of which have a bearer token to attribute.
   void record(const std::string& toolName, const std::string& path, bool success,
-              const std::string& detail);
+              const std::string& detail, const std::string& tokenLabel = "");
 
   // Newest first.
   std::vector<McpAuditEntry> listRecent(int limit) const;

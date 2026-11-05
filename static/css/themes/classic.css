@@ -1044,6 +1044,74 @@ a.btn:focus {
 #mcp-remote-token-reveal {
   margin: 0.5rem 0 1rem;
 }
+.mcp-token-value-row {
+  display: flex;
+  gap: 0.5rem;
+}
+.mcp-token-value-row input {
+  flex: 1;
+  min-width: 0;
+}
+.mcp-token-create-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* One bordered row per token instead of the plain divided-list treatment
+   #mcp-remote-cidr-list/.audit-log use above -- a token row carries much
+   more (label, prefix, two timestamps, a checkbox, two buttons) than a
+   CIDR entry's single remove button, and cramming all of that onto one
+   unstructured line is what made this illegible before. */
+.mcp-token-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.mcp-token-list li.empty {
+  padding: 0.25rem 0;
+  color: var(--fg-dim);
+  font-size: 0.85rem;
+}
+.mcp-token-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-bg-2);
+}
+.mcp-token-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.1rem 0.6rem;
+  min-width: 0;
+}
+.mcp-token-info code {
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+}
+.mcp-token-meta {
+  font-size: 0.8rem;
+  color: var(--fg-dim);
+  flex-basis: 100%;
+}
+.mcp-token-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+.mcp-token-actions button {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.6rem;
+}
 
 @media (max-width: 720px) {
   .layout {

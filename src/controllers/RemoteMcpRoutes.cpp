@@ -499,7 +499,7 @@ Json::Value handleGetCalendarEvents(CalendarQueries& calendarQueries, const Json
 // remote-HTTP writes apart at a glance without a schema change (a
 // `source` column would need its own migration; this needs none).
 Json::Value handleCreateDocument(DocumentService& documents, McpAuditLog& auditLog,
-                                  const Json::Value& args) {
+                                  const Json::Value& args, const std::string& tokenLabel) {
   if (!args.isMember("path") || !args["path"].isString() || args["path"].asString().empty()) {
     return toolTextResult("missing 'path'", true);
   }
@@ -520,14 +520,14 @@ Json::Value handleCreateDocument(DocumentService& documents, McpAuditLog& auditL
 
   try {
     const auto rec = documents.create(path, input);
-    auditLog.record("remote:create_document", path, true, "created");
+    auditLog.record("remote:create_document", path, true, "created", tokenLabel);
     return toolTextResult("Created " + rec.path);
   } catch (const DocumentAlreadyExistsError&) {
     auditLog.record("remote:create_document", path, false,
-                     "a document already exists at that path");
+                     "a document already exists at that path", tokenLabel);
     return toolTextResult("a document already exists at that path", true);
   } catch (const PathTraversalError&) {
-    auditLog.record("remote:create_document", path, false, "path traversal rejected");
+    auditLog.record("remote:create_document", path, false, "path traversal rejected", tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::filesystem::filesystem_error& e) {
     // The audit log keeps the full detail (it's admin-only, DB-stored,
@@ -538,16 +538,16 @@ Json::Value handleCreateDocument(DocumentService& documents, McpAuditLog& auditL
     // caller" rule as every route in DocumentRoutes.cpp/FolderRoutes.cpp/
     // VersionRoutes.cpp, arguably higher stakes here: this IS the public
     // HTTP surface (docs/architecture.md's "Remote (HTTP) transport").
-    auditLog.record("remote:create_document", path, false, e.what());
+    auditLog.record("remote:create_document", path, false, e.what(), tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::exception& e) {
-    auditLog.record("remote:create_document", path, false, e.what());
+    auditLog.record("remote:create_document", path, false, e.what(), tokenLabel);
     return toolTextResult(e.what(), true);
   }
 }
 
 Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditLog,
-                                  const Json::Value& args) {
+                                  const Json::Value& args, const std::string& tokenLabel) {
   if (!args.isMember("path") || !args["path"].isString() || args["path"].asString().empty()) {
     return toolTextResult("missing 'path'", true);
   }
@@ -572,21 +572,21 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
     }
 
     const auto rec = documents.update(path, input);
-    auditLog.record("remote:update_document", path, true, "updated");
+    auditLog.record("remote:update_document", path, true, "updated", tokenLabel);
     return toolTextResult("Updated " + rec.path);
   } catch (const DocumentNotFoundError&) {
-    auditLog.record("remote:update_document", path, false, "document not found");
+    auditLog.record("remote:update_document", path, false, "document not found", tokenLabel);
     return toolTextResult("document not found: " + path, true);
   } catch (const PathTraversalError&) {
-    auditLog.record("remote:update_document", path, false, "path traversal rejected");
+    auditLog.record("remote:update_document", path, false, "path traversal rejected", tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::filesystem::filesystem_error& e) {
     // See handleCreateDocument's identical catch above for why this can't
     // fall through to the generic e.what() catch below.
-    auditLog.record("remote:update_document", path, false, e.what());
+    auditLog.record("remote:update_document", path, false, e.what(), tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::exception& e) {
-    auditLog.record("remote:update_document", path, false, e.what());
+    auditLog.record("remote:update_document", path, false, e.what(), tokenLabel);
     return toolTextResult(e.what(), true);
   }
 }
@@ -598,7 +598,8 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
 constexpr size_t kMaxEncodedAttachmentBytes = 36ull * 1024 * 1024;
 
 Json::Value handleAttachFile(DocumentService& documents, AttachmentService& attachments,
-                              McpAuditLog& auditLog, const Json::Value& args) {
+                              McpAuditLog& auditLog, const Json::Value& args,
+                              const std::string& tokenLabel) {
   if (!args.isMember("path") || !args["path"].isString() || args["path"].asString().empty()) {
     return toolTextResult("missing 'path'", true);
   }
@@ -608,7 +609,7 @@ Json::Value handleAttachFile(DocumentService& documents, AttachmentService& atta
   const bool hasB64 = args.isMember("content_base64") && args["content_base64"].isString();
   if (hasSource) {
     auditLog.record("remote:attach_file", path, false,
-                     "source_path is not available on remote MCP");
+                     "source_path is not available on remote MCP", tokenLabel);
     return toolTextResult(
         "source_path is only available on local stdio wiki-mcp; copying a "
         "path on this HTTP server would read arbitrary host files. For a "
@@ -634,38 +635,39 @@ Json::Value handleAttachFile(DocumentService& documents, AttachmentService& atta
   }
   const auto decoded = wikicore::util::decodeBase64(wikicore::util::stripDataUrlPrefix(raw));
   if (!decoded) {
-    auditLog.record("remote:attach_file", path, false, "invalid base64");
+    auditLog.record("remote:attach_file", path, false, "invalid base64", tokenLabel);
     return toolTextResult("invalid base64", true);
   }
 
   try {
     const auto attached =
         attachFileAndLink(documents, attachments, path, filename, *decoded);
-    auditLog.record("remote:attach_file", path, true, attached.info.relativePath);
+    auditLog.record("remote:attach_file", path, true, attached.info.relativePath, tokenLabel);
     return toolTextResult("Attached " + attached.info.relativePath + " (" +
                           std::to_string(attached.info.size) + " bytes, " +
                           attached.info.mimeType + ")\nInserted markdown: " +
                           attached.markdownLink);
   } catch (const DocumentNotFoundError&) {
-    auditLog.record("remote:attach_file", path, false, "document not found");
+    auditLog.record("remote:attach_file", path, false, "document not found", tokenLabel);
     return toolTextResult("document not found: " + path, true);
   } catch (const AttachmentRejectedError& e) {
-    auditLog.record("remote:attach_file", path, false, e.what());
+    auditLog.record("remote:attach_file", path, false, e.what(), tokenLabel);
     return toolTextResult(e.what(), true);
   } catch (const PathTraversalError&) {
-    auditLog.record("remote:attach_file", path, false, "path traversal rejected");
+    auditLog.record("remote:attach_file", path, false, "path traversal rejected", tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::filesystem::filesystem_error& e) {
-    auditLog.record("remote:attach_file", path, false, e.what());
+    auditLog.record("remote:attach_file", path, false, e.what(), tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::exception& e) {
-    auditLog.record("remote:attach_file", path, false, e.what());
+    auditLog.record("remote:attach_file", path, false, e.what(), tokenLabel);
     return toolTextResult(e.what(), true);
   }
 }
 
 Json::Value handleAttachFileBegin(DocumentService& documents, McpUploadStaging& staging,
-                                   McpAuditLog& auditLog, const Json::Value& args) {
+                                   McpAuditLog& auditLog, const Json::Value& args,
+                                   const std::string& tokenLabel) {
   if (!args.isMember("path") || !args["path"].isString() || args["path"].asString().empty()) {
     return toolTextResult("missing 'path'", true);
   }
@@ -677,8 +679,8 @@ Json::Value handleAttachFileBegin(DocumentService& documents, McpUploadStaging& 
   const std::string filename = args["filename"].asString();
   try {
     (void)documents.get(path);  // must exist, same as attach_file
-    const std::string id = staging.begin(path, filename);
-    auditLog.record("remote:attach_file_begin", path, true, id);
+    const std::string id = staging.begin(path, filename, tokenLabel);
+    auditLog.record("remote:attach_file_begin", path, true, id, tokenLabel);
     std::string msg;
     msg += "upload_id: ";
     msg += id;
@@ -694,16 +696,16 @@ Json::Value handleAttachFileBegin(DocumentService& documents, McpUploadStaging& 
            "upload completes. Ticket expires in 1 hour.";
     return toolTextResult(msg);
   } catch (const DocumentNotFoundError&) {
-    auditLog.record("remote:attach_file_begin", path, false, "document not found");
+    auditLog.record("remote:attach_file_begin", path, false, "document not found", tokenLabel);
     return toolTextResult("document not found: " + path, true);
   } catch (const PathTraversalError&) {
-    auditLog.record("remote:attach_file_begin", path, false, "path traversal rejected");
+    auditLog.record("remote:attach_file_begin", path, false, "path traversal rejected", tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::filesystem::filesystem_error& e) {
-    auditLog.record("remote:attach_file_begin", path, false, e.what());
+    auditLog.record("remote:attach_file_begin", path, false, e.what(), tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::exception& e) {
-    auditLog.record("remote:attach_file_begin", path, false, e.what());
+    auditLog.record("remote:attach_file_begin", path, false, e.what(), tokenLabel);
     return toolTextResult(e.what(), true);
   }
 }
@@ -757,7 +759,9 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
         const bool hasBearer = authHeader.size() > kBearerPrefix.size() &&
                                 authHeader.compare(0, kBearerPrefix.size(), kBearerPrefix) == 0;
         const std::string token = hasBearer ? authHeader.substr(kBearerPrefix.size()) : "";
-        if (!hasBearer || !remoteConfig.verifyToken(token)) {
+        const auto tokenMatch = hasBearer ? remoteConfig.verifyToken(token)
+                                           : McpRemoteConfig::TokenMatch{};
+        if (!tokenMatch.matched) {
           rateLimiter.recordFailure(ip);
           auto resp = HttpResponse::newHttpResponse();
           resp->setStatusCode(k401Unauthorized);
@@ -845,19 +849,21 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
             // own" discipline as every filter/route check elsewhere in
             // this app.
             result = settings.writeEnabled
-                         ? handleCreateDocument(documents, auditLog, args)
+                         ? handleCreateDocument(documents, auditLog, args, tokenMatch.label)
                          : toolTextResult("write access is disabled for remote MCP", true);
           } else if (toolName == "update_document") {
             result = settings.writeEnabled
-                         ? handleUpdateDocument(documents, auditLog, args)
+                         ? handleUpdateDocument(documents, auditLog, args, tokenMatch.label)
                          : toolTextResult("write access is disabled for remote MCP", true);
           } else if (toolName == "attach_file") {
             result = settings.writeEnabled
-                         ? handleAttachFile(documents, attachments, auditLog, args)
+                         ? handleAttachFile(documents, attachments, auditLog, args,
+                                             tokenMatch.label)
                          : toolTextResult("write access is disabled for remote MCP", true);
           } else if (toolName == "attach_file_begin") {
             result = settings.writeEnabled
-                         ? handleAttachFileBegin(documents, mcpUploads, auditLog, args)
+                         ? handleAttachFileBegin(documents, mcpUploads, auditLog, args,
+                                                  tokenMatch.label)
                          : toolTextResult("write access is disabled for remote MCP", true);
           } else {
             callback(HttpResponse::newHttpJsonResponse(
@@ -960,7 +966,7 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
                                                    ticket->documentPath, filename, bytes);
           mcpUploads.remove(uploadId);
           auditLog.record("remote:attach_file", ticket->documentPath, true,
-                           attached.info.relativePath);
+                           attached.info.relativePath, ticket->tokenLabel);
           Json::Value body;
           body["path"] = attached.info.relativePath;
           body["mimeType"] = attached.info.mimeType;
@@ -971,14 +977,14 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           callback(resp);
         } catch (const DocumentNotFoundError&) {
           auditLog.record("remote:attach_file", ticket->documentPath, false,
-                           "document not found");
+                           "document not found", ticket->tokenLabel);
           Json::Value err;
           err["error"] = "owning document not found";
           auto resp = HttpResponse::newHttpJsonResponse(err);
           resp->setStatusCode(k404NotFound);
           callback(resp);
         } catch (const AttachmentRejectedError& e) {
-          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what());
+          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what(), ticket->tokenLabel);
           Json::Value err;
           err["error"] = e.what();
           auto resp = HttpResponse::newHttpJsonResponse(err);
@@ -986,21 +992,21 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           callback(resp);
         } catch (const PathTraversalError&) {
           auditLog.record("remote:attach_file", ticket->documentPath, false,
-                           "path traversal rejected");
+                           "path traversal rejected", ticket->tokenLabel);
           Json::Value err;
           err["error"] = "invalid path";
           auto resp = HttpResponse::newHttpJsonResponse(err);
           resp->setStatusCode(k400BadRequest);
           callback(resp);
         } catch (const std::filesystem::filesystem_error& e) {
-          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what());
+          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what(), ticket->tokenLabel);
           Json::Value err;
           err["error"] = "invalid path";
           auto resp = HttpResponse::newHttpJsonResponse(err);
           resp->setStatusCode(k400BadRequest);
           callback(resp);
         } catch (const std::exception& e) {
-          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what());
+          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what(), ticket->tokenLabel);
           Json::Value err;
           err["error"] = e.what();
           auto resp = HttpResponse::newHttpJsonResponse(err);

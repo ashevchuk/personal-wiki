@@ -14,6 +14,7 @@
 #include <drogon/HttpResponse.h>
 
 #include <algorithm>
+#include <stdexcept>
 
 using namespace drogon;
 using namespace wikicore::auth;
@@ -38,10 +39,28 @@ Json::Value remoteConfigToJson(const McpRemoteConfig& cfg) {
   Json::Value body;
   body["enabled"] = settings.enabled;
   body["writeEnabled"] = settings.writeEnabled;
-  body["hasToken"] = settings.hasToken;
   Json::Value cidrs(Json::arrayValue);
   for (const auto& c : cfg.listAllowedCidrs()) cidrs.append(c);
   body["allowedCidrs"] = cidrs;
+  return body;
+}
+
+Json::Value tokenToJson(const RemoteMcpToken& t) {
+  Json::Value item;
+  item["id"] = static_cast<Json::Int64>(t.id);
+  item["label"] = t.label;
+  item["tokenPrefix"] = t.tokenPrefix;
+  item["createdAt"] = t.createdAt;
+  item["lastUsedAt"] = t.lastUsedAt;
+  item["agentAccess"] = t.agentAccess;
+  return item;
+}
+
+Json::Value tokensToJson(const McpRemoteConfig& cfg) {
+  Json::Value arr(Json::arrayValue);
+  for (const auto& t : cfg.listTokens()) arr.append(tokenToJson(t));
+  Json::Value body;
+  body["tokens"] = arr;
   return body;
 }
 
@@ -143,6 +162,7 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
           item["path"] = e.path;
           item["success"] = e.success;
           item["detail"] = e.detail;
+          item["tokenLabel"] = e.tokenLabel;
           arr.append(item);
         }
         Json::Value body;
@@ -193,16 +213,118 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
       {Put, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 
   app.registerHandler(
-      "/api/admin/mcp-remote-config/regenerate-token",
+      "/api/admin/mcp-remote-config/tokens",
       [&mcpRemoteConfig](const HttpRequestPtr& req,
                           std::function<void(const HttpResponsePtr&)>&& callback) {
         if (auto rejection = requireAdminApi(req)) {
           callback(*rejection);
           return;
         }
+        callback(HttpResponse::newHttpJsonResponse(tokensToJson(mcpRemoteConfig)));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
+  app.registerHandler(
+      "/api/admin/mcp-remote-config/tokens",
+      [&mcpRemoteConfig](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("label") || !(*json)["label"].isString() ||
+            (*json)["label"].asString().empty()) {
+          Json::Value err;
+          err["error"] = "expected {\"label\": \"...\"}";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+        const auto created = mcpRemoteConfig.createToken((*json)["label"].asString());
         Json::Value body;
-        body["token"] = mcpRemoteConfig.regenerateToken();
+        body["id"] = static_cast<Json::Int64>(created.id);
+        body["token"] = created.rawToken;
         callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/admin/mcp-remote-config/tokens/regenerate",
+      [&mcpRemoteConfig](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("id") || !(*json)["id"].isIntegral()) {
+          Json::Value err;
+          err["error"] = "expected {\"id\": <number>}";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+        const auto regenerated =
+            mcpRemoteConfig.regenerateToken((*json)["id"].asInt64());
+        Json::Value body;
+        body["id"] = static_cast<Json::Int64>(regenerated.id);
+        body["token"] = regenerated.rawToken;
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/admin/mcp-remote-config/tokens",
+      [&mcpRemoteConfig](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        // Query param, not a JSON body -- same reasoning as the CIDR
+        // DELETE below: some proxies/HTTP clients strip a DELETE body.
+        const std::string idParam = req->getParameter("id");
+        int64_t id = 0;
+        try {
+          size_t consumed = 0;
+          id = std::stoll(idParam, &consumed);
+          if (consumed != idParam.size()) throw std::invalid_argument("trailing characters");
+        } catch (const std::exception&) {
+          Json::Value err;
+          err["error"] = "expected ?id=<integer>";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+        mcpRemoteConfig.deleteToken(id);
+        callback(HttpResponse::newHttpJsonResponse(tokensToJson(mcpRemoteConfig)));
+      },
+      {Delete, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
+
+  app.registerHandler(
+      "/api/admin/mcp-remote-config/tokens/agent-access",
+      [&mcpRemoteConfig](const HttpRequestPtr& req,
+                          std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        auto json = req->getJsonObject();
+        if (!json || !json->isMember("id") || !(*json)["id"].isIntegral() ||
+            !json->isMember("enabled") || !(*json)["enabled"].isBool()) {
+          Json::Value err;
+          err["error"] = "expected {\"id\": <number>, \"enabled\": <bool>}";
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k400BadRequest);
+          callback(resp);
+          return;
+        }
+        mcpRemoteConfig.setAgentAccess((*json)["id"].asInt64(), (*json)["enabled"].asBool());
+        callback(HttpResponse::newHttpJsonResponse(tokensToJson(mcpRemoteConfig)));
       },
       {Post, "wikicore::auth::AuthFilter", "wikicore::auth::CsrfFilter"});
 

@@ -230,14 +230,18 @@ able to toggle this without restarting the server:
   excluded from backups. Drogon's `setClientMaxBodySize` (2 GiB) and the
   reverse proxy's own `client_max_body_size` still bound the HTTP
   request; the app itself has no attachment size cap of its own.
-- **Bearer token** — a 64-character random hex string, checked via
-  `Authorization: Bearer <token>` on every `POST /mcp`. Only its SHA-256
-  hash is ever stored — the raw value is never written to disk anywhere.
-  Clicking "Regenerate token" shows the new raw
-  value exactly once, right there on the page, and immediately
-  invalidates whatever token was issued before it. `PUT /mcp/uploads/{id}`
-  doesn't send this header at all — the upload id itself is the
-  capability.
+- **Bearer tokens** — the Account page's "Tokens" list holds any number of
+  independently labeled tokens (one per client is the intended use: Claude
+  Desktop, a Claude Code remote connection, a standalone client, ...), each
+  a 64-character random hex string checked via `Authorization: Bearer
+  <token>` on every `POST /mcp`. Only a token's SHA-256 hash is ever
+  stored — the raw value is never written to disk anywhere, and the list
+  shows only a cosmetic 8-character prefix of it to tell tokens apart.
+  "Create token" and "Regenerate" each show the new raw value exactly
+  once, right there on the page. Regenerating or deleting a token affects
+  only that one token — every other token, and the global enabled/write/IP
+  allowlist settings, are untouched. `PUT /mcp/uploads/{id}` doesn't send
+  this header at all — the upload id itself is the capability.
 - **IP allowlist** — optional, and additional to the token rather than a
   replacement for it. Leaving it empty means no IP restriction at all. It
   accepts IPv4 and IPv6, either as a CIDR range or a bare address
@@ -266,27 +270,84 @@ a static header, in the same config file as the stdio example above:
       "type": "http",
       "url": "https://wiki.example.com/mcp",
       "headers": {
-        "Authorization": "Bearer <token from the Account page>"
+        "Authorization": "Bearer <token created for this client on the Account page>"
       }
     }
   }
 }
 ```
 
-The token sits in this file as plain text. It's not a secret baked into
-the repo, but it is still a live credential — keep this file out of
-version control, and readable only by whoever is meant to run this
-client. Regenerating the token on the Account page invalidates whatever
-is pasted here, so update the file to match whenever you do that.
+Create a separate, distinctly labeled token per client rather than sharing
+one across several config files — then revoking or regenerating one
+client's access (lost laptop, retired integration) never affects any
+other client. The token sits in this file as plain text. It's not a
+secret baked into the repo, but it is still a live credential — keep this
+file out of version control, and readable only by whoever is meant to
+run this client. Regenerating or deleting that specific token on the
+Account page invalidates whatever is pasted here, so update the file to
+match whenever you do that.
 
 **Every write through the remote tools is recorded in the same
 `mcp_audit_log` table the local stdio write tools use** (see "Write
 tools" above), with tool names prefixed `"remote:"`
 (`remote:create_document`, `remote:update_document`,
-`remote:attach_file`, `remote:attach_file_begin`). That lets an admin
-reviewing `GET /api/admin/mcp-audit-log` tell local and remote writes
-apart at a glance — it needed no schema change, just a naming convention
-at the call site.
+`remote:attach_file`, `remote:attach_file_begin`). Each entry also carries
+the label of whichever token authorized it, so an admin reviewing
+`GET /api/admin/mcp-audit-log` can tell not just local from remote writes
+but which specific client made a given call.
 
 The remote endpoint is a single stateless `POST /mcp`: every tool call
 is independently authenticated, with nothing carried across requests.
+
+## Remote agent endpoint
+
+`POST /mcp/agent` (`src/controllers/RemoteAgentRoutes.cpp`,
+`src/llm/RemoteAgentRuntime.cpp`) is a second, deliberately separate endpoint
+on the same bearer-token transport. Where `POST /mcp` has the caller name
+the exact tool and arguments, this one hands a short conversation to the
+wiki's own configured `[llm]` and lets the model itself decide what to do —
+the intended use is a client that just wants to ask a question about the
+wiki, or say "turn this clipboard text into a document," without running
+its own LLM client or holding its own API key.
+
+Tools available to the model: `search_documents`, `list_documents`,
+`list_tags`, `get_document`, `get_calendar_events` (read), and
+`create_document` (the only write tool). Deliberately NOT available, even
+though a token might already have `writeEnabled`: `update_document` and
+`attach_file` — letting a model silently rewrite or overwrite EXISTING
+content from free text is a materially bigger mistake-blast-radius than
+creating something new, independent of whether anyone is actually trying
+to abuse it. `get_document` here also omits the link/backlink data
+AgentRuntime's own version includes — a detail that isn't needed to
+answer a question or avoid a duplicate.
+
+Request body: `{"messages": [{"role": "user" | "assistant", "content":
+"..."}, ...]}` — the caller's own plain conversational turns so far (no
+`system`/`tool` roles; those are this endpoint's own internal bookkeeping
+for one call and are never echoed back). Response:
+`{"reply": "...", "documentsCreated": ["path", ...]}` — `documentsCreated`
+is empty unless `create_document` actually ran this turn. The model may ask
+one clarifying question instead of creating anything immediately (e.g. "public
+or private?"); the client answers by sending the whole conversation again
+with that answer appended as a `user` turn — the server has no memory of
+its own between calls.
+
+**This is gated on top of, not instead of, everything `POST /mcp` already
+requires** (enabled, rate limit, bearer token, IP allowlist, write access) —
+plus a second, token-specific opt-in: each token's own **Agent access**
+checkbox on the Account page (default off, independent of a token already
+having ordinary create/update/attach access). The reasoning: naming a tool
+directly and letting a model decide what to write from free text are not the
+same risk, even on an already-trusted token, so widening one never silently
+widens the other. If no LLM is configured on this server at all
+(`[llm].provider = "none"`), a permitted call still gets a `503`, never a
+`200` with an empty reply.
+
+Every tool call through this endpoint — reads included, not just
+`create_document` — is recorded in the same `mcp_audit_log` table as
+everything else, tool name prefixed `remote-agent:` (distinct from
+`remote:`, which is reserved for a directly-named tool call on `POST
+/mcp`). Reads are audited here even though they aren't on plain `POST /mcp`
+(where only the write tools are) — the point of this table for an
+autonomous agent is seeing what it looked at on the way to a decision, not
+just the decision itself. The same per-token label attribution applies.

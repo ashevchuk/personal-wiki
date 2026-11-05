@@ -301,8 +301,20 @@ def run_checks(sandbox, vault):
     check("anon GET mcp-remote-config -> 401", status == 401, f"got {status}")
     status, _, _ = anon.put_json("/api/admin/mcp-remote-config", {"enabled": True})
     check("anon PUT mcp-remote-config -> 401", status == 401, f"got {status}")
-    status, _, _ = anon.post_json("/api/admin/mcp-remote-config/regenerate-token", {})
-    check("anon regenerate-token -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.get("/api/admin/mcp-remote-config/tokens")
+    check("anon GET mcp-remote-config/tokens -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/admin/mcp-remote-config/tokens", {"label": "x"})
+    check("anon POST mcp-remote-config/tokens -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/admin/mcp-remote-config/tokens/regenerate", {"id": 1})
+    check("anon POST mcp-remote-config/tokens/regenerate -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.delete("/api/admin/mcp-remote-config/tokens?id=1")
+    check("anon DELETE mcp-remote-config/tokens -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/api/admin/mcp-remote-config/tokens/agent-access",
+                                   {"id": 1, "enabled": True})
+    check("anon POST mcp-remote-config/tokens/agent-access -> 401", status == 401, f"got {status}")
+    status, _, _ = anon.post_json("/mcp/agent", {"messages": [{"role": "user", "content": "hi"}]})
+    check("anon /mcp/agent while disabled -> 404 (not 401 -- no hint it exists)",
+          status == 404, f"got {status}")
     status, _, _ = anon.post_json("/api/admin/mcp-remote-config/allowed-cidrs",
                                    {"cidr": "203.0.113.0/24"})
     check("anon POST allowed-cidrs -> 401", status == 401, f"got {status}")
@@ -841,11 +853,12 @@ def run_checks(sandbox, vault):
     # context). attach_file_begin issues a UUID ticket; PUT /mcp/uploads/{id}
     # then accepts the raw body with no Bearer — the id is the capability.
     status, _, body = admin.post_json(
-        "/api/admin/mcp-remote-config/regenerate-token", {},
+        "/api/admin/mcp-remote-config/tokens", {"label": "e2e-primary"},
         headers={"X-CSRF-Token": csrf})
-    check("regenerate remote MCP token -> 200", status == 200, f"got {status}")
-    mcp_token = json.loads(body).get("token")
-    check("regenerate-token returns a raw token once",
+    check("create remote MCP token -> 200", status == 200, f"got {status}")
+    created_primary = json.loads(body)
+    mcp_token, mcp_token_id = created_primary.get("token"), created_primary.get("id")
+    check("create token returns a raw token once",
           isinstance(mcp_token, str) and len(mcp_token) >= 32, f"got {mcp_token!r}")
     status, _, _ = admin.put_json(
         "/api/admin/mcp-remote-config",
@@ -912,6 +925,65 @@ def run_checks(sandbox, vault):
         body=b"nope",
         headers={"Content-Type": "application/octet-stream"})
     check("PUT unknown upload id while enabled -> 404", status == 404, f"got {status}")
+
+    # --- Remote agent endpoint (POST /mcp/agent): per-token opt-in, -------
+    #     gated on top of (not instead of) a valid write-enabled token.
+    #     The test server runs with [llm].provider = "none", so a fully
+    #     authorized call still can't actually run the LLM -- that's the
+    #     503 branch, which is exactly as far as this test can verify
+    #     without a real API key, and it's enough to prove the whole
+    #     auth/gating chain (enabled -> rate limit -> token -> IP
+    #     allowlist -> LLM-configured -> writeEnabled -> agentAccess) ran
+    #     to completion rather than rejecting earlier for the wrong reason.
+    status, _, body = admin.post_json(
+        "/mcp/agent", {"messages": [{"role": "user", "content": "hi"}]}, headers=mcp_auth)
+    check("agent call with agentAccess off -> 403",
+          status == 403, f"got {status} body={body[:200]!r}")
+    status, _, _ = admin.post_json(
+        "/api/admin/mcp-remote-config/tokens/agent-access",
+        {"id": mcp_token_id, "enabled": True}, headers={"X-CSRF-Token": csrf})
+    check("enable agent access for this token -> 200", status == 200, f"got {status}")
+    status, _, body = admin.post_json(
+        "/mcp/agent", {"messages": [{"role": "user", "content": "hi"}]}, headers=mcp_auth)
+    check("agent call with agentAccess on, no LLM configured -> 503",
+          status == 503, f"got {status} body={body[:200]!r}")
+    status, _, _ = admin.post_json(
+        "/api/admin/mcp-remote-config/tokens/agent-access",
+        {"id": mcp_token_id, "enabled": False}, headers={"X-CSRF-Token": csrf})
+    check("disable agent access again -> 200", status == 200, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/mcp/agent", {"messages": [{"role": "user", "content": "hi"}]}, headers=mcp_auth)
+    check("agent call with agentAccess off again -> 403", status == 403, f"got {status}")
+
+    # --- Multi-token independence: a second token works on its own, and ---
+    #     deleting the FIRST one doesn't touch it. The deliberately-wrong-
+    #     token check below trips the /mcp rate limiter's 1s backoff for
+    #     this IP (by design -- see RateLimiter.h), so it goes LAST here,
+    #     before unrelated sections that don't touch /mcp again give that
+    #     backoff time to expire on its own.
+    status, _, body = admin.post_json(
+        "/api/admin/mcp-remote-config/tokens", {"label": "e2e-secondary"},
+        headers={"X-CSRF-Token": csrf})
+    check("create a second remote MCP token -> 200", status == 200, f"got {status}")
+    second = json.loads(body)
+    second_token, second_id = second.get("token"), second.get("id")
+    status, _, _ = admin.post_json(
+        "/mcp", {"jsonrpc": "2.0", "id": 90, "method": "tools/list"},
+        headers={"Authorization": f"Bearer {second_token}"})
+    check("second token independently authenticates -> 200", status == 200, f"got {status}")
+    status, _, _ = admin.delete(
+        f"/api/admin/mcp-remote-config/tokens?id={second_id}",
+        headers={"X-CSRF-Token": csrf})
+    check("delete the second token -> 200", status == 200, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/mcp", {"jsonrpc": "2.0", "id": 91, "method": "tools/list"},
+        headers={"Authorization": f"Bearer {mcp_token}"})
+    check("the OTHER (primary) token still authenticates after the second was deleted -> 200",
+          status == 200, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/mcp", {"jsonrpc": "2.0", "id": 92, "method": "tools/list"},
+        headers={"Authorization": f"Bearer {second_token}"})
+    check("the deleted token no longer authenticates -> 401", status == 401, f"got {status}")
 
     status, _, _ = admin.put_json(
         "/api/admin/mcp-remote-config",

@@ -41,12 +41,13 @@ TEST_CASE("McpUploadStaging begin/get round-trips path and filename",
   vault::VaultRepository repo(env.vaultRoot());
   vault::McpUploadStaging staging(repo);
 
-  const std::string id = staging.begin("notes/a.md", "paper.pdf");
+  const std::string id = staging.begin("notes/a.md", "paper.pdf", "tray-app");
   REQUIRE(vault::McpUploadStaging::isValidId(id));
   const auto ticket = staging.get(id);
   REQUIRE(ticket.has_value());
   REQUIRE(ticket->documentPath == "notes/a.md");
   REQUIRE(ticket->filename == "paper.pdf");
+  REQUIRE(ticket->tokenLabel == "tray-app");
 }
 
 TEST_CASE("McpUploadStaging::get rejects a non-uuid and a missing id",
@@ -64,7 +65,7 @@ TEST_CASE("McpUploadStaging::remove drops the ticket", "[McpUploadStaging]") {
   TempEnv env;
   vault::VaultRepository repo(env.vaultRoot());
   vault::McpUploadStaging staging(repo);
-  const std::string id = staging.begin("notes/a.md", "x.bin");
+  const std::string id = staging.begin("notes/a.md", "x.bin", "");
   staging.remove(id);
   REQUIRE_FALSE(staging.get(id).has_value());
 }

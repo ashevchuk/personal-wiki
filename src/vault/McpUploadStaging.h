@@ -12,6 +12,7 @@ struct McpUploadTicket {
   std::string id;
   std::string documentPath;
   std::string filename;
+  std::string tokenLabel;  // which remote-MCP token authorized this upload
 };
 
 // One-shot tickets for a remote-MCP large-file upload. A ticket is a
@@ -27,7 +28,8 @@ class McpUploadStaging {
  public:
   explicit McpUploadStaging(VaultRepository& vault) : vault_(vault) {}
 
-  std::string begin(const std::string& documentPath, const std::string& filename);
+  std::string begin(const std::string& documentPath, const std::string& filename,
+                     const std::string& tokenLabel);
   std::optional<McpUploadTicket> get(std::string_view id) const;
   void remove(std::string_view id);
   static bool isValidId(std::string_view id);
