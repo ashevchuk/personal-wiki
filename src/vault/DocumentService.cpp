@@ -130,8 +130,14 @@ DocumentRecord DocumentService::update(const std::string& relativePath,
   // always calls indexUpdater_.upsertOne) — a missing rowid here would
   // mean the file and the index have already drifted apart, a
   // pre-existing inconsistency this call isn't responsible for masking.
-  if (const auto rowId = indexUpdater_.rowIdForPath(relativePath)) {
-    snapshots_.record(*rowId, existingRaw);
+  // Only when the body actually changed — history.js's diff view only
+  // ever compares body text, so a front-matter-only edit (e.g. flipping
+  // visibility) would otherwise leave a snapshot row nothing can show
+  // a difference for.
+  if (existing.body != input.body) {
+    if (const auto rowId = indexUpdater_.rowIdForPath(relativePath)) {
+      snapshots_.record(*rowId, existingRaw);
+    }
   }
 
   FrontMatter fm;

@@ -1116,7 +1116,6 @@ a.btn:focus {
   word-break: break-word;
   font-family: inherit;
   font-size: 0.85rem;
-  background: var(--panel-bg-2);
   border: 1px solid var(--border);
   padding: 0.75rem;
   margin: 0;

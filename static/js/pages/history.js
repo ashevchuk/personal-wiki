@@ -21,7 +21,8 @@ window.WikiPages = window.WikiPages || {};
   // consumed by edit.css's #f-status rules), so this
   // doesn't introduce a third color convention for "good"/"bad" text.
   function renderDiff(diffOps) {
-    if (diffOps.length === 0) return '<p class="empty">No differences.</p>';
+    var hasChanges = diffOps.some(function (op) { return op.type !== "same"; });
+    if (!hasChanges) return '<p class="empty">No differences.</p>';
     var html = '<pre class="diff-view">';
     diffOps.forEach(function (op) {
       var prefix = op.type === "add" ? "+ " : op.type === "remove" ? "- " : "  ";

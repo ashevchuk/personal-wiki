@@ -12,9 +12,9 @@
 
 namespace wikicore::index::schema {
 
-// Migration 1: full MVP schema, including the Phase 2 document_snapshots
-// table (created but unused — versioning is deliberately out of scope for
-// the MVP). document_embeddings (sqlite-vec) is deliberately NOT created
+// Migration 1: the full schema, including document_snapshots (used by
+// DocumentService::update()/VersionRoutes.cpp for the document-history/diff
+// UI). document_embeddings (sqlite-vec) is deliberately NOT created
 // here either, unlike every other table: it's a vec0 virtual table whose
 // column width is fixed at CREATE time to a specific embedding
 // provider's dimensionality (384 for the local bge-small model, 1536 for
@@ -87,8 +87,8 @@ CREATE TABLE index_meta (
   value TEXT
 );
 
--- Phase 2 — table exists from the start so a future migration only needs
--- to start *using* it, not create it; unused in the MVP.
+-- Pre-edit snapshot of the raw document file, recorded on every
+-- DocumentService::update() call — see VersionRoutes.cpp.
 CREATE TABLE document_snapshots (
   id              INTEGER PRIMARY KEY,
   document_rowid  INTEGER NOT NULL REFERENCES documents(rowid_id) ON DELETE CASCADE,

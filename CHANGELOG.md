@@ -6,6 +6,21 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.9.3] - 2026-11-06
+
+### Fixed
+
+- `DocumentService::update()` now records a `document_snapshots` row only
+  when the document's body text actually changed, not on every save — a
+  front-matter-only edit (e.g. toggling visibility) no longer leaves a
+  snapshot that the history diff view has nothing to show a difference
+  for.
+- The document-history diff view no longer renders every unchanged line
+  as a wall of dimmed text when the body hasn't changed; it now reports
+  "No differences." instead.
+- The `green` theme's document-history diff view no longer sits on a
+  solid dark-green panel background.
+
 ## [0.9.2] - 2026-11-05
 
 ### Fixed
