@@ -1,0 +1,13 @@
+{
+  "name": "wiki-tray",
+  "version": "0.1.0",
+  "builtin-baseline": "7ff71c68261ecf3b60cdb8772f2e6759ee0a71b1",
+  "dependencies": [
+    "nlohmann-json",
+    "tomlplusplus",
+    "raylib",
+    "raygui",
+    "sdbus-cpp",
+    "libx11"
+  ]
+}

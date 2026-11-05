@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Wiki Tray
+Exec=wiki-tray
+Icon=wiki-tray
+Categories=Utility;
+NoDisplay=true
