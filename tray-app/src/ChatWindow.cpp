@@ -294,8 +294,8 @@ void ChatWindow::drawHistory(int x, int y, int width, int height) {
 }
 
 // One-line, width-limited preview of the clipboard text: newlines/tabs
-// flattened to spaces (a multi-line clip otherwise wraps over the Quit
-// button), cut on a UTF-8 codepoint boundary so a Cyrillic character is
+// flattened to spaces (a multi-line clip otherwise wraps over the
+// buttons below it), cut on a UTF-8 codepoint boundary so a Cyrillic character is
 // never split, with "..." when it doesn't fit.
 std::string ChatWindow::clipboardLabel(int maxWidth) const {
   std::string flat = clipboardOfferText_;
@@ -324,8 +324,7 @@ std::string ChatWindow::clipboardLabel(int maxWidth) const {
   return prefix + out + "..." + suffix;
 }
 
-void ChatWindow::update(bool* quitRequested) {
-  *quitRequested = false;
+void ChatWindow::update() {
   ClearBackground(kBg);
 
   const int screenW = GetScreenWidth();
@@ -339,13 +338,7 @@ void ChatWindow::update(bool* quitRequested) {
     pollClipboard();
   }
 
-  if (GuiButton({static_cast<float>(screenW - kButtonWidth - kPadding), kPadding,
-                  static_cast<float>(kButtonWidth), 24},
-                 "Quit")) {
-    *quitRequested = true;
-  }
-
-  int topY = kPadding + 24 + kPadding;
+  int topY = kPadding;
 
   if (clipboardOfferShown_) {
     const std::string label = clipboardLabel(screenW - 2 * kPadding);

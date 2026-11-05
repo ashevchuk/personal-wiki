@@ -133,10 +133,9 @@ int main(int argc, char** argv) {
 
       // WindowShouldClose() covers both the OS close button and Escape;
       // either just hides the window back to the tray, it never quits
-      // the app — only ChatWindow's own Quit button (or the tray menu's
-      // Quit item) does that. raylib resets the underlying flag on
-      // every PollInputEvents() call, so this is naturally a one-shot
-      // check, not sticky state.
+      // the app — only the tray menu's Quit item does that. raylib resets
+      // the underlying flag on every PollInputEvents() call, so this is
+      // naturally a one-shot check, not sticky state.
       if (visible && WindowShouldClose()) {
         SetWindowState(FLAG_WINDOW_HIDDEN);
         visible = false;
@@ -144,12 +143,8 @@ int main(int argc, char** argv) {
 
       if (visible) {
         BeginDrawing();
-        bool quitRequested = false;
-        chatWindow.update(&quitRequested);
+        chatWindow.update();
         EndDrawing();
-        if (quitRequested) {
-          running = false;
-        }
       }
 
       if (tray.quitRequested()) {

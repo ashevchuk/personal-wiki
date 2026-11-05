@@ -36,9 +36,8 @@ class ChatWindow {
   void onShow();
 
   // Draws and processes input for one frame — call between
-  // BeginDrawing()/EndDrawing(). Sets *quitRequested if the Quit button
-  // was pressed this frame.
-  void update(bool* quitRequested);
+  // BeginDrawing()/EndDrawing().
+  void update();
 
  private:
   struct SendState {
