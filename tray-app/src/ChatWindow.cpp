@@ -136,10 +136,33 @@ std::string errorMessage(const AgentResult& result) {
   std::fflush(stderr);
   return message;
 }
+// Window icon for the taskbar and title bar (_NET_WM_ICON) — separate from
+// the tray icon, which is delivered over D-Bus. Several sizes so the window
+// manager picks a crisp one for each place it shows the icon. Capped at 64 px:
+// with 256 and 128 px entries the property request is silently dropped and
+// _NET_WM_ICON stays empty.
+void setWindowIconFromResources() {
+  const std::string iconPath = findResourcePath("icons/hicolor/256x256/apps/wiki-tray.png");
+  Image full = LoadImage(iconPath.c_str());
+  if (full.data == nullptr) {
+    return;
+  }
+  ImageFormat(&full, PIXELFORMAT_UNCOMPRESSED_R8G8B8A8);
+  std::vector<Image> images;
+  for (const int size : {64, 48, 32, 16}) {
+    Image image = ImageCopy(full);
+    ImageResize(&image, size, size);
+    images.push_back(image);
+  }
+  SetWindowIcons(images.data(), static_cast<int>(images.size()));
+  for (const Image& image : images) UnloadImage(image);
+  UnloadImage(full);
+}
 }  // namespace
 
 ChatWindow::ChatWindow(std::string serverUrl, std::string token)
     : serverUrl_(std::move(serverUrl)), token_(std::move(token)) {
+  setWindowIconFromResources();
   font_ = loadEmbeddedFont();
   GuiSetFont(font_);
   GuiSetStyle(DEFAULT, TEXT_SIZE, 16);
