@@ -85,6 +85,7 @@ int main(int argc, char** argv) {
     // explicitly below, and std::this_thread::sleep_for (never
     // WaitTime()) does the pacing.
     double previousTime = GetTime();
+    double raiseAgainAt = 0.0;
     bool running = true;
 
     while (running) {
@@ -115,7 +116,19 @@ int main(int argc, char** argv) {
         }
         wikitray::raiseAndFocusWindow(
             *static_cast<unsigned long*>(GetWindowHandle()));
+        // Activating from the tray menu: KWin hands focus back to the
+        // previously active window when the popup closes, which happens
+        // just after this runs — raise once more shortly afterwards.
+        raiseAgainAt = GetTime() + 0.25;
         visible = true;
+      }
+
+      if (raiseAgainAt > 0.0 && GetTime() >= raiseAgainAt) {
+        raiseAgainAt = 0.0;
+        if (visible) {
+          wikitray::raiseAndFocusWindow(
+              *static_cast<unsigned long*>(GetWindowHandle()));
+        }
       }
 
       // WindowShouldClose() covers both the OS close button and Escape;

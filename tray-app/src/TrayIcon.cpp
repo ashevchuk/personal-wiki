@@ -76,7 +76,14 @@ constexpr const char* kWatcherPath = "/StatusNotifierWatcher";
 
 constexpr const char* kMenuPath = "/MenuBar";
 constexpr const char* kMenuInterface = "com.canonical.dbusmenu";
-constexpr int32_t kQuitItemId = 1;
+constexpr int32_t kShowItemId = 1;
+constexpr int32_t kQuitItemId = 2;
+
+const char* menuLabel(int32_t id) {
+  if (id == kShowItemId) return "Show window";
+  if (id == kQuitItemId) return "Quit";
+  return nullptr;
+}
 
 // com.canonical.dbusmenu's GetLayout is recursively typed (each item
 // carries an array of further items as variants), but this menu is only
@@ -131,24 +138,34 @@ TrayIcon::TrayIcon(std::string serviceName) {
       sdbus::registerProperty("Menu").withGetter([] { return sdbus::ObjectPath{kMenuPath}; }))
       .forInterface(sdbus::InterfaceName{kItemInterface});
 
-  // Minimal com.canonical.dbusmenu backend: one "Quit" item, nothing
+  // Minimal com.canonical.dbusmenu backend: "Show window" and "Quit" items, nothing
   // else. GetGroupProperties/GetProperty/AboutToShow are included for
   // hosts that call them defensively even when GetLayout already has
   // everything — cheap to answer correctly rather than leave unhandled.
+  // Runs on sdbus-c++'s event-loop thread — only flips an atomic or calls
+  // the activate callback, which itself just sets an atomic in main().
+  const auto onMenuClicked = [this](int32_t id) {
+    if (id == kShowItemId) {
+      if (onActivate_) onActivate_();
+    } else if (id == kQuitItemId) {
+      quitRequested_ = true;
+    }
+  };
+
   menuObject_ = sdbus::createObject(*connection_, sdbus::ObjectPath{kMenuPath});
   menuObject_->addVTable(
       sdbus::registerMethod("GetLayout")
           .implementedAs([](int32_t, int32_t,
                              std::vector<std::string>) -> std::tuple<uint32_t, MenuItem> {
-            MenuItem quit{kQuitItemId,
-                          {{"label", sdbus::Variant(std::string("Quit"))}},
-                          {}};
+            auto item = [](int32_t id) {
+              return MenuItem{id, {{"label", sdbus::Variant(std::string(menuLabel(id)))}}, {}};
+            };
             // Without children-display=submenu on the root, Plasma fetches the
             // layout but never shows a popup — every working app's root
             // carries it (confirmed by diffing against Telegram/KGpg).
             MenuItem root{0,
                           {{"children-display", sdbus::Variant(std::string("submenu"))}},
-                          {sdbus::Variant(quit)}};
+                          {sdbus::Variant(item(kShowItemId)), sdbus::Variant(item(kQuitItemId))}};
             return std::tuple<uint32_t, MenuItem>{1u, root};
           }),
       sdbus::registerMethod("GetGroupProperties")
@@ -158,10 +175,8 @@ TrayIcon::TrayIcon(std::string serviceName) {
                 std::vector<sdbus::Struct<int32_t, std::map<std::string, sdbus::Variant>>> result;
                 for (int32_t id : ids) {
                   std::map<std::string, sdbus::Variant> props;
-                  if (id == kQuitItemId) {
-                    props["label"] = sdbus::Variant(std::string("Quit"));
-                    props["enabled"] = sdbus::Variant(true);
-                    props["visible"] = sdbus::Variant(true);
+                  if (const char* label = menuLabel(id)) {
+                    props["label"] = sdbus::Variant(std::string(label));
                   }
                   result.push_back({id, props});
                 }
@@ -169,8 +184,8 @@ TrayIcon::TrayIcon(std::string serviceName) {
               }),
       sdbus::registerMethod("GetProperty")
           .implementedAs([](int32_t id, std::string name) -> sdbus::Variant {
-            if (id == kQuitItemId && name == "label") {
-              return sdbus::Variant(std::string("Quit"));
+            if (const char* label = menuLabel(id); label && name == "label") {
+              return sdbus::Variant(std::string(label));
             }
             return sdbus::Variant(std::string());
           }),
@@ -181,21 +196,17 @@ TrayIcon::TrayIcon(std::string serviceName) {
           }),
       sdbus::registerMethod("EventGroup")
           .implementedAs(
-              [this](std::vector<sdbus::Struct<int32_t, std::string, sdbus::Variant, uint32_t>> events) {
+              [onMenuClicked](std::vector<sdbus::Struct<int32_t, std::string, sdbus::Variant, uint32_t>> events) {
                 for (const auto& e : events) {
-                  if (std::get<0>(e) == kQuitItemId && std::get<1>(e) == "clicked") {
-                    quitRequested_ = true;
-                  }
+                  if (std::get<1>(e) == "clicked") onMenuClicked(std::get<0>(e));
                 }
                 return std::vector<int32_t>{};
               }),
       sdbus::registerProperty("IconThemePath").withGetter([] { return std::vector<std::string>{}; }),
       sdbus::registerMethod("Event")
-          .implementedAs([this](int32_t id, std::string eventId, sdbus::Variant,
+          .implementedAs([onMenuClicked](int32_t id, std::string eventId, sdbus::Variant,
                                  uint32_t) {
-            if (id == kQuitItemId && eventId == "clicked") {
-              quitRequested_ = true;
-            }
+            if (eventId == "clicked") onMenuClicked(id);
           }),
       sdbus::registerProperty("Version").withGetter([] { return uint32_t{3}; }),
       sdbus::registerProperty("Status").withGetter([] { return std::string("normal"); }),
