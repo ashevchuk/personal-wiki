@@ -6,6 +6,8 @@
 #include "GlobalHotkey.h"
 #include "TrayIcon.h"
 
+#include "WindowRaise.h"
+
 #include <raylib.h>
 
 #include <atomic>
@@ -103,6 +105,16 @@ int main(int argc, char** argv) {
         } else {
           ClearWindowState(FLAG_WINDOW_HIDDEN);
         }
+        // Unhiding alone doesn't reliably raise/focus the window on
+        // this window manager — a hotkey/tray activation could leave
+        // it mapped but still behind other windows, unfocused. Restore
+        // (in case it was minimized) and send a real EWMH activation
+        // request every time it's shown.
+        if (IsWindowMinimized()) {
+          RestoreWindow();
+        }
+        wikitray::raiseAndFocusWindow(
+            *static_cast<unsigned long*>(GetWindowHandle()));
         visible = true;
       }
 

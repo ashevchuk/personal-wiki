@@ -38,9 +38,18 @@ add_executable(wiki-tray
   src/TrayIcon.cpp
   src/GlobalHotkey.cpp
   src/ChatWindow.cpp
+  src/WindowRaise.cpp
 )
 
-target_include_directories(wiki-tray PRIVATE ${cpp_mcp_SOURCE_DIR}/common)
+# third_party/raygui.h shadows vcpkg's own copy (listed first, so it's
+# found before raylib's include dir when wiki-tray's own sources write
+# `#include <raygui.h>`) — it's the same raygui 4.0 with a two-line fix
+# for a real upstream bug in GuiTextBox's multi-byte-UTF-8 backspace/
+# delete handling. See third_party/raygui.h's own top comment.
+target_include_directories(wiki-tray PRIVATE
+  third_party
+  ${cpp_mcp_SOURCE_DIR}/common
+)
 target_link_libraries(wiki-tray PRIVATE
   raylib
   # raylib's own vcpkg-exported CMake target doesn't declare glfw as a
