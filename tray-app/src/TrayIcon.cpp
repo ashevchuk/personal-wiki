@@ -114,7 +114,7 @@ TrayIcon::TrayIcon(std::string serviceName) {
       sdbus::registerProperty("Id").withGetter([] { return std::string("wiki-tray"); }),
       sdbus::registerProperty("Title").withGetter([] { return std::string("Wiki Tray"); }),
       sdbus::registerProperty("Status").withGetter([] { return std::string("Active"); }),
-      sdbus::registerProperty("WindowId").withGetter([] { return uint32_t{0}; }),
+      sdbus::registerProperty("WindowId").withGetter([] { return int32_t{0}; }),
       // This Plasma panel draws a white contrast plate behind the icon
       // regardless of delivery mechanism (IconThemePath, raw
       // IconPixmap bytes) or naming convention ("-symbolic" suffix) —
@@ -139,14 +139,17 @@ TrayIcon::TrayIcon(std::string serviceName) {
   menuObject_->addVTable(
       sdbus::registerMethod("GetLayout")
           .implementedAs([](int32_t, int32_t,
-                             std::vector<std::string>) -> sdbus::Struct<uint32_t, MenuItem> {
+                             std::vector<std::string>) -> std::tuple<uint32_t, MenuItem> {
             MenuItem quit{kQuitItemId,
-                          {{"label", sdbus::Variant(std::string("Quit"))},
-                           {"enabled", sdbus::Variant(true)},
-                           {"visible", sdbus::Variant(true)}},
+                          {{"label", sdbus::Variant(std::string("Quit"))}},
                           {}};
-            MenuItem root{0, {}, {sdbus::Variant(quit)}};
-            return sdbus::Struct<uint32_t, MenuItem>{1u, root};
+            // Without children-display=submenu on the root, Plasma fetches the
+            // layout but never shows a popup — every working app's root
+            // carries it (confirmed by diffing against Telegram/KGpg).
+            MenuItem root{0,
+                          {{"children-display", sdbus::Variant(std::string("submenu"))}},
+                          {sdbus::Variant(quit)}};
+            return std::tuple<uint32_t, MenuItem>{1u, root};
           }),
       sdbus::registerMethod("GetGroupProperties")
           .implementedAs(
@@ -172,6 +175,21 @@ TrayIcon::TrayIcon(std::string serviceName) {
             return sdbus::Variant(std::string());
           }),
       sdbus::registerMethod("AboutToShow").implementedAs([](int32_t) { return false; }),
+      sdbus::registerMethod("AboutToShowGroup")
+          .implementedAs([](std::vector<int32_t>) {
+            return std::tuple<std::vector<int32_t>, std::vector<int32_t>>{};
+          }),
+      sdbus::registerMethod("EventGroup")
+          .implementedAs(
+              [this](std::vector<sdbus::Struct<int32_t, std::string, sdbus::Variant, uint32_t>> events) {
+                for (const auto& e : events) {
+                  if (std::get<0>(e) == kQuitItemId && std::get<1>(e) == "clicked") {
+                    quitRequested_ = true;
+                  }
+                }
+                return std::vector<int32_t>{};
+              }),
+      sdbus::registerProperty("IconThemePath").withGetter([] { return std::vector<std::string>{}; }),
       sdbus::registerMethod("Event")
           .implementedAs([this](int32_t id, std::string eventId, sdbus::Variant,
                                  uint32_t) {
@@ -184,6 +202,14 @@ TrayIcon::TrayIcon(std::string serviceName) {
       sdbus::registerProperty("TextDirection").withGetter([] { return std::string("ltr"); }))
       .forInterface(sdbus::InterfaceName{kMenuInterface});
 
+  // The fixed name above is the single-instance guard; Plasma's tray host
+  // also expects the conventional org.kde.StatusNotifierItem-<pid>-1 name
+  // (what every working SNI app registers under — acoff, Qt apps), so
+  // register the item with the watcher under that one.
+  const std::string sniName =
+      "org.kde.StatusNotifierItem-" + std::to_string(getpid()) + "-1";
+  connection_->requestName(sdbus::ServiceName{sniName});
+
   connection_->enterEventLoopAsync();
 
   auto watcherProxy =
@@ -191,7 +217,7 @@ TrayIcon::TrayIcon(std::string serviceName) {
                           sdbus::ObjectPath{kWatcherPath});
   watcherProxy->callMethod("RegisterStatusNotifierItem")
       .onInterface(kWatcherService)
-      .withArguments(serviceName);
+      .withArguments(sniName);
 }
 
 TrayIcon::~TrayIcon() = default;
