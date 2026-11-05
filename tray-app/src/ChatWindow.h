@@ -50,6 +50,7 @@ class ChatWindow {
   void startSend(const std::string& text);
   void drawHistory(int x, int y, int width, int height);
   void pollClipboard();
+  std::string clipboardLabel(int maxWidth) const;
 
   Font font_;
 

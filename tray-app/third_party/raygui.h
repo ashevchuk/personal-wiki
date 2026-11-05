@@ -2474,6 +2474,11 @@ int GuiTextBox(Rectangle bounds, char *text, int bufferSize, bool editMode)
         2,
         (float)GuiGetStyle(DEFAULT, TEXT_SIZE)*2
     };
+    // wiki-tray: terminal-style block cursor — one glyph wide, text-line
+    // high, vertically centered in the box (upstream draws a 2px bar).
+    cursor.width = (float)GetTextWidth("M");
+    cursor.height = (float)GuiGetStyle(DEFAULT, TEXT_SIZE) + 6;
+    cursor.y = textBounds.y + textBounds.height/2 - cursor.height/2;
 
     if (cursor.height >= bounds.height) cursor.height = bounds.height - GuiGetStyle(TEXTBOX, BORDER_WIDTH)*2;
     if (cursor.y < (bounds.y + GuiGetStyle(TEXTBOX, BORDER_WIDTH))) cursor.y = bounds.y + GuiGetStyle(TEXTBOX, BORDER_WIDTH);
@@ -2739,8 +2744,12 @@ int GuiTextBox(Rectangle bounds, char *text, int bufferSize, bool editMode)
     // Draw cursor
     if (editMode && !GuiGetStyle(TEXTBOX, TEXT_READONLY))
     {
-        //if (autoCursorMode || ((blinkCursorFrameCounter/40)%2 == 0))
-        GuiDrawRectangle(cursor, 0, BLANK, GetColor(GuiGetStyle(TEXTBOX, BORDER_COLOR_PRESSED)));
+        // wiki-tray: blink at 2 Hz (on for 500ms, off for 500ms); steady
+        // while typing/moving so the cursor never vanishes mid-edit. The
+        // block is translucent so the character under it stays readable.
+        const bool typing = IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_BACKSPACE) || IsKeyDown(KEY_DELETE);
+        if (typing || (((int)(GetTime()*2.0)) % 2 == 0))
+            GuiDrawRectangle(cursor, 0, BLANK, Fade(GetColor(GuiGetStyle(TEXTBOX, BORDER_COLOR_PRESSED)), 0.65f));
 
         // Draw mouse position cursor (if required)
         if (mouseCursor.x >= 0) GuiDrawRectangle(mouseCursor, 0, BLANK, GetColor(GuiGetStyle(TEXTBOX, BORDER_COLOR_PRESSED)));

@@ -270,6 +270,37 @@ void ChatWindow::drawHistory(int x, int y, int width, int height) {
   DrawRectangleLines(x, y, width, height, kGreenDim);
 }
 
+// One-line, width-limited preview of the clipboard text: newlines/tabs
+// flattened to spaces (a multi-line clip otherwise wraps over the Quit
+// button), cut on a UTF-8 codepoint boundary so a Cyrillic character is
+// never split, with "..." when it doesn't fit.
+std::string ChatWindow::clipboardLabel(int maxWidth) const {
+  std::string flat = clipboardOfferText_;
+  for (char& c : flat) {
+    if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+  }
+  const std::string prefix = "clipboard: \"";
+  const std::string suffix = "\"";
+  const float fontSize = 16.0f;
+  auto fits = [&](const std::string& text) {
+    return MeasureTextEx(font_, text.c_str(), fontSize, 1.0f).x <= maxWidth;
+  };
+  if (fits(prefix + flat + suffix)) {
+    return prefix + flat + suffix;
+  }
+  std::string out;
+  for (size_t i = 0; i < flat.size();) {
+    int size = 0;
+    GetCodepointNext(flat.c_str() + i, &size);
+    if (size <= 0) break;
+    std::string next = out + flat.substr(i, static_cast<size_t>(size));
+    if (!fits(prefix + next + "..." + suffix)) break;
+    out = std::move(next);
+    i += static_cast<size_t>(size);
+  }
+  return prefix + out + "..." + suffix;
+}
+
 void ChatWindow::update(bool* quitRequested) {
   *quitRequested = false;
   ClearBackground(kBg);
@@ -294,8 +325,7 @@ void ChatWindow::update(bool* quitRequested) {
   int topY = kPadding + 24 + kPadding;
 
   if (clipboardOfferShown_) {
-    std::string preview = clipboardOfferText_.substr(0, 60);
-    const std::string label = "clipboard: \"" + preview + "\"...";
+    const std::string label = clipboardLabel(screenW - 2 * kPadding);
     GuiLabel({kPadding, static_cast<float>(topY), screenW - 2.0f * kPadding, 20}, label.c_str());
     topY += 24;
     if (GuiButton({kPadding, static_cast<float>(topY), 100, 24}, "Include")) {
