@@ -41,6 +41,15 @@ cp "${BINARY}" "${APPDIR}/usr/bin/wiki-tray"
 cp "${SCRIPT_DIR}/resources/DejaVuSansMono.ttf" "${APPDIR}/usr/bin/resources/"
 cp "${SCRIPT_DIR}/resources/wiki-tray.desktop" "${APPDIR}/usr/share/applications/"
 cp "${SCRIPT_DIR}/resources/wiki-tray.png" "${APPDIR}/usr/share/icons/hicolor/256x256/apps/"
+# Same icon, nested under usr/bin/resources/icons/ — this is what
+# TrayIcon's IconThemePath property actually points StatusNotifierItem
+# hosts at (findResourcesDir() + "/icons", resolved next to the running
+# binary), independent of the AppDir's own usr/share/icons placement
+# above (that one is for the desktop launcher/file manager, not the
+# live tray icon).
+mkdir -p "${APPDIR}/usr/bin/resources/icons/hicolor/256x256/apps"
+cp "${SCRIPT_DIR}/resources/icons/hicolor/256x256/apps/wiki-tray.png" \
+   "${APPDIR}/usr/bin/resources/icons/hicolor/256x256/apps/"
 
 cd "${BUILD_DIR}"
 "${LINUXDEPLOY}" \

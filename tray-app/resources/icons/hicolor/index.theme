@@ -1,0 +1,9 @@
+[Icon Theme]
+Name=hicolor
+Comment=wiki-tray icon theme
+Directories=256x256/apps
+
+[256x256/apps]
+Size=256
+Type=Fixed
+Context=Applications

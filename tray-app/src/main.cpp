@@ -53,78 +53,95 @@ int main(int argc, char** argv) {
   // resizing a multisampled window triggers Xid 69 GPU errors that
   // stall the compositor (see .notes/tray-app-design.md's M2 entry,
   // same root cause fixed in /home/slayer/devel/alarmmap's d530849).
-  // This window has a fixed pixel layout and isn't resizable anyway.
+  SetConfigFlags(FLAG_WINDOW_RESIZABLE);
   InitWindow(wikitray::ChatWindow::kWidth, wikitray::ChatWindow::kHeight, "Wiki Tray");
+  SetWindowMinSize(wikitray::ChatWindow::kMinWidth, wikitray::ChatWindow::kMinHeight);
   SetWindowState(FLAG_WINDOW_HIDDEN);  // starts hidden; shown on hotkey/tray click
 
-  wikitray::ChatWindow chatWindow(cfg.serverUrl, cfg.token);
-  bool visible = false;
+  // Scoped so ~ChatWindow() (which calls UnloadFont/UnloadTexture) runs
+  // BEFORE CloseWindow() below — a local variable at main()'s own scope
+  // would be destructed AFTER CloseWindow() already tore down the GL
+  // context, since C++ destroys locals in reverse order after the final
+  // `return`, not at the point of the CloseWindow() statement. Calling
+  // GL functions against an already-destroyed context segfaults;
+  // confirmed live via a real crash on Quit, backtrace through
+  // ~ChatWindow -> UnloadFont -> UnloadTexture -> rlUnloadTexture.
+  {
+    wikitray::ChatWindow chatWindow(cfg.serverUrl, cfg.token);
+    bool visible = false;
 
-  const std::function<void()> onHotkeyOrActivate = [&showRequested] {
-    showRequested = true;
-  };
+    const std::function<void()> onHotkeyOrActivate = [&showRequested] {
+      showRequested = true;
+    };
 
-  // Manual frame control throughout: this vcpkg build of raylib has both
-  // SUPPORT_CUSTOM_FRAME_CONTROL and SUPPORT_BUSY_WAIT_LOOP baked on (a
-  // vcpkg config-parsing bug — see .notes/tray-app-design.md's M2
-  // entry), so EndDrawing() never auto-swaps/paces/polls, and raylib's
-  // own WaitTime() busy-spins a full CPU core instead of sleeping.
-  // PollInputEvents()/SwapScreenBuffer() are called explicitly below,
-  // and std::this_thread::sleep_for (never WaitTime()) does the pacing.
-  double previousTime = GetTime();
-  bool running = true;
+    // Manual frame control throughout: this vcpkg build of raylib has
+    // both SUPPORT_CUSTOM_FRAME_CONTROL and SUPPORT_BUSY_WAIT_LOOP baked
+    // on (a vcpkg config-parsing bug — see .notes/tray-app-design.md's
+    // M2 entry), so EndDrawing() never auto-swaps/paces/polls, and
+    // raylib's own WaitTime() busy-spins a full CPU core instead of
+    // sleeping. PollInputEvents()/SwapScreenBuffer() are called
+    // explicitly below, and std::this_thread::sleep_for (never
+    // WaitTime()) does the pacing.
+    double previousTime = GetTime();
+    bool running = true;
 
-  while (running) {
-    hotkey.poll(onHotkeyOrActivate);
-    PollInputEvents();
+    while (running) {
+      hotkey.poll(onHotkeyOrActivate);
+      PollInputEvents();
 
-    if (showRequested.exchange(false)) {
-      if (!visible) {
-        // Unhide (and pump once more so the window is actually mapped)
-        // BEFORE reading the clipboard: an unmapped window doesn't
-        // reliably receive the X11 SelectionNotify a clipboard read
-        // waits on, so GetClipboardText() falls back to a stale cached
-        // value if asked while still hidden — confirmed live, this
-        // order is required, not cosmetic.
-        ClearWindowState(FLAG_WINDOW_HIDDEN);
-        PollInputEvents();
-        chatWindow.onShow();
-      } else {
-        ClearWindowState(FLAG_WINDOW_HIDDEN);
+      if (showRequested.exchange(false)) {
+        if (!visible) {
+          // Unhide (and pump once more so the window is actually mapped)
+          // BEFORE reading the clipboard: an unmapped window doesn't
+          // reliably receive the X11 SelectionNotify a clipboard read
+          // waits on, so GetClipboardText() falls back to a stale
+          // cached value if asked while still hidden — confirmed live,
+          // this order is required, not cosmetic.
+          ClearWindowState(FLAG_WINDOW_HIDDEN);
+          PollInputEvents();
+          chatWindow.onShow();
+        } else {
+          ClearWindowState(FLAG_WINDOW_HIDDEN);
+        }
+        visible = true;
       }
-      visible = true;
-    }
 
-    // WindowShouldClose() covers both the OS close button and Escape;
-    // either just hides the window back to the tray, it never quits the
-    // app — only ChatWindow's own Quit button does that. raylib resets
-    // the underlying flag on every PollInputEvents() call, so this is
-    // naturally a one-shot check, not sticky state.
-    if (visible && WindowShouldClose()) {
-      SetWindowState(FLAG_WINDOW_HIDDEN);
-      visible = false;
-    }
+      // WindowShouldClose() covers both the OS close button and Escape;
+      // either just hides the window back to the tray, it never quits
+      // the app — only ChatWindow's own Quit button (or the tray menu's
+      // Quit item) does that. raylib resets the underlying flag on
+      // every PollInputEvents() call, so this is naturally a one-shot
+      // check, not sticky state.
+      if (visible && WindowShouldClose()) {
+        SetWindowState(FLAG_WINDOW_HIDDEN);
+        visible = false;
+      }
 
-    if (visible) {
-      BeginDrawing();
-      bool quitRequested = false;
-      chatWindow.update(&quitRequested);
-      EndDrawing();
-      if (quitRequested) {
+      if (visible) {
+        BeginDrawing();
+        bool quitRequested = false;
+        chatWindow.update(&quitRequested);
+        EndDrawing();
+        if (quitRequested) {
+          running = false;
+        }
+      }
+
+      if (tray.quitRequested()) {
         running = false;
       }
-    }
 
-    SwapScreenBuffer();
-    double currentTime = GetTime();
-    const double updateDrawTime = currentTime - previousTime;
-    const double waitTime = (1.0 / kTargetFps) - updateDrawTime;
-    if (waitTime > 0.0) {
-      std::this_thread::sleep_for(std::chrono::duration<double>(waitTime));
-      currentTime = GetTime();
+      SwapScreenBuffer();
+      double currentTime = GetTime();
+      const double updateDrawTime = currentTime - previousTime;
+      const double waitTime = (1.0 / kTargetFps) - updateDrawTime;
+      if (waitTime > 0.0) {
+        std::this_thread::sleep_for(std::chrono::duration<double>(waitTime));
+        currentTime = GetTime();
+      }
+      previousTime = currentTime;
     }
-    previousTime = currentTime;
-  }
+  }  // chatWindow's scope — destructed here, GL context still alive
 
   CloseWindow();
   return 0;

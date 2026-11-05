@@ -27,6 +27,8 @@ class ChatWindow {
  public:
   static constexpr int kWidth = 480;
   static constexpr int kHeight = 640;
+  static constexpr int kMinWidth = 320;
+  static constexpr int kMinHeight = 300;
 
   ChatWindow(std::string serverUrl, std::string token);
   ~ChatWindow();

@@ -8,6 +8,7 @@
 
 #include <unistd.h>
 
+#include <cstdio>
 #include <filesystem>
 #include <thread>
 #include <vector>
@@ -15,8 +16,6 @@
 namespace wikitray {
 
 namespace {
-constexpr int kWindowWidth = ChatWindow::kWidth;
-constexpr int kWindowHeight = ChatWindow::kHeight;
 constexpr int kPadding = 10;
 constexpr int kInputHeight = 30;
 constexpr int kButtonWidth = 70;
@@ -103,7 +102,7 @@ void applyTerminalStyle() {
   GuiSetStyle(BUTTON, TEXT_COLOR_PRESSED, bg);
 }
 
-const char* errorMessage(AgentError error) {
+const char* errorLabel(AgentError error) {
   switch (error) {
     case AgentError::Unauthorized:
       return "Auth failed — token revoked, or agent access is off for it.";
@@ -119,6 +118,23 @@ const char* errorMessage(AgentError error) {
       return "";
   }
   return "";
+}
+
+// Shows the actual HTTP status/body alongside the friendly label — a
+// prior "Other" failure was effectively undiagnosable with just the
+// generic label and no trace anywhere. Also logged to stderr so it
+// survives even if the user doesn't screenshot the window in time.
+std::string errorMessage(const AgentResult& result) {
+  std::string message = errorLabel(result.error);
+  if (result.httpStatus != 0) {
+    message += " [HTTP " + std::to_string(result.httpStatus) + "]";
+  }
+  if (!result.errorBody.empty()) {
+    message += " " + result.errorBody.substr(0, 200);
+  }
+  std::fprintf(stderr, "wiki-tray: agent call failed: %s\n", message.c_str());
+  std::fflush(stderr);
+  return message;
 }
 }  // namespace
 
@@ -258,6 +274,9 @@ void ChatWindow::update(bool* quitRequested) {
   *quitRequested = false;
   ClearBackground(kBg);
 
+  const int screenW = GetScreenWidth();
+  const int screenH = GetScreenHeight();
+
   // Live clipboard refresh while the window stays open — throttled to a
   // few times a second rather than every frame, since each check is an
   // X11 selection round-trip.
@@ -266,7 +285,7 @@ void ChatWindow::update(bool* quitRequested) {
     pollClipboard();
   }
 
-  if (GuiButton({kWindowWidth - kButtonWidth - kPadding, kPadding,
+  if (GuiButton({static_cast<float>(screenW - kButtonWidth - kPadding), kPadding,
                   static_cast<float>(kButtonWidth), 24},
                  "Quit")) {
     *quitRequested = true;
@@ -277,7 +296,7 @@ void ChatWindow::update(bool* quitRequested) {
   if (clipboardOfferShown_) {
     std::string preview = clipboardOfferText_.substr(0, 60);
     const std::string label = "clipboard: \"" + preview + "\"...";
-    GuiLabel({kPadding, static_cast<float>(topY), kWindowWidth - 2.0f * kPadding, 20}, label.c_str());
+    GuiLabel({kPadding, static_cast<float>(topY), screenW - 2.0f * kPadding, 20}, label.c_str());
     topY += 24;
     if (GuiButton({kPadding, static_cast<float>(topY), 100, 24}, "Include")) {
       clipboardIncluded_ = true;
@@ -289,9 +308,9 @@ void ChatWindow::update(bool* quitRequested) {
     topY += 24 + kPadding;
   }
 
-  const int historyBottom = kWindowHeight - kInputHeight - 2 * kPadding -
+  const int historyBottom = screenH - kInputHeight - 2 * kPadding -
                               (lastError_.empty() ? 0 : 20);
-  drawHistory(kPadding, topY, kWindowWidth - 2 * kPadding, historyBottom - topY);
+  drawHistory(kPadding, topY, screenW - 2 * kPadding, historyBottom - topY);
 
   int inputY = historyBottom + kPadding;
   if (!lastError_.empty()) {
@@ -302,11 +321,11 @@ void ChatWindow::update(bool* quitRequested) {
 
   const bool sending = pendingSend_ != nullptr;
   GuiTextBox({kPadding, static_cast<float>(inputY),
-              kWindowWidth - 2.0f * kPadding - kButtonWidth - kPadding,
+              screenW - 2.0f * kPadding - kButtonWidth - kPadding,
               static_cast<float>(kInputHeight)},
              inputBuffer_, sizeof(inputBuffer_), !sending);
 
-  const bool sendClicked = GuiButton({kWindowWidth - kButtonWidth - kPadding,
+  const bool sendClicked = GuiButton({static_cast<float>(screenW - kButtonWidth - kPadding),
                                         static_cast<float>(inputY),
                                         static_cast<float>(kButtonWidth),
                                         static_cast<float>(kInputHeight)},
@@ -323,7 +342,7 @@ void ChatWindow::update(bool* quitRequested) {
     if (pendingSend_->ready) {
       const AgentResult& result = pendingSend_->result;
       if (result.error != AgentError::None) {
-        lastError_ = errorMessage(result.error);
+        lastError_ = errorMessage(result);
       } else {
         std::string reply = result.reply;
         for (const auto& doc : result.documentsCreated) {

@@ -8,6 +8,7 @@
     "raylib",
     "raygui",
     "sdbus-cpp",
-    "libx11"
+    "libx11",
+    "stb"
   ]
 }
