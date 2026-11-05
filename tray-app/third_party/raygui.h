@@ -2746,10 +2746,30 @@ int GuiTextBox(Rectangle bounds, char *text, int bufferSize, bool editMode)
     {
         // wiki-tray: blink at 2 Hz (on for 500ms, off for 500ms); steady
         // while typing/moving so the cursor never vanishes mid-edit. The
-        // block is translucent so the character under it stays readable.
+        // block is solid with the glyph under it inverted.
         const bool typing = IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_BACKSPACE) || IsKeyDown(KEY_DELETE);
+        // Keep the block inside the text area: with text wider than the
+        // box the cursor sits at the right edge and would paint over the border.
+        if (cursor.x + cursor.width > textBounds.x + textBounds.width)
+            cursor.x = textBounds.x + textBounds.width - cursor.width;
         if (typing || (((int)(GetTime()*2.0)) % 2 == 0))
-            GuiDrawRectangle(cursor, 0, BLANK, Fade(GetColor(GuiGetStyle(TEXTBOX, BORDER_COLOR_PRESSED)), 0.65f));
+        {
+            // Solid block with the character under it redrawn in the
+            // background color (inverse video, as in a terminal).
+            GuiDrawRectangle(cursor, 0, BLANK, GetColor(GuiGetStyle(TEXTBOX, BORDER_COLOR_PRESSED)));
+            if (text[textBoxCursorIndex] != '\0')
+            {
+                int glyphSize = 0;
+                GetCodepointNext(text + textBoxCursorIndex, &glyphSize);
+                char glyph[8] = { 0 };
+                if (glyphSize > 0 && glyphSize < 8)
+                {
+                    for (int g = 0; g < glyphSize; g++) glyph[g] = text[textBoxCursorIndex + g];
+                    Rectangle glyphBounds = { cursor.x, textBounds.y, cursor.width, textBounds.height };
+                    GuiDrawText(glyph, glyphBounds, TEXT_ALIGN_LEFT, GetColor(GuiGetStyle(TEXTBOX, BASE_COLOR_NORMAL)));
+                }
+            }
+        }
 
         // Draw mouse position cursor (if required)
         // wiki-tray: upstream also draws a thin caret under the mouse
