@@ -191,6 +191,11 @@ h3 {
   text-transform: uppercase;
 }
 
+hr {
+  border: 0;
+  border-top: 1px solid var(--fg-dim);
+}
+
 .layout {
   display: flex;
   align-items: flex-start;

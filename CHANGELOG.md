@@ -6,6 +6,14 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [0.9.2] - 2026-11-05
+
+### Fixed
+
+- Horizontal rules in rendered documents use the theme's dim green in the
+  `green` theme instead of the browser's default light gray, matching the
+  editor.
+
 ## [0.9.1] - 2026-11-05
 
 ### Fixed
