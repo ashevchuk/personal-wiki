@@ -80,9 +80,18 @@ int main(int argc, char** argv) {
 
     if (showRequested.exchange(false)) {
       if (!visible) {
+        // Unhide (and pump once more so the window is actually mapped)
+        // BEFORE reading the clipboard: an unmapped window doesn't
+        // reliably receive the X11 SelectionNotify a clipboard read
+        // waits on, so GetClipboardText() falls back to a stale cached
+        // value if asked while still hidden — confirmed live, this
+        // order is required, not cosmetic.
+        ClearWindowState(FLAG_WINDOW_HIDDEN);
+        PollInputEvents();
         chatWindow.onShow();
+      } else {
+        ClearWindowState(FLAG_WINDOW_HIDDEN);
       }
-      ClearWindowState(FLAG_WINDOW_HIDDEN);
       visible = true;
     }
 
