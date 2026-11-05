@@ -2752,7 +2752,10 @@ int GuiTextBox(Rectangle bounds, char *text, int bufferSize, bool editMode)
             GuiDrawRectangle(cursor, 0, BLANK, Fade(GetColor(GuiGetStyle(TEXTBOX, BORDER_COLOR_PRESSED)), 0.65f));
 
         // Draw mouse position cursor (if required)
-        if (mouseCursor.x >= 0) GuiDrawRectangle(mouseCursor, 0, BLANK, GetColor(GuiGetStyle(TEXTBOX, BORDER_COLOR_PRESSED)));
+        // wiki-tray: upstream also draws a thin caret under the mouse
+        // pointer, which next to the block cursor reads as a second
+        // cursor; click-to-position still works, it just isn't drawn.
+        // if (mouseCursor.x >= 0) GuiDrawRectangle(mouseCursor, ...);
     }
     else if (state == STATE_FOCUSED) GuiTooltip(bounds);
     //--------------------------------------------------------------------
