@@ -206,12 +206,15 @@
     var byPath = {};
     var i;
     for (i = 0; i < n; i++) {
-      var angle = (2 * Math.PI * i) / n;
-      var radius = Math.min(width, height) / 3;
+      // Ellipse matching the box, first node on top: a symmetric
+      // simulation never leaves its starting axis, so a circle starting
+      // at angle 0 always laid a pair out horizontally, even in a tall
+      // narrow panel where long labels then overlap.
+      var angle = (2 * Math.PI * i) / n - Math.PI / 2;
       var body = {
         path: nodes[i].path,
-        x: width / 2 + radius * Math.cos(angle),
-        y: height / 2 + radius * Math.sin(angle),
+        x: width / 2 + (width / 3) * Math.cos(angle),
+        y: height / 2 + (height / 3) * Math.sin(angle),
         vx: 0,
         vy: 0,
       };

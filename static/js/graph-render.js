@@ -30,6 +30,11 @@ window.WikiGraphRender = (function () {
   var HIT_SLOP = 4;
   var LABEL_DY = 18;
   var CENTER_LABEL_DY = 22;
+  var ABOVE_LABEL_DY = -12;
+  var LABEL_HALF_ALLOWANCE = 110;
+  var LABEL_CHAR_W = 6.6;
+  var LABEL_BOX_H = 13;
+  var LABEL_BOX_PAD = 3;
   var STROKE_W = 1.5;
   var EDGE_W = 1.5;
   var DIM_ALPHA = 0.4;
@@ -85,6 +90,46 @@ window.WikiGraphRender = (function () {
     if (mode === "hover") return false;
     if ((cameraScale || 1) >= AUTO_LABEL_ZOOM) return true;
     return (view.degrees[node.path] || 0) >= 2;
+  }
+
+  // Which of the labels showLabel() allows actually get drawn: greedy by
+  // priority (hovered, centre, then hubs first), a label that would
+  // overlap one already placed is dropped. Text and positions share one
+  // camera transform, so overlap is the same at every zoom level; a
+  // dropped label comes back on hover.
+  function visibleLabels(nodes, positions, view, hoveredPath, cameraScale) {
+    var candidates = nodes.filter(function (node) {
+      return positions[node.path] && showLabel(node, view, hoveredPath, cameraScale);
+    });
+    function rank(node) {
+      if (node.path === hoveredPath) return -2;
+      if (node.path === view.centerPath) return -1;
+      return -(view.degrees[node.path] || 0) / 1000;
+    }
+    candidates.sort(function (a, b) {
+      return rank(a) - rank(b);
+    });
+    var placed = [];
+    var visible = {};
+    candidates.forEach(function (node) {
+      var p = positions[node.path];
+      var halfW = (nodeLabel(node).length * LABEL_CHAR_W) / 2 + LABEL_BOX_PAD;
+      var baseline = p.y + labelDy(node, p, view, positions);
+      var box = {
+        l: p.x - halfW,
+        r: p.x + halfW,
+        t: baseline - LABEL_BOX_H + LABEL_BOX_PAD,
+        b: baseline + LABEL_BOX_PAD,
+      };
+      var pinned = node.path === hoveredPath || node.path === view.centerPath;
+      var clear = placed.every(function (o) {
+        return box.r < o.l || box.l > o.r || box.b < o.t || box.t > o.b;
+      });
+      if (!pinned && !clear) return;
+      placed.push(box);
+      visible[node.path] = true;
+    });
+    return visible;
   }
 
   function makeView(edges, options) {
@@ -179,14 +224,31 @@ window.WikiGraphRender = (function () {
   // Uniform scale + center, always from the ORIGINAL simulation box,
   // so a chain of resizes cannot compound. Non-uniform stretch would
   // squash the settled layout when the window aspect changes.
-  function fitPositions(pos, fromW, fromH, toW, toH) {
-    var sx = toW / (fromW || 1);
-    var sy = toH / (fromH || 1);
-    var s = Math.min(sx, sy);
-    var ox = (toW - fromW * s) / 2;
-    var oy = (toH - fromH * s) / 2;
+  // The simulation has no walls, so nodes can sit outside its box; the
+  // scale is therefore also capped by the nodes' real bounding box, and
+  // the box is centred, so nothing is clipped by the canvas edge.
+  function fitPositions(pos, fromW, fromH, toW, toH, pad) {
+    var keys = Object.keys(pos);
+    var minX = Infinity;
+    var minY = Infinity;
+    var maxX = -Infinity;
+    var maxY = -Infinity;
+    keys.forEach(function (k) {
+      minX = Math.min(minX, pos[k].x);
+      maxX = Math.max(maxX, pos[k].x);
+      minY = Math.min(minY, pos[k].y);
+      maxY = Math.max(maxY, pos[k].y);
+    });
+    var marginX = Math.min(Math.max(LABEL_HALF_ALLOWANCE - (pad || 0), 0), toW / 4);
+    var spanX = maxX - minX;
+    var spanY = maxY - minY;
+    var s = Math.min(toW / (fromW || 1), toH / (fromH || 1));
+    if (spanX > 0) s = Math.min(s, (toW - 2 * marginX) / spanX);
+    if (spanY > 0) s = Math.min(s, toH / spanY);
+    var ox = (toW - spanX * s) / 2 - minX * s;
+    var oy = (toH - spanY * s) / 2 - minY * s;
     var out = {};
-    Object.keys(pos).forEach(function (k) {
+    keys.forEach(function (k) {
       out[k] = { x: pos[k].x * s + ox, y: pos[k].y * s + oy };
     });
     return out;
@@ -309,6 +371,15 @@ window.WikiGraphRender = (function () {
 
   function nodeLabel(node) {
     return node.title || node.path;
+  }
+
+  // In a local graph the edges of a node above the centre run downward,
+  // straight through a label placed below it, so such labels go above.
+  function labelDy(node, p, view, positions) {
+    if (node.path === view.centerPath) return CENTER_LABEL_DY;
+    var centre = view.centerPath && positions[view.centerPath];
+    if (centre && p.y < centre.y) return ABOVE_LABEL_DY;
+    return LABEL_DY;
   }
 
   function readPalette(host) {
@@ -736,8 +807,9 @@ window.WikiGraphRender = (function () {
     ctx.font = "11px " + palette.fontFamily;
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
+    var visible = visibleLabels(nodes, positions, view, hoveredPath, camera.scale);
     nodes.forEach(function (node) {
-      if (!showLabel(node, view, hoveredPath, camera.scale)) return;
+      if (!visible[node.path]) return;
       var p = positions[node.path];
       if (!p) return;
       ctx.globalAlpha = isDimmed(node, view, hoveredPath) ? DIM_ALPHA : 1;
@@ -745,7 +817,7 @@ window.WikiGraphRender = (function () {
       ctx.fillText(
         nodeLabel(node),
         p.x,
-        p.y + (node.path === view.centerPath ? CENTER_LABEL_DY : LABEL_DY)
+        p.y + labelDy(node, p, view, positions)
       );
     });
     ctx.globalAlpha = 1;
@@ -778,6 +850,7 @@ window.WikiGraphRender = (function () {
       ctx.lineTo(b.x, b.y);
       ctx.stroke();
     });
+    var visible = visibleLabels(nodes, positions, view, hoveredPath, camera.scale);
     nodes.forEach(function (node) {
       var p = positions[node.path];
       if (!p) return;
@@ -791,7 +864,7 @@ window.WikiGraphRender = (function () {
       ctx.lineWidth = STROKE_W;
       ctx.strokeStyle = colors.stroke;
       ctx.stroke();
-      if (!showLabel(node, view, hoveredPath, camera.scale)) return;
+      if (!visible[node.path]) return;
       ctx.font = "11px " + palette.fontFamily;
       ctx.textAlign = "center";
       ctx.textBaseline = "alphabetic";
@@ -799,7 +872,7 @@ window.WikiGraphRender = (function () {
       ctx.fillText(
         nodeLabel(node),
         p.x,
-        p.y + (node.path === view.centerPath ? CENTER_LABEL_DY : LABEL_DY)
+        p.y + labelDy(node, p, view, positions)
       );
     });
     ctx.globalAlpha = 1;
@@ -1067,7 +1140,7 @@ window.WikiGraphRender = (function () {
       // rendering query-block.js does, which DOES need WikiCommon.escapeHtml).
       var label = document.createElementNS(NS, "text");
       label.setAttribute("x", p.x);
-      label.setAttribute("y", p.y + (isCenter ? CENTER_LABEL_DY : LABEL_DY));
+      label.setAttribute("y", p.y + labelDy(node, p, view, positions));
       label.setAttribute("class", "graph-label");
       label.textContent = nodeLabel(node);
       labelEls.push({ node: node, el: label, link: link });
@@ -1086,9 +1159,10 @@ window.WikiGraphRender = (function () {
 
     function syncSvgLabels(hoveredPath) {
       var i;
+      var visible = visibleLabels(nodes, positions, view, hoveredPath, camera.scale);
       for (i = 0; i < labelEls.length; i++) {
         var item = labelEls[i];
-        var on = showLabel(item.node, view, hoveredPath, camera.scale);
+        var on = !!visible[item.node.path];
         if (on) item.el.classList.remove("is-hidden");
         else item.el.classList.add("is-hidden");
       }
@@ -1174,7 +1248,8 @@ window.WikiGraphRender = (function () {
       layoutCache.boxW,
       layoutCache.boxH,
       job.boxW,
-      job.boxH
+      job.boxH,
+      job.pad
     );
     var opts = job.options || {};
     opts.graphKey = job.key;

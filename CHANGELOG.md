@@ -6,6 +6,25 @@ versioning follows [SemVer](https://semver.org/). The version lives in
 binaries — check a running/built copy with `wiki-server --version` or
 `wiki-mcp --version`.
 
+## [Unreleased]
+
+## [0.9.5] - 2026-11-06
+
+### Fixed
+
+- Graph layout starts from an ellipse matching the box instead of a
+  circle, so a document with a single link is laid out vertically in the
+  narrow local-graph panel and its two labels no longer overlap.
+- Nodes and labels at the edge of the graph are no longer clipped by the
+  canvas: the layout is fitted and centred by the nodes' real bounding
+  box instead of the simulation box, which has no walls.
+- Overlapping graph labels no longer pile up: a label that would overlap
+  one already drawn is hidden (hubs, the centre node and the hovered node
+  win) and reappears on hover.
+- In the local graph, labels of nodes above the centre are drawn above
+  the node instead of below it, where the node's own edge ran through the
+  text.
+
 ## [0.9.4] - 2026-11-06
 
 ### Fixed
