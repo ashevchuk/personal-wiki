@@ -120,7 +120,9 @@ TrayIcon::TrayIcon(std::string serviceName) {
       sdbus::registerProperty("Category").withGetter([] { return std::string("ApplicationStatus"); }),
       sdbus::registerProperty("Id").withGetter([] { return std::string("wiki-tray"); }),
       sdbus::registerProperty("Title").withGetter([] { return std::string("Wiki Tray"); }),
-      sdbus::registerProperty("Status").withGetter([] { return std::string("Active"); }),
+      // "Passive" makes Plasma file the icon under the tray's hidden
+      // entries instead of the always-visible area.
+      sdbus::registerProperty("Status").withGetter([] { return std::string("Passive"); }),
       sdbus::registerProperty("WindowId").withGetter([] { return int32_t{0}; }),
       // This Plasma panel draws a white contrast plate behind the icon
       // regardless of delivery mechanism (IconThemePath, raw
