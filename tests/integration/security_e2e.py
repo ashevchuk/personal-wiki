@@ -1073,6 +1073,48 @@ def run_checks(sandbox, vault):
     status, _, _ = fresh.post_json("/api/login", {"username": "admin", "password": "SuperSecret123"})
     check("old password rejected after change", status == 401, f"got {status}")
 
+    # --- 10b. Login is rate limited per proxy-supplied client IP, and the
+    # cookies' Secure flag follows X-Forwarded-Proto behind a proxy --------
+    def raw_login(password, extra_headers):
+        conn = http.client.HTTPConnection(HOST, PORT, timeout=5)
+        try:
+            headers = {"Content-Type": "application/json"}
+            headers.update(extra_headers)
+            conn.request("POST", "/api/login",
+                         body=json.dumps({"username": "admin", "password": password}),
+                         headers=headers)
+            resp = conn.getresponse()
+            resp.read()
+            cookies = [v for k, v in resp.getheaders() if k.lower() == "set-cookie"]
+            return resp.status, cookies
+        finally:
+            conn.close()
+
+    attacker = {"X-Real-IP": "203.0.113.7"}
+    legit = {"X-Real-IP": "203.0.113.8"}
+    attacker_statuses = [raw_login("WRONG", attacker)[0] for _ in range(6)]
+    check("login limiter blocks the attacker's IP (429 seen)",
+          429 in attacker_statuses, f"statuses={attacker_statuses}")
+    status, _ = raw_login("NewSecret456", attacker)
+    check("blocked IP stays blocked even with the right password -> 429",
+          status == 429, f"got {status}")
+    status, cookies = raw_login("NewSecret456", legit)
+    check("a different client IP is not locked out by the attacker -> 200",
+          status == 200, f"got {status}")
+
+    https_headers = {"X-Real-IP": "203.0.113.9", "X-Forwarded-Proto": "https"}
+    status, cookies = raw_login("NewSecret456", https_headers)
+    check("login behind a TLS-terminating proxy sets both cookies",
+          status == 200 and len(cookies) == 2, f"status={status} cookies={cookies}")
+    check("cookies are Secure when X-Forwarded-Proto is https",
+          all("; Secure" in c for c in cookies), f"cookies={cookies}")
+
+    http_headers = {"X-Real-IP": "203.0.113.10", "X-Forwarded-Proto": "http"}
+    status, cookies = raw_login("NewSecret456", http_headers)
+    check("cookies are not Secure when X-Forwarded-Proto is http",
+          status == 200 and cookies and not any("; Secure" in c for c in cookies),
+          f"status={status} cookies={cookies}")
+
     # --- 11. Rate limiting on repeated failed logins ---------------------
     rl = Client(HOST, PORT)
     statuses = []

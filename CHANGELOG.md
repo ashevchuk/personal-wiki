@@ -8,6 +8,17 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Security
+
+- The login rate limiter is keyed by the real client IP instead of the TCP
+  peer. Behind a reverse proxy every visitor used to share the proxy's
+  loopback bucket, so one attacker's failed attempts locked the admin out.
+- Session and CSRF cookies are marked `Secure` behind a TLS-terminating
+  proxy that sends `X-Forwarded-Proto: https`; before, only standalone TLS
+  mode set the flag. The header is ignored in standalone TLS mode.
+- Login verifies the password hash even for an unknown username, so response
+  time no longer reveals whether the username exists.
+
 ## [0.9.5] - 2026-11-06
 
 ### Fixed

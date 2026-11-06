@@ -6,12 +6,12 @@
 
 namespace wikicore::auth {
 
-// The caller's REAL IP, for the two things that actually need it against
-// a real attacker rather than a trusted internal caller: the remote MCP
-// rate limiter and its IP allowlist (McpRemoteConfig::isIpAllowed).
+// The caller's REAL IP, for everything that needs it against a real
+// attacker rather than a trusted internal caller: the /login rate limiter,
+// the remote MCP rate limiter and its IP allowlist
+// (McpRemoteConfig::isIpAllowed).
 //
-// `req->getPeerAddr()` (used by /login's own rate limiter today) is the
-// raw TCP peer — behind the reverse proxy this app is documented to run
+// `req->getPeerAddr()` is the raw TCP peer — behind the reverse proxy this app is documented to run
 // behind for any public exposure (docs/sbc-deployment.md), that's ALWAYS the
 // proxy's own loopback address, never the actual client. An IP allowlist
 // checked against that would either allow everyone (if the proxy's

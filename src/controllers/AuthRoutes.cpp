@@ -3,6 +3,7 @@
 #include "auth/AdminAccount.h"
 #include "auth/AuthContext.h"
 #include "auth/AuthServices.h"
+#include "auth/ClientIp.h"
 #include "auth/PasswordHasher.h"
 #include "auth/RateLimiter.h"
 #include "auth/RequireAdmin.h"
@@ -35,6 +36,20 @@ Cookie makeSessionCookie(const std::string& token, bool secure, int maxAgeSecond
   return cookie;
 }
 
+// Behind a TLS-terminating proxy the app itself only ever sees plain
+// HTTP, so isOnSecureConnection() alone would leave Secure unset on every
+// cookie. X-Forwarded-Proto is only believed where clientIp()'s proxy
+// headers are (trustProxyHeaders), never in standalone TLS mode.
+bool isSecureRequest(const HttpRequestPtr& req, bool trustProxyHeaders) {
+  if (req->isOnSecureConnection()) return true;
+  return trustProxyHeaders && req->getHeader("X-Forwarded-Proto") == "https";
+}
+
+const std::string& decoyPasswordHash() {
+  static const std::string hash = PasswordHasher::hash("decoy-password-never-matches");
+  return hash;
+}
+
 // Same TTL used for both cookies, at login AND on every later re-issue
 // (see /api/session below) — shared so the two can't drift apart.
 constexpr int kSessionMaxAgeSeconds = 60 * 60 * 24 * 14;
@@ -53,10 +68,11 @@ Cookie makeCsrfCookie(const std::string& csrfToken, bool secure, int maxAgeSecon
 
 }  // namespace
 
-void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
+void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled, bool trustProxyHeaders) {
+  decoyPasswordHash();
   app.registerHandler(
       "/api/session",
-      [agentEnabled](const HttpRequestPtr& req,
+      [agentEnabled, trustProxyHeaders](const HttpRequestPtr& req,
          std::function<void(const HttpResponsePtr&)>&& callback) {
         Json::Value body;
         const bool authenticated = isAuthenticated(req);
@@ -85,7 +101,7 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
         if (authenticated) {
           const std::string csrfToken =
               req->attributes()->get<std::string>(kAttrCsrfToken);
-          resp->addCookie(makeCsrfCookie(csrfToken, req->isOnSecureConnection(),
+          resp->addCookie(makeCsrfCookie(csrfToken, isSecureRequest(req, trustProxyHeaders),
                                           kSessionMaxAgeSeconds));
         }
         callback(resp);
@@ -102,9 +118,9 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
 
   app.registerHandler(
       "/api/login",
-      [](const HttpRequestPtr& req,
+      [trustProxyHeaders](const HttpRequestPtr& req,
          std::function<void(const HttpResponsePtr&)>&& callback) {
-        const std::string ip = req->getPeerAddr().toIp();
+        const std::string ip = clientIp(req, trustProxyHeaders);
 
         if (!AuthServices::rateLimiter().allow(ip)) {
           callback(jsonError(k429TooManyRequests, "Too many attempts. Try again shortly."));
@@ -120,8 +136,13 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
         const std::string password = (*json)["password"].asString();
 
         const auto admin = AuthServices::admin().find();
-        const bool ok = admin.has_value() && admin->username == username &&
-                        PasswordHasher::verify(admin->passwordHash, password);
+        // Hash-verify on every attempt, even for a wrong username, so
+        // response time doesn't reveal whether the username exists.
+        const bool usernameMatches = admin.has_value() && admin->username == username;
+        const std::string& hashToVerify =
+            usernameMatches ? admin->passwordHash : decoyPasswordHash();
+        const bool passwordMatches = PasswordHasher::verify(hashToVerify, password);
+        const bool ok = usernameMatches && passwordMatches;
 
         if (!ok) {
           AuthServices::rateLimiter().recordFailure(ip);
@@ -137,10 +158,10 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled) {
         body["ok"] = true;
         auto resp = HttpResponse::newHttpJsonResponse(body);
         resp->addCookie(makeSessionCookie(session.rawToken,
-                                           req->isOnSecureConnection(),
+                                           isSecureRequest(req, trustProxyHeaders),
                                            kSessionMaxAgeSeconds));
         resp->addCookie(makeCsrfCookie(session.csrfToken,
-                                        req->isOnSecureConnection(),
+                                        isSecureRequest(req, trustProxyHeaders),
                                         kSessionMaxAgeSeconds));
         callback(resp);
       },

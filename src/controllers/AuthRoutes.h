@@ -26,6 +26,11 @@ namespace wikicore::controllers {
 // unlike the old HTML-returning version, nothing here builds a URL/link
 // that would need it (the client already knows its own base path, see
 // common.js's basePath()).
-void registerAuthRoutes(drogon::HttpAppFramework& app, bool agentEnabled);
+//
+// `trustProxyHeaders` has the same meaning as for auth::clientIp(): it keys
+// the login rate limiter by the real client IP and lets X-Forwarded-Proto
+// mark the cookies Secure behind a TLS-terminating proxy.
+void registerAuthRoutes(drogon::HttpAppFramework& app, bool agentEnabled,
+                        bool trustProxyHeaders);
 
 }  // namespace wikicore::controllers

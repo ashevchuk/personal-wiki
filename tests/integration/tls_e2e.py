@@ -230,10 +230,7 @@ def spoofed_rate_limit_probe(n):
     falls back to the raw TCP peer (there's by definition no reverse
     proxy to normalize this header) -- so every request must land in the
     SAME real-peer bucket and trip the limiter at the normal threshold,
-    regardless of what X-Real-IP claims. /api/login deliberately never
-    uses clientIp() at all (see ClientIp.h's own comment -- it's a
-    hardcoded exception, always keyed on the real peer), so this probes
-    /mcp's limiter instead, which does."""
+    regardless of what X-Real-IP claims."""
     client = Client(HOST, PORT)
     statuses = []
     for i in range(n):
@@ -246,6 +243,20 @@ def spoofed_rate_limit_probe(n):
             },
             body=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}).encode(),
         )
+        statuses.append(status)
+    return statuses
+
+
+def spoofed_login_probe(n):
+    """Same shape as spoofed_rate_limit_probe, against /api/login's own
+    limiter: wrong-password attempts, each with a DIFFERENT spoofed
+    X-Real-IP."""
+    client = Client(HOST, PORT)
+    statuses = []
+    for i in range(n):
+        status, _, _ = client.post_json(
+            "/api/login", {"username": "admin", "password": "wrong"},
+            headers={"X-Real-IP": f"203.0.113.{i}"})
         statuses.append(status)
     return statuses
 
@@ -274,6 +285,11 @@ def run_spoofed_ip_check(server_bin):
               "rate limiter's bucket -- same real-peer bucket trips at "
               "the normal threshold despite 8 differently-spoofed attempts",
               429 in statuses, statuses)
+
+        login_statuses = spoofed_login_probe(8)
+        check("standalone TLS: a spoofed X-Real-IP does NOT reset the "
+              "login rate limiter's bucket despite 8 differently-spoofed attempts",
+              429 in login_statuses, login_statuses)
     finally:
         if server is not None:
             stop_server(server)

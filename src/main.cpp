@@ -601,7 +601,8 @@ int main(int argc, char** argv) {
       },
       {drogon::Get});
 
-  wikicore::controllers::registerAuthRoutes(drogon::app(), agentRuntime.enabled());
+  wikicore::controllers::registerAuthRoutes(drogon::app(), agentRuntime.enabled(),
+                                                  /*trustProxyHeaders=*/!cfg.tls.enabled);
   wikicore::controllers::registerDocumentRoutes(drogon::app(), vault, documentService,
                                                  attachmentService, navQueries);
   wikicore::controllers::registerSearchRoutes(drogon::app(), ftsSearch);
