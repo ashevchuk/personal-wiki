@@ -1620,17 +1620,16 @@ pre code[class*="language-"] {
   border-collapse: collapse;
   table-layout: fixed;
 }
-.query-results th:nth-child(1),
-.query-results td:nth-child(1) {
-  width: 50%;
-}
-.query-results th:nth-child(2),
-.query-results td:nth-child(2) {
-  width: 20%;
-}
-.query-results th:nth-child(3),
-.query-results td:nth-child(3) {
+.query-results th.col-tags,
+.query-results td.col-tags {
   width: 30%;
+}
+.query-results th.col-updated,
+.query-results td.col-updated {
+  width: 8rem;
+}
+.query-results th.col-updated:last-child,
+.query-results td.col-updated:last-child {
   text-align: right;
 }
 .query-results th,

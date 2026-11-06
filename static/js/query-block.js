@@ -56,39 +56,47 @@ window.WikiQueryBlock = (function () {
     );
   }
 
-  function renderTable(rows) {
+  var DEFAULT_COLUMNS = ["title", "tags", "updated"];
+  var COLUMN_LABELS = { title: "Title", tags: "Tags", updated: "Updated" };
+
+  function renderCell(column, row) {
+    if (column === "tags") return escapeHtml(row.tags || "");
+    if (column === "updated") return formatUpdated(row.updatedAt);
+    // `links: true` rows carry the external URL itself in `path` (see
+    // QueryBlocks.cpp's own comment on that key) -- link straight to
+    // it, not through this app's own /d/{path} document-view route.
+    // rel="noopener noreferrer" since this leaves the site entirely,
+    // same discipline any other outbound link on the page would want.
+    var external = isExternalUrl(row.path);
+    var href = external
+      ? escapeHtml(row.path)
+      : basePath() + "/d/" + encodeVaultPath(row.path);
+    var relAttr = external ? ' target="_blank" rel="noopener noreferrer"' : "";
+    return (
+      '<a href="' + href + '"' + relAttr + ">" +
+      escapeHtml(row.title || row.path) + "</a>"
+    );
+  }
+
+  function renderTable(rows, header, columns) {
     if (rows.length === 0) {
       return '<p class="query-empty">No matching documents.</p>';
     }
-    var html =
-      '<table class="query-results"><thead><tr>' +
-      "<th>Title</th><th>Tags</th><th>Updated</th>" +
-      "</tr></thead><tbody>";
+    var html = '<table class="query-results">';
+    if (header) {
+      html += "<thead><tr>";
+      for (var c = 0; c < columns.length; c++) {
+        html += '<th class="col-' + columns[c] + '">' + COLUMN_LABELS[columns[c]] + "</th>";
+      }
+      html += "</tr></thead>";
+    }
+    html += "<tbody>";
     for (var i = 0; i < rows.length; i++) {
-      var row = rows[i];
-      // `links: true` rows carry the external URL itself in `path` (see
-      // QueryBlocks.cpp's own comment on that key) -- link straight to
-      // it, not through this app's own /d/{path} document-view route.
-      // rel="noopener noreferrer" since this leaves the site entirely,
-      // same discipline any other outbound link on the page would want.
-      var href = isExternalUrl(row.path)
-        ? escapeHtml(row.path)
-        : basePath() + "/d/" + encodeVaultPath(row.path);
-      var relAttr = isExternalUrl(row.path)
-        ? ' target="_blank" rel="noopener noreferrer"'
-        : "";
-      html +=
-        '<tr><td><a href="' +
-        href +
-        '"' +
-        relAttr +
-        ">" +
-        escapeHtml(row.title || row.path) +
-        "</a></td><td>" +
-        escapeHtml(row.tags || "") +
-        "</td><td>" +
-        formatUpdated(row.updatedAt) +
-        "</td></tr>";
+      html += "<tr>";
+      for (var k = 0; k < columns.length; k++) {
+        html += '<td class="col-' + columns[k] + '">' + renderCell(columns[k], rows[i]) + "</td>";
+      }
+      html += "</tr>";
     }
     html += "</tbody></table>";
     return html;
@@ -124,7 +132,11 @@ window.WikiQueryBlock = (function () {
         if (!node.parentNode) return;
         var wrapper = document.createElement("div");
         wrapper.className = "query-block";
-        wrapper.innerHTML = renderTable(body.rows);
+        wrapper.innerHTML = renderTable(
+          body.rows,
+          body.header !== false,
+          body.columns || DEFAULT_COLUMNS
+        );
         node.parentNode.replaceChild(wrapper, node);
       })
       .catch(function (err) {

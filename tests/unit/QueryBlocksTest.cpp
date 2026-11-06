@@ -503,3 +503,34 @@ TEST_CASE("QueryBlocks: search needs a non-empty value", "[QueryBlocks]") {
   QueryBlocks qb(database, fts);
   REQUIRE_FALSE(qb.parseAndRun("search:", true).ok);
 }
+
+TEST_CASE("QueryBlocks: header and columns are presentation-only keys", "[QueryBlocks]") {
+  TempDb db;
+  Database database(db.path());
+  database.migrate();
+  IndexUpdater updater(database);
+  updater.upsertOne(makeEntry("a.md", "public", {}));
+
+  FtsSearch fts(database);
+  QueryBlocks qb(database, fts);
+
+  auto defaults = qb.parseAndRun("", true);
+  REQUIRE(defaults.ok);
+  REQUIRE(defaults.header);
+  REQUIRE(defaults.columns == std::vector<std::string>{"title", "tags", "updated"});
+
+  auto custom = qb.parseAndRun("header: false\ncolumns: Updated, title", true);
+  REQUIRE(custom.ok);
+  REQUIRE_FALSE(custom.header);
+  REQUIRE(custom.columns == std::vector<std::string>{"updated", "title"});
+  REQUIRE(custom.rows.size() == 1);
+
+  auto withTodos = qb.parseAndRun("todos: open\nheader: false", true);
+  REQUIRE(withTodos.ok);
+  REQUIRE_FALSE(withTodos.header);
+
+  REQUIRE_FALSE(qb.parseAndRun("header: maybe", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("columns:", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("columns: title, author", true).ok);
+  REQUIRE_FALSE(qb.parseAndRun("columns: title, title", true).ok);
+}

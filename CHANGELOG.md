@@ -8,6 +8,14 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-06
+
+### Added
+
+- Query blocks accept `header: false` to hide the table's header row and
+  `columns: title, updated` to choose which columns are shown and in what
+  order.
+
 ### Security
 
 - The login rate limiter is keyed by the real client IP instead of the TCP

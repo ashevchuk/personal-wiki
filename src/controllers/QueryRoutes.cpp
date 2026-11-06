@@ -49,6 +49,10 @@ void registerQueryRoutes(HttpAppFramework& app, QueryBlocks& queryBlocks) {
           rows.append(item);
         }
         body["rows"] = rows;
+        body["header"] = result.header;
+        Json::Value columns(Json::arrayValue);
+        for (const auto& column : result.columns) columns.append(column);
+        body["columns"] = columns;
         callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Get, "wikicore::auth::AuthFilter"});

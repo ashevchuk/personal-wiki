@@ -26,6 +26,9 @@ struct QueryBlockResult {
   bool ok = false;
   std::string error;
   std::vector<QueryResultRow> rows;
+  // Presentation only: never affects which rows come back.
+  bool header = true;
+  std::vector<std::string> columns = {"title", "tags", "updated"};
 };
 
 // Executes a ```query fenced block's body: a tiny, fully whitelisted

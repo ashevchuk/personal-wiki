@@ -35,12 +35,17 @@ Save the document, view it, and the block becomes a real table: Title / Tags
 | `search` | Free text — full-text search, same engine as the main search page | `search: beet soup` |
 | `todos` | `open`, `done`, or `all` — GFM task-list lines (`- [ ] text`), not documents | `todos: open` |
 | `links` | `true` — external `[label](https://...)` links embedded in a document, not documents | `links: true` |
+| `header` | `false` — hide the table's header row (default: `true`). Presentation only | `header: false` |
+| `columns` | Which columns to show and in what order, from `title`, `tags`, `updated` (default: all three). Presentation only | `columns: title, updated` |
 
 Combine as many as you want — each line is a separate filter, all ANDed
 together. Unrecognized keys, a key repeated on two lines, or a value outside
 its own allowed range (e.g. `limit: 0` or `sort: nonsense`) render a plain
 red error line in place of the table instead of silently showing nothing or
 the wrong thing — if a block looks broken, check for a typo first.
+
+`header` and `columns` only change how the table is drawn, never which
+documents are listed, so they combine with every other key.
 
 ## Full-text search with `search:`
 

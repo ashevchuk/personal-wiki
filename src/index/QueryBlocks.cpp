@@ -138,6 +138,13 @@ void appendTagFilter(std::vector<std::string>& whereClauses,
 //                              two is a parse error, never one silently
 //                              winning).
 //
+//   header: true|false         -- presentation only: hide the table's header
+//                              row (default: true).
+//   columns: title, tags, updated   -- presentation only: which columns to
+//                              show, in this order (default: all three).
+//                              Neither of these two touches the SQL or the
+//                              row set, so they combine with every key.
+//
 // EVERY key above maps to ONE fixed, hardcoded SQL fragment already
 // written into this file -- there is no code path where any part of a
 // query block's TEXT is concatenated into SQL. Values only ever reach
@@ -163,6 +170,8 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
   std::string searchText;
   std::string todosFilter;  // "" (unused), "open", "done", or "all"
   bool linksOnly = false;
+  bool showHeader = true;
+  std::vector<std::string> columns = {"title", "tags", "updated"};
 
   std::set<std::string> seenKeys;
 
@@ -238,6 +247,22 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
       const std::string v = toLower(value);
       if (v != "true" && v != "false") return {false, "links: must be 'true' or 'false'", {}};
       linksOnly = (v == "true");
+    } else if (key == "header") {
+      const std::string v = toLower(value);
+      if (v != "true" && v != "false") return {false, "header: must be 'true' or 'false'", {}};
+      showHeader = (v == "true");
+    } else if (key == "columns") {
+      std::vector<std::string> parsed = splitComma(toLower(value));
+      if (parsed.empty()) return {false, "columns: needs at least one name", {}};
+      for (size_t i = 0; i < parsed.size(); ++i) {
+        if (parsed[i] != "title" && parsed[i] != "tags" && parsed[i] != "updated") {
+          return {false, "columns: must be a list of title, tags, updated", {}};
+        }
+        for (size_t j = 0; j < i; ++j) {
+          if (parsed[j] == parsed[i]) return {false, "columns: duplicate column: " + parsed[i], {}};
+        }
+      }
+      columns = std::move(parsed);
     } else if (key == "limit") {
       try {
         size_t consumed = 0;
@@ -254,7 +279,7 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
       return {false,
               "unknown key: " + key +
                   " (expected one of: tag, type, folder, orphans, sort, order, limit, search, "
-                  "todos, links)",
+                  "todos, links, header, columns)",
               {}};
     }
   }
@@ -292,6 +317,8 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
     const auto items = ftsSearch_.search(sq);
     QueryBlockResult result;
     result.ok = true;
+    result.header = showHeader;
+    result.columns = columns;
     result.rows.reserve(items.size());
     for (const auto& item : items) {
       std::string tagsFlat;
@@ -378,6 +405,8 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
 
     QueryBlockResult result;
     result.ok = true;
+    result.header = showHeader;
+    result.columns = columns;
     while (stmt.step()) {
       result.rows.push_back(QueryResultRow{stmt.columnText(0), stmt.columnText(1),
                                             stmt.columnText(2), stmt.columnText(3),
@@ -447,6 +476,8 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
 
     QueryBlockResult result;
     result.ok = true;
+    result.header = showHeader;
+    result.columns = columns;
     while (stmt.step()) {
       result.rows.push_back(QueryResultRow{stmt.columnText(0), stmt.columnText(1),
                                             stmt.columnText(2), stmt.columnText(3),
@@ -532,6 +563,8 @@ QueryBlockResult QueryBlocks::parseAndRun(const std::string& raw, bool includePr
 
   QueryBlockResult result;
   result.ok = true;
+  result.header = showHeader;
+  result.columns = columns;
   while (stmt.step()) {
     result.rows.push_back(QueryResultRow{
         stmt.columnText(0), stmt.columnText(1), stmt.columnText(2),
