@@ -27,7 +27,10 @@ jobs:
       fail-fast: false
       matrix:
         triplet: [arm-musl, armv6-musl, aarch64-musl, x64-musl]
-    runs-on: ubuntu-latest
+    # Pinned, not ubuntu-latest: Ubuntu 26.04 has no qemu-user-static
+    # package, and tools/wiki-ops.sh's pick_qemu_bin runs the
+    # qemu-*-static binaries that package provides.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - name: Checkout
