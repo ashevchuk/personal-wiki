@@ -414,8 +414,9 @@ correct.
 
 ### Verify BEFORE shipping anything to real hardware
 
-Install `qemu-user-static` (which provides `qemu-arm-static`) on the dev
-machine and actually run the cross-compiled binaries under emulation —
+Install `qemu-user-static` (which provides `qemu-arm-static`; on Ubuntu
+26.04 the package is `qemu-user` and the binary is plain `qemu-arm`) on
+the dev machine and actually run the cross-compiled binaries under emulation —
 compiling cleanly is not the same as working:
 
 ```sh

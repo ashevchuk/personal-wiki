@@ -273,7 +273,10 @@ cleanly is not the same as working.
   (`build-arm/` for the default, `build-$triplet/` otherwise — pass the
   same `--triplet` here that you built with). This needs
   `qemu-user-static` installed on the dev machine (both binaries ship
-  in that same package).
+  in that same package). On a distro that only has `qemu-user` (Ubuntu
+  26.04), install that instead: it provides the same emulators as
+  `qemu-arm`/`qemu-aarch64`, and `verify` uses whichever name is on
+  `PATH`.
 
   **`--qemu-cpu=NAME` matters more than it looks, for the 32-bit
   triplets.** qemu's *default* CPU model (with no `-cpu` flag) emulates

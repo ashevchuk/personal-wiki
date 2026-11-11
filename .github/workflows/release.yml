@@ -27,10 +27,7 @@ jobs:
       fail-fast: false
       matrix:
         triplet: [arm-musl, armv6-musl, aarch64-musl, x64-musl]
-    # Pinned, not ubuntu-latest: Ubuntu 26.04 has no qemu-user-static
-    # package, and tools/wiki-ops.sh's pick_qemu_bin runs the
-    # qemu-*-static binaries that package provides.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout
@@ -40,8 +37,11 @@ jobs:
       # qemu (see tools/wiki-ops.sh's pick_qemu_bin) — installing it
       # unconditionally for x64-musl too is harmless and keeps this one
       # step identical across the whole matrix.
-      - name: Install qemu-user-static
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user-static
+      # qemu-user, not qemu-user-static: Ubuntu 26.04 only has the former
+      # (it installs qemu-arm/qemu-aarch64 rather than the -static names;
+      # pick_qemu_bin accepts either).
+      - name: Install qemu-user
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends qemu-user
 
       # No --local-embeddings/--cloud-embeddings here -- CMakeLists.txt's
       # WIKI_ENABLE_LOCAL_EMBEDDINGS/WIKI_ENABLE_CLOUD_EMBEDDINGS default

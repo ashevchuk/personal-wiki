@@ -513,7 +513,7 @@ cmd_build_container_native() {
 # SECTION: verify — qemu for bare-ARM binaries, docker run for images
 # ============================================================
 
-# pick_qemu_bin BINARY — echoes the qemu-user-static binary to run BINARY
+# pick_qemu_bin BINARY — echoes the qemu user-mode emulator to run BINARY
 # under, picked from its own ELF machine type, not the triplet name —
 # arm-musl/armv6-musl are both 32-bit ARMv6/v7 (qemu-arm-static), but
 # aarch64-musl is a different, 64-bit instruction set entirely
@@ -523,14 +523,26 @@ cmd_build_container_native() {
 # nothing (not an error) for an x86-64 binary — x64-musl's whole point is
 # running natively on the same CI/dev-machine architecture, no emulation
 # needed.
+#
+# The emulator's own name differs by distro: qemu-user-static (Debian,
+# Ubuntu up to 24.04, Arch) installs qemu-arm-static, while qemu-user
+# (the only package Ubuntu 26.04 has) installs the same emulator as plain
+# qemu-arm. Whichever is on PATH is used, the -static name first. If
+# neither is, the -static name is echoed so the caller's own "not found"
+# error names something concrete.
 pick_qemu_bin() {
-  local bin=$1
+  local bin=$1 base
   case "$(file -b "$bin")" in
-    *"ARM aarch64"*) printf 'qemu-aarch64-static' ;;
-    *", ARM, "*) printf 'qemu-arm-static' ;;
-    *"x86-64"*) printf '' ;;
+    *"ARM aarch64"*) base=qemu-aarch64 ;;
+    *", ARM, "*) base=qemu-arm ;;
+    *"x86-64"*) return 0 ;;
     *) die "don't know how to run $bin (unrecognized architecture: $(file -b "$bin"))" ;;
   esac
+  if ! command -v "$base-static" >/dev/null 2>&1 && command -v "$base" >/dev/null 2>&1; then
+    printf '%s' "$base"
+  else
+    printf '%s-static' "$base"
+  fi
 }
 
 cmd_verify_cross() {
@@ -542,7 +554,7 @@ cmd_verify_cross() {
   local qemu_bin
   qemu_bin=$(pick_qemu_bin "$unit_tests_bin")
   if [ -n "$qemu_bin" ]; then
-    command -v "$qemu_bin" >/dev/null 2>&1 || die "$qemu_bin not found — install qemu-user-static"
+    command -v "$qemu_bin" >/dev/null 2>&1 || die "$qemu_bin not found — install qemu-user-static (or qemu-user, where that is the only package)"
   fi
 
   local qemu_cpu_args=()
