@@ -2,6 +2,10 @@
 
 #include "index/schema.h"
 
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -383,11 +387,34 @@ Database::Database(std::filesystem::path dbPath) : path_(std::move(dbPath)) {
 
 Database::~Database() { closeConnection(); }
 
+namespace {
+
+// The db holds the admin password hash, session CSRF tokens and the MCP
+// audit log, so it must not be readable by other local users whatever the
+// process umask is. SQLite gives a new -wal/-shm the main file's mode;
+// ones left over from an earlier run are tightened here too. A failure is
+// left for sqlite3_open_v2 to report.
+void restrictToOwner(const std::filesystem::path& dbPath) {
+  constexpr mode_t kOwnerOnly = S_IRUSR | S_IWUSR;
+  const int fd = ::open(dbPath.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, kOwnerOnly);
+  if (fd >= 0) {
+    ::fchmod(fd, kOwnerOnly);
+    ::close(fd);
+  }
+  for (const char* suffix : {"-wal", "-shm"}) {
+    ::chmod((dbPath.string() + suffix).c_str(), kOwnerOnly);
+  }
+}
+
+}  // namespace
+
 void Database::openConnection() {
   closeConnection();
   if (path_.has_parent_path()) {
     std::filesystem::create_directories(path_.parent_path());
   }
+
+  restrictToOwner(path_);
 
   const int rc =
       sqlite3_open_v2(path_.string().c_str(), &db_, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,

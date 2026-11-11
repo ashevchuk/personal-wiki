@@ -35,6 +35,9 @@ binaries — check a running/built copy with `wiki-server --version` or
   instead of the full address, so rotating addresses inside one prefix no
   longer yields unlimited attempts, and they drop expired entries once they
   track 10,000 keys instead of growing without bound.
+- The index database file (and its `-wal`/`-shm` companions) is created with
+  mode `0600` and an existing one is tightened to it at startup, so other
+  local users can no longer read the admin password hash.
 
 ### Changed
 

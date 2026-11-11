@@ -2,6 +2,8 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <sys/stat.h>
+
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -176,4 +178,32 @@ TEST_CASE("a file that is not SQLite at all is quarantined and replaced, "
   REQUIRE_FALSE(recovered.adminRestored);
   REQUIRE(db.currentSchemaVersion() == Database::latestSchemaVersion());
   REQUIRE(countRows(db.handle(), "SELECT COUNT(*) FROM users") == 0);
+}
+
+TEST_CASE("the db file and its WAL are readable by the owner only", "[Database]") {
+  const auto mode = [](const fs::path& p) {
+    return static_cast<unsigned>(fs::status(p).permissions() & fs::perms::mask);
+  };
+  struct UmaskGuard {
+    mode_t previous = ::umask(022);
+    ~UmaskGuard() { ::umask(previous); }
+  } umaskGuard;
+
+  SECTION("a freshly created db") {
+    TempDb tmp;
+    Database db(tmp.path());
+    db.migrate();
+    REQUIRE(mode(tmp.path()) == 0600);
+    REQUIRE(mode(fs::path(tmp.path().string() + "-wal")) == 0600);
+  }
+  SECTION("a db left world-readable by an earlier version") {
+    TempDb tmp;
+    {
+      Database db(tmp.path());
+      db.migrate();
+    }
+    fs::permissions(tmp.path(), fs::perms(0644));
+    Database db(tmp.path());
+    REQUIRE(mode(tmp.path()) == 0600);
+  }
 }
