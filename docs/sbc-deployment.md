@@ -837,28 +837,32 @@ qemu-arm-static ./build-arm/tests/unit_tests   # must pass every case before shi
 
 # 2. ship the new binaries + static assets alongside the live ones (never
 #    overwrite in place — an scp that dies mid-transfer must not leave a
-#    half-written binary where systemd will find it on next restart)
-scp build-arm/wiki-server build-arm/wiki-mcp root@<target>:/tmp/
-scp -r static root@<target>:/tmp/static-new
+#    half-written binary where systemd will find it on next restart).
+#    Stage in a fresh private directory (mktemp -d, mode 0700), not under
+#    a fixed /tmp name another local user could have created first.
+STAGE=$(ssh root@<target> mktemp -d /tmp/wiki-deploy.XXXXXX)
+scp build-arm/wiki-server build-arm/wiki-mcp root@<target>:"$STAGE/"
+scp -r static root@<target>:"$STAGE/static-new"
 
 # 3. on the target: back up what's live, strip + swap the new files in, restart, verify
-ssh root@<target> '
+ssh root@<target> "
   set -e
-  STAMP=$(date +%Y%m%d-%H%M%S)
-  cp /opt/wiki/bin/wiki-server /opt/wiki/bin/wiki-server.bak-$STAMP
-  cp /opt/wiki/bin/wiki-mcp /opt/wiki/bin/wiki-mcp.bak-$STAMP
-  mv /opt/wiki/static /opt/wiki/static.bak-$STAMP
-  chmod +x /tmp/wiki-server /tmp/wiki-mcp
-  strip --strip-all /tmp/wiki-server /tmp/wiki-mcp
-  mv /tmp/wiki-server /opt/wiki/bin/wiki-server
-  mv /tmp/wiki-mcp /opt/wiki/bin/wiki-mcp
-  mv /tmp/static-new /opt/wiki/static
+  STAMP=\$(date +%Y%m%d-%H%M%S)
+  cp /opt/wiki/bin/wiki-server /opt/wiki/bin/wiki-server.bak-\$STAMP
+  cp /opt/wiki/bin/wiki-mcp /opt/wiki/bin/wiki-mcp.bak-\$STAMP
+  mv /opt/wiki/static /opt/wiki/static.bak-\$STAMP
+  chmod +x '$STAGE/wiki-server' '$STAGE/wiki-mcp'
+  strip --strip-all '$STAGE/wiki-server' '$STAGE/wiki-mcp'
+  mv '$STAGE/wiki-server' /opt/wiki/bin/wiki-server
+  mv '$STAGE/wiki-mcp' /opt/wiki/bin/wiki-mcp
+  mv '$STAGE/static-new' /opt/wiki/static
+  rmdir '$STAGE'
   chown -R wiki:wiki /opt/wiki/bin /opt/wiki/static
   systemctl restart wiki.service
   sleep 1
   systemctl is-active wiki.service
-  curl -s -o /dev/null -w "healthz: %{http_code}\n" http://127.0.0.1:8080/healthz
-'
+  curl -s -o /dev/null -w 'healthz: %{http_code}\n' http://127.0.0.1:8080/healthz
+"
 ```
 
 **Strip the binaries on the target device itself, never on the dev
@@ -896,22 +900,25 @@ tree over SSH instead:
 rm -rf /tmp/static-stage && cp -r static /tmp/static-stage
 tools/compress-static.sh /tmp/static-stage
 tar -czf static-deploy.tar.gz -C /tmp/static-stage .
-scp static-deploy.tar.gz root@<target>:/tmp/static-deploy.tar.gz
+STAGE=$(ssh root@<target> mktemp -d /tmp/wiki-deploy.XXXXXX)
+scp static-deploy.tar.gz root@<target>:"$STAGE/static-deploy.tar.gz"
 
 # 2. on the target: extract to a STAGING directory first, never straight
 #    over the live one — a tar that dies mid-extract must not leave a
-#    half-written static/ tree where the running server can see it.
-ssh root@<target> '
+#    half-written static/ tree where the running server can see it. The
+#    staging directory is the private one mktemp -d just created, not a
+#    fixed /tmp name another local user could have created first.
+ssh root@<target> "
   set -e
-  rm -rf /tmp/static-new && mkdir -p /tmp/static-new
-  tar -xzf /tmp/static-deploy.tar.gz -C /tmp/static-new
-  chown -R wiki:wiki /tmp/static-new
+  mkdir '$STAGE/static-new'
+  tar -xzf '$STAGE/static-deploy.tar.gz' -C '$STAGE/static-new'
+  chown -R wiki:wiki '$STAGE/static-new'
   cd /opt/wiki
   rm -rf static.old
-  mv static static.old && mv /tmp/static-new static
+  mv static static.old && mv '$STAGE/static-new' static
   systemctl restart wiki.service
-  rm -rf static.old /tmp/static-deploy.tar.gz
-'
+  rm -rf static.old '$STAGE'
+"
 ```
 
 **Never selectively `scp` "the files I changed."** A partial sync can

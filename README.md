@@ -164,7 +164,7 @@ cp config.example.toml config.toml
 ```
 
 The username you're prompted for isn't fixed to `admin` — it's whatever you
-type. There's still only ever one admin account; running `--create-admin`
+type. The password must be at least 12 characters. There's still only ever one admin account; running `--create-admin`
 again overwrites the username and password together, and that's also how
 you change either one later (there's no `config.toml` setting for it, since
 that would just be a second source of truth competing with the one already

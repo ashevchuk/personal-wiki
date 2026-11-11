@@ -58,6 +58,10 @@ code is built, just what you'll notice as someone using or running it.
   is the actual security boundary against malicious documents, not a
   bug. YouTube embeds and Mermaid diagrams are special-cased separately
   and do render.
+- **Links go to `http`, `https`, `mailto` and `tel` addresses, or to
+  relative paths inside the wiki.** A link with any other scheme
+  (`javascript:`, `data:`, `file:`, ...) renders as its text only, with
+  nothing to click.
 - **A `[[wiki-link]]` to a document that doesn't exist yet still
   works.** It shows as a "red" link now, and starts resolving
   automatically the moment a document is created at that path — no need
