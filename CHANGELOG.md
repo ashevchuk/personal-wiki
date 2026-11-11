@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-11
+
 ### Security
 
 - Markdown links only keep their target for `http`, `https`, `mailto` and
