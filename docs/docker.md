@@ -47,6 +47,17 @@ docker run -d --name wiki -p 8080:8080 -v "$PWD/vault_data:/data/vault" personal
 docker exec -it wiki wiki-server --create-admin
 ```
 
+**Don't expose the published port to an untrusted network as is.** The
+container speaks plain HTTP and, with `[tls]` off, trusts the
+`X-Real-IP`/`X-Forwarded-For` headers of whatever connects to it. That is
+right behind a reverse proxy that overwrites them
+([`docs/sbc-deployment.md`](sbc-deployment.md), "Reverse proxy"), and wrong
+for a client connecting to the port directly: it can claim any address,
+which defeats the login and remote-MCP rate limits and the remote-MCP IP
+allowlist. For anything beyond localhost, bind the port to loopback
+(`127.0.0.1:8080:8080`) and put such a proxy in front, or enable `[tls]`
+in `docker/config.docker.toml`.
+
 ## What's actually in the image
 
 It's a two-stage build (`Dockerfile`). A `debian:bookworm-slim` builder

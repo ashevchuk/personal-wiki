@@ -31,6 +31,10 @@ binaries — check a running/built copy with `wiki-server --version` or
 - New passwords (`wiki-server --create-admin`, the Account page) must be at
   least 12 characters. An existing shorter password keeps working until it
   is changed. Passwords over 1024 bytes are rejected without being hashed.
+- The login and remote-MCP rate limiters bucket an IPv6 client by its /64
+  instead of the full address, so rotating addresses inside one prefix no
+  longer yields unlimited attempts, and they drop expired entries once they
+  track 10,000 keys instead of growing without bound.
 
 ### Changed
 
