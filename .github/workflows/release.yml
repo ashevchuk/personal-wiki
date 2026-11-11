@@ -83,6 +83,11 @@ jobs:
 
   publish:
     needs: build
+    # A manual run (workflow_dispatch) starts from a branch, where
+    # GITHUB_REF_NAME is the branch name: publishing would create a
+    # release and a tag called e.g. "main". Such a run stops after the
+    # build jobs, which makes it a rehearsal of the whole matrix.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       # fetch-depth 0: tools/gen-release-notes.sh needs CHANGELOG.md's
