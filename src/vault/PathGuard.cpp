@@ -37,6 +37,28 @@ void requireVisiblePath(std::string_view requestedRelativePath) {
   }
 }
 
+bool isInsideAssetsFolder(std::string_view relativePath) {
+  constexpr std::string_view kSuffix = ".assets";
+  size_t segmentStart = 0;
+  while (true) {
+    const size_t slash = relativePath.find('/', segmentStart);
+    if (slash == std::string_view::npos) return false;
+    const std::string_view segment = relativePath.substr(segmentStart, slash - segmentStart);
+    if (segment.size() > kSuffix.size() &&
+        segment.substr(segment.size() - kSuffix.size()) == kSuffix) {
+      return true;
+    }
+    segmentStart = slash + 1;
+  }
+}
+
+void requireDocumentPath(std::string_view requestedRelativePath) {
+  requireVisiblePath(requestedRelativePath);
+  if (isInsideAssetsFolder(requestedRelativePath)) {
+    throw PathTraversalError(requestedRelativePath);
+  }
+}
+
 PathGuard::PathGuard(fs::path vaultRoot)
     : vaultRoot_(fs::canonical(std::move(vaultRoot))) {}
 

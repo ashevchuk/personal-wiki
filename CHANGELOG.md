@@ -19,6 +19,10 @@ binaries — check a running/built copy with `wiki-server --version` or
   agent tools). A soft-deleted public document is no longer readable under
   `.trash/`, and an MCP token can no longer read the index database or
   other internal files that live inside the vault directory.
+- A file inside a document's `.assets/` folder is never treated as a
+  document. A markdown attachment with its own `visibility: public` front
+  matter no longer shows up in search or under `/api/documents/` while its
+  owning document is private.
 
 ## [0.10.0] - 2026-11-06
 

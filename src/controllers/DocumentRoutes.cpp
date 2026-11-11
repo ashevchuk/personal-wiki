@@ -128,7 +128,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
                const std::string& docPath) {
         std::string raw;
         try {
-          requireVisiblePath(docPath);
+          requireDocumentPath(docPath);
           raw = vault.readRaw(docPath);
         } catch (const PathTraversalError&) {
           callback(notFound());
@@ -164,7 +164,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
                const std::string& docPath) {
         std::string raw;
         try {
-          requireVisiblePath(docPath);
+          requireDocumentPath(docPath);
           raw = vault.readRaw(docPath);
         } catch (const PathTraversalError&) {
           callback(notFound());
@@ -405,7 +405,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
           const std::string& docPath) {
         std::string raw;
         try {
-          requireVisiblePath(docPath);
+          requireDocumentPath(docPath);
           raw = vault.readRaw(docPath);
         } catch (const PathTraversalError&) {
           callback(notFound());

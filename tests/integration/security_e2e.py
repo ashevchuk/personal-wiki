@@ -811,6 +811,28 @@ def run_checks(sandbox, vault):
     status, _, _ = anon.get(f"/assets/{attach_path}")
     check("anon CANNOT fetch attachment of private doc", status == 404, f"got {status}")
 
+    # A markdown attachment carrying its own `visibility: public` front
+    # matter is still an attachment of a private document, not a document.
+    status, _, body = admin.upload(
+        "/api/attachments/notes/private.md", "smuggled.md",
+        b"---\ntitle: Smuggled\nvisibility: public\n---\nsmuggleprobe body\n",
+        headers={"X-CSRF-Token": csrf})
+    check("upload markdown attachment to private doc -> 201", status == 201, f"got {status}")
+    smuggled_path = json.loads(body)["path"]
+    time.sleep(1.0)  # VaultWatcher debounce
+    for who, client in (("anon", anon), ("admin", admin)):
+        status, _, _ = client.get(f"/api/documents/{smuggled_path}")
+        check(f"{who} cannot read a markdown attachment as a document",
+              status == 404, f"got {status}")
+        status, _, results = client.get_json("/api/search?q=smuggleprobe")
+        check(f"{who} search does not list a markdown attachment",
+              results["results"] == [], f"got {results!r}")
+    status, _, _ = anon.get(f"/assets/{smuggled_path}")
+    check("anon CANNOT fetch markdown attachment of private doc", status == 404, f"got {status}")
+    status, _, _ = admin.get(f"/assets/{smuggled_path}")
+    check("admin can still fetch the markdown attachment as an asset",
+          status == 200, f"got {status}")
+
     # Requesting the .assets DIRECTORY itself (not a file inside it) must
     # 404, not crash the server — newFileResponse()/sendfile() on a
     # directory fd is a Drogon FATAL, not a normal error path. The

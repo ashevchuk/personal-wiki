@@ -107,3 +107,41 @@ TEST_CASE("IndexBuilder::fullRescan sweeps a row whose file was deleted "
   REQUIRE(secondPass.documentsIndexed == 0);
   REQUIRE(secondPass.staleRowsRemoved == 1);
 }
+
+TEST_CASE("IndexBuilder never indexes a markdown file inside an attachments folder",
+          "[IndexBuilder]") {
+  TempEnv env;
+  env.writeFile("notes/priv.md", "---\ntitle: Priv\nvisibility: private\n---\nbody");
+  env.writeFile("notes/priv.assets/note.md",
+                "---\ntitle: Smuggled\nvisibility: public\n---\nattachment body");
+
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater updater(db);
+  vault::VaultRepository vault(env.vaultRoot());
+  index::IndexBuilder builder(vault, updater);
+
+  REQUIRE(builder.fullRescan().documentsIndexed == 1);
+  REQUIRE_FALSE(builder.reindexOneFile("notes/priv.assets/note.md"));
+  REQUIRE(updater.allIndexedPaths() == std::vector<std::string>{"notes/priv.md"});
+}
+
+TEST_CASE("IndexBuilder::fullRescan sweeps an attachment indexed by an older version",
+          "[IndexBuilder]") {
+  TempEnv env;
+  env.writeFile("notes/priv.assets/note.md", "---\nvisibility: public\n---\nattachment body");
+
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater updater(db);
+  index::DocumentIndexEntry stale;
+  stale.uuid = "11111111-1111-4111-8111-111111111111";
+  stale.path = "notes/priv.assets/note.md";
+  stale.visibility = "public";
+  updater.upsertOne(stale);
+
+  vault::VaultRepository vault(env.vaultRoot());
+  index::IndexBuilder builder(vault, updater);
+  REQUIRE(builder.fullRescan().staleRowsRemoved == 1);
+  REQUIRE(updater.allIndexedPaths().empty());
+}

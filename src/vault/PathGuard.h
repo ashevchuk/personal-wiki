@@ -60,4 +60,14 @@ class PathGuard {
 // internal areas are never addressable as documents, folders or assets.
 void requireVisiblePath(std::string_view requestedRelativePath);
 
+// True when the path lies inside a co-located `<doc-name>.assets/` folder.
+// Files there are attachments, gated by their owning document's
+// visibility; they are never documents themselves, whatever their
+// extension or content.
+[[nodiscard]] bool isInsideAssetsFolder(std::string_view relativePath);
+
+// requireVisiblePath plus: the path must not lie inside an attachments
+// folder. For every caller-supplied path that names a document.
+void requireDocumentPath(std::string_view requestedRelativePath);
+
 }  // namespace wikicore::vault

@@ -3,6 +3,7 @@
 #include "util/Excerpt.h"
 #include "util/Uuid.h"
 #include "vault/FrontMatter.h"
+#include "vault/PathGuard.h"
 
 #include <filesystem>
 #include <unordered_set>
@@ -21,6 +22,7 @@ bool isDotEntry(const fs::path& p) {
 }  // namespace
 
 bool IndexBuilder::reindexOneFile(const std::string& relativePath) {
+  if (vault::isInsideAssetsFolder(relativePath)) return false;
   std::string raw;
   try {
     raw = vault_.readRaw(relativePath);
@@ -96,7 +98,9 @@ RescanStats IndexBuilder::fullRescan(RescanProgress* progress) {
     if (entry.is_directory()) {
       // Skip .git/.trash/anything-dot entirely — don't even descend, so a
       // huge .git history doesn't get walked for nothing.
-      if (isDotEntry(entry.path())) it.disable_recursion_pending();
+      if (isDotEntry(entry.path()) || entry.path().extension() == ".assets") {
+        it.disable_recursion_pending();
+      }
       continue;
     }
     if (!entry.is_regular_file() || entry.path().extension() != ".md" ||

@@ -76,7 +76,7 @@ std::string rewriteAssetHrefs(std::string body, const std::string& oldPath,
 }  // namespace
 
 DocumentRecord DocumentService::get(const std::string& relativePath) const {
-  requireVisiblePath(relativePath);
+  requireDocumentPath(relativePath);
   std::string raw;
   try {
     raw = vault_.readRaw(relativePath);
@@ -93,7 +93,7 @@ DocumentRecord DocumentService::create(const std::string& relativePathIn,
   if (relativePath.empty()) {
     throw PathTraversalError(relativePathIn);
   }
-  requireVisiblePath(relativePath);
+  requireDocumentPath(relativePath);
   if (vault_.exists(relativePath)) {
     throw DocumentAlreadyExistsError(relativePath);
   }
@@ -115,7 +115,7 @@ DocumentRecord DocumentService::create(const std::string& relativePathIn,
 
 DocumentRecord DocumentService::update(const std::string& relativePath,
                                         const DocumentInput& input) {
-  requireVisiblePath(relativePath);
+  requireDocumentPath(relativePath);
   if (!vault_.exists(relativePath)) {
     throw DocumentNotFoundError(relativePath);
   }
@@ -164,8 +164,8 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
   if (oldPath.empty() || newPath.empty()) {
     throw InvalidDocumentMoveError("document path must not be empty");
   }
-  requireVisiblePath(oldPath);
-  requireVisiblePath(newPath);
+  requireDocumentPath(oldPath);
+  requireDocumentPath(newPath);
   if (oldPath == newPath) {
     return get(oldPath);
   }
@@ -243,7 +243,7 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
 }
 
 void DocumentService::softDelete(const std::string& relativePath) {
-  requireVisiblePath(relativePath);
+  requireDocumentPath(relativePath);
   if (!vault_.exists(relativePath)) {
     throw DocumentNotFoundError(relativePath);
   }

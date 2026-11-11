@@ -189,3 +189,15 @@ TEST_CASE("requireVisiblePath accepts ordinary paths, dots inside a name include
     REQUIRE_NOTHROW(requireVisiblePath(path));
   }
 }
+
+TEST_CASE("requireDocumentPath rejects paths inside an attachments folder", "[PathGuard]") {
+  using wikicore::vault::requireDocumentPath;
+  for (const char* path : {"notes/foo.assets/note.md", "foo.assets/a/b.md", ".trash/a.md"}) {
+    INFO(path);
+    REQUIRE_THROWS_AS(requireDocumentPath(path), PathTraversalError);
+  }
+  for (const char* path : {"notes/foo.md", "notes/foo.assets.md", "notes/assets/a.md"}) {
+    INFO(path);
+    REQUIRE_NOTHROW(requireDocumentPath(path));
+  }
+}
