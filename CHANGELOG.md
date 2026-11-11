@@ -48,6 +48,9 @@ binaries — check a running/built copy with `wiki-server --version` or
   now sets `client_max_body_size 100m` to match; an existing proxy config
   with `client_max_body_size 0` keeps working. Local `wiki-mcp`
   `attach_file` with `source_path` is not affected.
+- Attachment uploads (web UI and `/mcp/uploads/{id}`) no longer copy the
+  request body before writing it: peak server memory for an 80 MiB upload
+  drops from about 160 MiB to about 80 MiB above baseline.
 
 ## [0.10.0] - 2026-11-06
 

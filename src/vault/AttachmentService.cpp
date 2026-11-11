@@ -135,7 +135,7 @@ bool AttachmentService::isSafeToRenderInline(const std::string& extensionNoDot) 
 
 AttachmentInfo AttachmentService::store(const std::string& documentRelativePath,
                                          const std::string& originalFilename,
-                                         const std::string& content) {
+                                         std::string_view content) {
   requireVisiblePath(documentRelativePath);
   const PlannedDest dest = planDest(vault_, documentRelativePath, originalFilename);
   vault_.writeRawAtomic(dest.relativePath, content);

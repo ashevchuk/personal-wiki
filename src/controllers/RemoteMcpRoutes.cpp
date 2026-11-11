@@ -927,15 +927,16 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           return;
         }
 
-        std::string bytes;
+        std::string_view bytes;
         std::string filename = ticket->filename;
         std::string ct = req->getHeader("content-type");
         for (char& c : ct) {
           c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
         }
+        // Declared out here because `bytes` may point into its parsed files.
+        MultiPartParser parser;
         if (req->contentType() == CT_MULTIPART_FORM_DATA ||
             ct.find("multipart/form-data") != std::string::npos) {
-          MultiPartParser parser;
           if (parser.parse(req) != 0 || parser.getFiles().empty()) {
             Json::Value err;
             err["error"] = "expected exactly one uploaded file";
@@ -945,11 +946,10 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
             return;
           }
           const auto& file = parser.getFiles()[0];
-          bytes.assign(file.fileContent().data(), file.fileContent().size());
+          bytes = file.fileContent();
           if (!file.getFileName().empty()) filename = file.getFileName();
         } else {
-          const auto body = req->body();
-          bytes.assign(body.data(), body.size());
+          bytes = req->body();
         }
         if (bytes.empty()) {
           Json::Value err;

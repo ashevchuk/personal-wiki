@@ -467,7 +467,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
 
         try {
           const AttachmentInfo info = attachmentService.store(
-              docPath, file.getFileName(), std::string(file.fileContent()));
+              docPath, file.getFileName(), file.fileContent());
           Json::Value body;
           body["path"] = info.relativePath;
           body["mimeType"] = info.mimeType;

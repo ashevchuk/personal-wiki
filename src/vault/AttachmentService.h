@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -72,7 +73,7 @@ class AttachmentService {
   // std::string; this method just writes whatever it's given.
   AttachmentInfo store(const std::string& documentRelativePath,
                         const std::string& originalFilename,
-                        const std::string& content);
+                        std::string_view content);
 
   // Streamed copy of an already-on-disk file into the owning document's
   // assets folder (same sanitization / de-dupe as store()). `sourcePath`

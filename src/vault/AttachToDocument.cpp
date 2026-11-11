@@ -72,7 +72,7 @@ AttachedFile finishAttach(DocumentService& documents, AttachmentService& attachm
 AttachedFile attachFileAndLink(DocumentService& documents, AttachmentService& attachments,
                                 const std::string& documentPath,
                                 const std::string& originalFilename,
-                                const std::string& content) {
+                                std::string_view content) {
   // Existence check FIRST — AttachmentService::store derives the assets
   // folder from the path string and will happily write it even if no
   // document lives there. The HTTP upload route refuses that with 404;

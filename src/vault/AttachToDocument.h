@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace wikicore::vault {
 
@@ -34,7 +35,7 @@ struct AttachedFile {
 AttachedFile attachFileAndLink(DocumentService& documents, AttachmentService& attachments,
                                 const std::string& documentPath,
                                 const std::string& originalFilename,
-                                const std::string& content);
+                                std::string_view content);
 
 // Same as attachFileAndLink, but copies `sourcePath` from the host
 // filesystem (streamed, never loaded as a std::string). This is how a
