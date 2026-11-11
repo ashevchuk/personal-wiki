@@ -16,8 +16,8 @@ namespace {
 
 constexpr const char* kAgentSuffix = "/mcp/agent";
 
-// Splits "https://home.enslaver.net/wiki" into origin
-// ("https://home.enslaver.net") and path prefix ("/wiki") — httplib::Client
+// Splits "https://wiki.example.com/wiki" into origin
+// ("https://wiki.example.com") and path prefix ("/wiki") — httplib::Client
 // takes only the origin; the prefix is prepended to every request path.
 // Same split as the wiki repo's own CloudEmbeddingProvider.cpp::parseApiBase.
 struct ParsedServerUrl {

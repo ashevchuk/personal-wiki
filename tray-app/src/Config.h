@@ -5,7 +5,7 @@
 namespace wikitray {
 
 struct Config {
-  std::string serverUrl = "https://home.enslaver.net/wiki";
+  std::string serverUrl = "https://wiki.example.com/wiki";
   std::string token;
   std::string hotkey = "Ctrl+Alt+W";
 

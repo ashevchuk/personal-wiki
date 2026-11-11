@@ -86,7 +86,7 @@ void seedPreciousRows(Database& db) {
   exec(db.handle(),
        "INSERT INTO mcp_remote_config(id, enabled, write_enabled, token_hash) "
        "VALUES (1, 1, 1, 'mcp-token-hash-keep');");
-  exec(db.handle(), "INSERT INTO mcp_remote_allowed_cidrs(cidr) VALUES ('10.100.100.0/24');");
+  exec(db.handle(), "INSERT INTO mcp_remote_allowed_cidrs(cidr) VALUES ('192.0.2.0/24');");
   exec(db.handle(),
        "INSERT INTO embeddings_runtime_config(id, vector_search_enabled) VALUES (1, 0);");
   exec(db.handle(),
@@ -154,7 +154,7 @@ TEST_CASE("ensureUsable rebuilds a torn db and restores admin + remote MCP",
   REQUIRE(scalar(db.handle(), "SELECT csrf_token FROM sessions") == "csrf-keep");
   REQUIRE(scalar(db.handle(), "SELECT token_hash FROM mcp_remote_config WHERE id = 1") ==
           "mcp-token-hash-keep");
-  REQUIRE(scalar(db.handle(), "SELECT cidr FROM mcp_remote_allowed_cidrs") == "10.100.100.0/24");
+  REQUIRE(scalar(db.handle(), "SELECT cidr FROM mcp_remote_allowed_cidrs") == "192.0.2.0/24");
   REQUIRE(scalar(db.handle(),
                  "SELECT vector_search_enabled FROM embeddings_runtime_config WHERE id = 1") ==
           "0");

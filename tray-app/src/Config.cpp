@@ -23,7 +23,7 @@ std::filesystem::path configDir() {
 void writeDefaultConfig(const std::filesystem::path& path) {
   std::ofstream out(path);
   out << "[server]\n"
-         "url = \"https://home.enslaver.net/wiki\"\n"
+         "url = \"https://wiki.example.com/wiki\"\n"
          "\n"
          "[auth]\n"
          "token = \"\"\n"
