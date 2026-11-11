@@ -234,6 +234,24 @@ copy_to_target() {
   run cp -r "$local_path" "$remote_path"
 }
 
+# remote_tmpdir — prints a fresh private directory (mktemp -d, mode 0700)
+# on the target. Everything that is uploaded and then `sudo mv`-ed or
+# `sudo chown`-ed into place is staged there, never under a fixed /tmp
+# name: another local user could pre-create or symlink a predictable path
+# and have root move their content into the install tree.
+remote_tmpdir() {
+  if [ "$DRY_RUN" = 1 ]; then
+    printf '/tmp/wiki-ops.DRYRUN'
+    return 0
+  fi
+  local dir
+  dir=$(remote_sh_capture 'mktemp -d /tmp/wiki-ops.XXXXXX') || die "mktemp -d failed on the target"
+  case "$dir" in
+    /tmp/wiki-ops.??????) printf '%s' "$dir" ;;
+    *) die "unexpected mktemp -d output on the target: '$dir'" ;;
+  esac
+}
+
 # ============================================================
 # SECTION: build — native / cross / container / cross-container /
 # container-arm / container-native
@@ -849,26 +867,29 @@ cmd_backup_timer_install() {
   local install_root=$1
   ensure_remote_user "$WIKI_DEPLOY_SERVICE_USER" "$install_root"
 
-  remote_sh "sudo mkdir -p '$install_root/bin'"
-  copy_to_target systemd/wiki-backup.sh /tmp/wiki-backup.sh
-  remote_sh "sudo mv /tmp/wiki-backup.sh '$install_root/bin/wiki-backup.sh' && sudo chown '$WIKI_DEPLOY_SERVICE_USER':'$WIKI_DEPLOY_SERVICE_USER' '$install_root/bin/wiki-backup.sh' && sudo chmod +x '$install_root/bin/wiki-backup.sh'"
+  local stage
+  stage=$(remote_tmpdir)
 
-  copy_to_target systemd/wiki-backup.service /tmp/wiki-backup.service
-  copy_to_target systemd/wiki-backup.timer /tmp/wiki-backup.timer
+  remote_sh "sudo mkdir -p '$install_root/bin'"
+  copy_to_target systemd/wiki-backup.sh "$stage/wiki-backup.sh"
+  remote_sh "sudo mv '$stage'/wiki-backup.sh '$install_root/bin/wiki-backup.sh' && sudo chown '$WIKI_DEPLOY_SERVICE_USER':'$WIKI_DEPLOY_SERVICE_USER' '$install_root/bin/wiki-backup.sh' && sudo chmod +x '$install_root/bin/wiki-backup.sh'"
+
+  copy_to_target systemd/wiki-backup.service "$stage/wiki-backup.service"
+  copy_to_target systemd/wiki-backup.timer "$stage/wiki-backup.timer"
   # Same /opt/wiki hardcoding as wiki.service (ExecStart, ReadOnlyPaths)
   # — see cmd_systemd_install's own comment on why a plain `mv` here is
   # wrong for any install_root other than the documented default, and on
   # why this is anchored to "=/opt/wiki" rather than a bare "/opt/wiki":
   # wiki-backup.service's own EnvironmentFile=-/etc/opt/wiki/wiki-backup.env
   # contains that same substring and must NOT track a custom install root.
-  remote_sh "sed -i 's|=/opt/wiki|=$install_root|g' /tmp/wiki-backup.service && sudo mv /tmp/wiki-backup.service /etc/systemd/system/wiki-backup.service && sudo mv /tmp/wiki-backup.timer /etc/systemd/system/wiki-backup.timer"
+  remote_sh "sed -i 's|=/opt/wiki|=$install_root|g' '$stage'/wiki-backup.service && sudo mv '$stage'/wiki-backup.service /etc/systemd/system/wiki-backup.service && sudo mv '$stage'/wiki-backup.timer /etc/systemd/system/wiki-backup.timer"
 
   local has_env
   has_env=$(remote_sh_capture "[ -f /etc/opt/wiki/wiki-backup.env ] && echo yes || echo no")
   if [ "$has_env" = no ]; then
     remote_sh "sudo mkdir -p /etc/opt/wiki"
-    copy_to_target systemd/wiki-backup.env.example /tmp/wiki-backup.env.example
-    remote_sh "sudo mv /tmp/wiki-backup.env.example /etc/opt/wiki/wiki-backup.env && sudo sed -i 's|^VAULT_PATH=.*|VAULT_PATH=$install_root/vault_data|' /etc/opt/wiki/wiki-backup.env"
+    copy_to_target systemd/wiki-backup.env.example "$stage/wiki-backup.env.example"
+    remote_sh "sudo mv '$stage'/wiki-backup.env.example /etc/opt/wiki/wiki-backup.env && sudo sed -i 's|^VAULT_PATH=.*|VAULT_PATH=$install_root/vault_data|' /etc/opt/wiki/wiki-backup.env"
     local backup_dir
     resolve_optional backup_dir "" "${WIKI_DEPLOY_BACKUP_DIR:-}" "" "BACKUP_DIR (a DIFFERENT disk/mount than the vault; blank = edit it yourself later)"
     if [ -n "$backup_dir" ]; then
@@ -878,6 +899,7 @@ cmd_backup_timer_install() {
     fi
   fi
 
+  remote_sh "rm -rf '$stage'"
   remote_sh "sudo systemctl daemon-reload && sudo systemctl enable --now wiki-backup.timer"
 }
 
@@ -1062,21 +1084,22 @@ cmd_static_redeploy() {
     container|container-arm|container-release)
       die "static-redeploy assumes a binary install — '$variant' serves static/ from inside the image; rebuild ('build $variant') and 'deploy --variant=$variant' again instead" ;;
   esac
-  local tmp_static tmp_tar remote_tar
+  local tmp_static tmp_tar remote_tar stage
   tmp_static=$(mktemp -d /tmp/wiki-static-stage-XXXXXX)
   cp -r static/. "$tmp_static/"
   "$SCRIPT_DIR/tools/compress-static.sh" "$tmp_static"
   tmp_tar=$(mktemp /tmp/wiki-static-XXXXXX.tar.gz)
   run tar -czf "$tmp_tar" -C "$tmp_static" .
-  remote_tar="/tmp/$(basename "$tmp_tar")"
+  stage=$(remote_tmpdir)
+  remote_tar="$stage/static.tar.gz"
   copy_to_target "$tmp_tar" "$remote_tar"
 
-  remote_sh "rm -rf /tmp/static-new && mkdir -p /tmp/static-new && \
-tar -xzf '$remote_tar' -C /tmp/static-new && \
-sudo chown -R '$WIKI_DEPLOY_SERVICE_USER':'$WIKI_DEPLOY_SERVICE_USER' /tmp/static-new && \
-cd '$install_root' && sudo rm -rf static.old && sudo mv static static.old && sudo mv /tmp/static-new static && \
+  remote_sh "mkdir '$stage/static-new' && \
+tar -xzf '$remote_tar' -C '$stage/static-new' && \
+sudo chown -R '$WIKI_DEPLOY_SERVICE_USER':'$WIKI_DEPLOY_SERVICE_USER' '$stage/static-new' && \
+cd '$install_root' && sudo rm -rf static.old && sudo mv static static.old && sudo mv '$stage/static-new' static && \
 sudo systemctl restart wiki.service && \
-sudo rm -rf static.old '$remote_tar'"
+sudo rm -rf static.old '$stage'"
 
   if [ "$DRY_RUN" != 1 ]; then
     verify_static_md5 "$install_root" "$tmp_static"
@@ -1176,8 +1199,9 @@ deploy_swap_tree() {
 
   ensure_remote_user "$user" "$install_root"
 
-  local remote_staging="/tmp/wiki-ops-deploy-$$"
-  remote_sh "rm -rf '$remote_staging'"
+  local stage remote_staging
+  stage=$(remote_tmpdir)
+  remote_staging="$stage/tree"
   copy_to_target "$staging" "$remote_staging"
 
   local strip_cmd=""
@@ -1211,7 +1235,7 @@ sudo mkdir -p '$install_root/share/wiki/systemd'; \
 sudo cp '$remote_staging'/share/wiki/systemd/* '$install_root/share/wiki/systemd/'; \
 sudo mkdir -p '$install_root/vault_data'; \
 sudo chown -R '$user':'$user' '$install_root'; \
-rm -rf '$remote_staging'"
+sudo rm -rf '$stage'"
 }
 
 # cmd_deploy_container VARIANT INSTALL_ROOT HOST_PORT PLATFORM — PLATFORM is
@@ -1264,15 +1288,18 @@ cmd_deploy_container() {
   # target, same as every other deploy path's staging dance (see
   # deploy_swap_tree) — a non-root SSH login user's scp would otherwise
   # fail outright with "Permission denied" before docker ever runs.
-  copy_to_target docker-compose.yml /tmp/wiki-docker-compose.yml
-  remote_sh "sudo mkdir -p '$install_root' && sudo mv /tmp/wiki-docker-compose.yml '$install_root/docker-compose.yml'"
+  local stage
+  stage=$(remote_tmpdir)
+  copy_to_target docker-compose.yml "$stage/docker-compose.yml"
+  remote_sh "sudo mkdir -p '$install_root' && sudo mv '$stage/docker-compose.yml' '$install_root/docker-compose.yml'"
   if [ "$variant" = container-arm ]; then
-    copy_to_target docker-compose.arm.yml /tmp/wiki-docker-compose.arm.yml
-    remote_sh "sudo mv /tmp/wiki-docker-compose.arm.yml '$install_root/docker-compose.arm.yml'"
+    copy_to_target docker-compose.arm.yml "$stage/docker-compose.arm.yml"
+    remote_sh "sudo mv '$stage/docker-compose.arm.yml' '$install_root/docker-compose.arm.yml'"
   elif [ "$variant" = container-release ]; then
-    copy_to_target docker-compose.release.yml /tmp/wiki-docker-compose.release.yml
-    remote_sh "sudo mv /tmp/wiki-docker-compose.release.yml '$install_root/docker-compose.release.yml'"
+    copy_to_target docker-compose.release.yml "$stage/docker-compose.release.yml"
+    remote_sh "sudo mv '$stage/docker-compose.release.yml' '$install_root/docker-compose.release.yml'"
   fi
+  remote_sh "rm -rf '$stage'"
   local compose_flags="-f docker-compose.yml"
   case "$variant" in
     container-arm) compose_flags="-f docker-compose.yml -f docker-compose.arm.yml" ;;
