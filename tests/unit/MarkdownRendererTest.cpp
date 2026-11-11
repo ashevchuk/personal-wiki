@@ -131,3 +131,59 @@ TEST_CASE("renderMarkdownToHtml: a ```circuit block containing characters md4c "
   REQUIRE(html.find("data-circuit-xml=\"&lt;r x=&quot;1 &amp; 2&quot;/&gt;") !=
           std::string::npos);
 }
+
+TEST_CASE("renderMarkdownToHtml: links with a script-capable scheme lose their href",
+          "[MarkdownRenderer]") {
+  const char* const payloads[] = {
+      "[x](javascript:alert(1))",
+      "[x](JaVaScRiPt:alert(1))",
+      "<javascript:alert(1)>",
+      "[x](data:text/html,<script>alert(1)</script>)",
+      "[x](vbscript:msgbox)",
+      "[x](javascript&colon;alert(1))",
+      "[x](javascript&#58;alert(1))",
+      "[x](&#106;avascript:alert(1))",
+      "[x](<java\tscript:alert(1)>)",
+      "[x](<\x01javascript:alert(1)>)",
+      "[x](file:///etc/passwd)",
+      "[x]( javascript:alert(1))",
+      "[x](javascript:alert(1) \"title\")",
+      "[x]: javascript:alert(1)\n\n[x]",
+  };
+  for (const char* payload : payloads) {
+    INFO(payload);
+    const std::string html = renderMarkdownToHtml(payload);
+    INFO(html);
+    REQUIRE(html.find("href=") == std::string::npos);
+  }
+}
+
+TEST_CASE("renderMarkdownToHtml: a rejected link keeps its text", "[MarkdownRenderer]") {
+  const std::string html = renderMarkdownToHtml("[click me](javascript:alert(1))");
+  REQUIRE(html.find("<a>click me</a>") != std::string::npos);
+}
+
+TEST_CASE("renderMarkdownToHtml: ordinary links keep their href", "[MarkdownRenderer]") {
+  const std::pair<const char*, const char*> cases[] = {
+      {"[x](https://example.com/a?b=1&c=2#d)", "href=\"https://example.com/a?b=1&amp;c=2#d\""},
+      {"[x](http://example.com)", "href=\"http://example.com\""},
+      {"[x](HTTPS://EXAMPLE.COM)", "href=\"HTTPS://EXAMPLE.COM\""},
+      {"[x](mailto:a@example.com)", "href=\"mailto:a@example.com\""},
+      {"[x](tel:+123456)", "href=\"tel:+123456\""},
+      {"[x](d/notes/foo.md)", "href=\"d/notes/foo.md\""},
+      {"[x](assets/notes/foo.assets/a.pdf)", "href=\"assets/notes/foo.assets/a.pdf\""},
+      {"[x](#section)", "href=\"#section\""},
+      {"[x](/absolute/path)", "href=\"/absolute/path\""},
+      {"[x](notes/a:b.md)", "href=\"notes/a:b.md\""},
+      {"[x](?q=a:b)", "href=\"?q=a:b\""},
+      {"https://example.com/auto", "href=\"https://example.com/auto\""},
+      {"www.example.com", "href=\"http://www.example.com\""},
+      {"someone@example.com", "href=\"mailto:someone@example.com\""},
+  };
+  for (const auto& [markdown, expected] : cases) {
+    INFO(markdown);
+    const std::string html = renderMarkdownToHtml(markdown);
+    INFO(html);
+    REQUIRE(html.find(expected) != std::string::npos);
+  }
+}

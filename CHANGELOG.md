@@ -8,6 +8,13 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Security
+
+- Markdown links only keep their target for `http`, `https`, `mailto` and
+  `tel` URLs and for relative links. A link with any other scheme
+  (`javascript:`, `data:`, ...) renders as plain text, so a document body can
+  no longer run script in the reader's session when a link is clicked.
+
 ## [0.10.0] - 2026-11-06
 
 ### Added

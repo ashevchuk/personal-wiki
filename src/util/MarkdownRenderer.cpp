@@ -4,7 +4,9 @@
 
 #include <md4c-html.h>
 
+#include <cctype>
 #include <stdexcept>
+#include <string_view>
 
 namespace wikicore::util {
 
@@ -273,6 +275,60 @@ std::string substituteCircuitBlocks(std::string html) {
   return out;
 }
 
+bool isAllowedLinkScheme(std::string_view scheme) {
+  return scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "tel";
+}
+
+// `href` is the attribute value exactly as md4c wrote it (still
+// HTML-escaped). Relative URLs and fragments are fine; anything with a
+// scheme must be on the allowlist. Browsers skip leading control bytes and
+// embedded tab/CR/LF when parsing a scheme, and decode character references
+// in attribute values first, so both are treated as hostile here rather than
+// matched literally.
+bool isSafeLinkHref(std::string_view href) {
+  size_t start = 0;
+  while (start < href.size() && static_cast<unsigned char>(href[start]) <= 0x20) ++start;
+  href.remove_prefix(start);
+
+  const size_t schemeEnd = href.find_first_of(":/?#");
+  const std::string_view head = href.substr(0, schemeEnd);
+  if (head.find('&') != std::string_view::npos) return false;
+  if (schemeEnd == std::string_view::npos || href[schemeEnd] != ':') return true;
+
+  std::string scheme;
+  for (char c : head) {
+    if (c == '\t' || c == '\r' || c == '\n') continue;
+    scheme.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+  }
+  return isAllowedLinkScheme(scheme);
+}
+
+// md4c escapes a link URL but accepts any scheme, and the page's CSP allows
+// inline script, so `[x](javascript:...)` would run in the reader's session
+// on click. Links with a scheme outside the allowlist keep their text and
+// lose their href. Only `<a href>` is touched: document text can never
+// produce that literal (md4c escapes it), and `<img src>` carries the
+// internal youtube-embed marker.
+std::string stripUnsafeLinkHrefs(std::string html) {
+  constexpr std::string_view kOpen = "<a href=\"";
+  constexpr std::string_view kAttr = " href=\"";
+  size_t pos = 0;
+  while ((pos = html.find(kOpen, pos)) != std::string::npos) {
+    const size_t valueStart = pos + kOpen.size();
+    const size_t valueEnd = html.find('"', valueStart);
+    if (valueEnd == std::string::npos) break;
+    const std::string_view href(html.data() + valueStart, valueEnd - valueStart);
+    if (isSafeLinkHref(href)) {
+      pos = valueEnd + 1;
+      continue;
+    }
+    const size_t attrStart = valueStart - kAttr.size();
+    html.erase(attrStart, valueEnd + 1 - attrStart);
+    pos = attrStart;
+  }
+  return html;
+}
+
 }  // namespace
 
 std::string renderMarkdownToHtml(std::string_view markdown) {
@@ -296,8 +352,8 @@ std::string renderMarkdownToHtml(std::string_view markdown) {
   if (rc != 0) {
     throw std::runtime_error("markdown rendering failed");
   }
-  return substituteCircuitBlocks(substituteQueryBlocks(
-      substituteMermaidBlocks(substituteYouTubeEmbeds(std::move(html)))));
+  return substituteCircuitBlocks(substituteQueryBlocks(substituteMermaidBlocks(
+      substituteYouTubeEmbeds(stripUnsafeLinkHrefs(std::move(html))))));
 }
 
 }  // namespace wikicore::util
