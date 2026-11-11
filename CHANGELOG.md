@@ -26,6 +26,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 - Remote MCP (`POST /mcp`, `POST /mcp/agent`) checks the IP allowlist before
   the bearer token. A caller outside the allowlist gets `403` whether or not
   its token is valid, and the token's "last used" time is not updated.
+- The CSRF token is accepted only in the `X-CSRF-Token` header, no longer
+  as a `csrf_token` request parameter.
 
 ## [0.10.0] - 2026-11-06
 

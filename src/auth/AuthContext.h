@@ -22,12 +22,8 @@ inline constexpr const char* kCsrfCookieName = "wiki_csrf_token";
 inline constexpr const char* kAttrUserId = "auth.userId";
 inline constexpr const char* kAttrCsrfToken = "auth.csrfToken";
 
-// Where CsrfFilter looks for the token on a mutating request: this header
-// first (every mutating request in this app now — the frontend is a pure
-// JSON API client, see docs/architecture.md), falling back to a
-// "csrf_token" form field that nothing currently sends but costs nothing
-// to keep honoring.
+// Where CsrfFilter looks for the token on a mutating request (the
+// frontend is a pure JSON API client, see docs/architecture.md).
 inline constexpr const char* kCsrfHeaderName = "X-CSRF-Token";
-inline constexpr const char* kCsrfFormField = "csrf_token";
 
 }  // namespace wikicore::auth

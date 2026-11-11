@@ -10,8 +10,8 @@ namespace wikicore::auth {
 // request carries no valid session at all, this filter passes it through
 // unchanged: that's an authentication failure, which is each handler's
 // own concern, not this filter's. If a valid session exists, the
-// submitted token (X-CSRF-Token header, falling back to a csrf_token form
-// field) must match the session's csrf_token or the request is rejected
+// submitted token (X-CSRF-Token header only — a request parameter would
+// put it in URLs, logs and Referer) must match the session's csrf_token or the request is rejected
 // with 403 before the handler ever runs.
 class CsrfFilter : public drogon::HttpFilter<CsrfFilter> {
  public:

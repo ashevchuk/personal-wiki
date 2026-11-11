@@ -351,6 +351,10 @@ def run_checks(sandbox, vault):
     # --- 4. CSRF enforcement ---------------------------------------------
     status, _, _ = admin.put_json("/api/documents/nope.md", {"title": "x", "body": "y"})
     check("mutating request without csrf header -> 403", status == 403, f"got {status}")
+    status, _, _ = admin.put_json(f"/api/documents/nope.md?csrf_token={csrf}",
+                                   {"title": "x", "body": "y"})
+    check("csrf token in the query string instead of the header -> 403",
+          status == 403, f"got {status}")
     status, _, _ = admin.post_json("/api/documents/move", {"oldPath": "x.md", "newPath": "y.md"})
     check("document move without csrf header -> 403", status == 403, f"got {status}")
     status, _, _ = admin.post_json("/api/documents/parse-import", {"content": "x"})

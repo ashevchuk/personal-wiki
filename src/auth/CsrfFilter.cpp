@@ -40,10 +40,7 @@ void CsrfFilter::doFilter(const HttpRequestPtr& req, FilterCallback&& fcb,
     return;
   }
 
-  std::string submitted = req->getHeader(kCsrfHeaderName);
-  if (submitted.empty()) {
-    submitted = req->getParameter(kCsrfFormField);
-  }
+  const std::string& submitted = req->getHeader(kCsrfHeaderName);
 
   if (!constantTimeEquals(submitted, info->csrfToken)) {
     auto resp = HttpResponse::newHttpResponse();
