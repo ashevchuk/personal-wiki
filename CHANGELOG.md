@@ -23,6 +23,9 @@ binaries — check a running/built copy with `wiki-server --version` or
   document. A markdown attachment with its own `visibility: public` front
   matter no longer shows up in search or under `/api/documents/` while its
   owning document is private.
+- Remote MCP (`POST /mcp`, `POST /mcp/agent`) checks the IP allowlist before
+  the bearer token. A caller outside the allowlist gets `403` whether or not
+  its token is valid, and the token's "last used" time is not updated.
 
 ## [0.10.0] - 2026-11-06
 

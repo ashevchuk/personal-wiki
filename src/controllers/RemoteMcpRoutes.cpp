@@ -749,11 +749,17 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           return;
         }
 
-        // Bearer token -- checked before the IP allowlist so a caller
-        // with neither gets the same 401 a caller with a merely-wrong
-        // IP but a right token would NOT get (403) — the token is the
-        // primary gate, the allowlist is the optional extra layer (see
-        // McpRemoteConfig.h).
+        // IP allowlist before the token: an address outside it gets 403
+        // whether or not its token is valid, so the status code cannot be
+        // used to confirm a stolen token from elsewhere, and such a
+        // request never touches the token's last_used_at.
+        if (!remoteConfig.isIpAllowed(ip)) {
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k403Forbidden);
+          callback(resp);
+          return;
+        }
+
         const std::string authHeader = req->getHeader("Authorization");
         constexpr std::string_view kBearerPrefix = "Bearer ";
         const bool hasBearer = authHeader.size() > kBearerPrefix.size() &&
@@ -769,13 +775,6 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           return;
         }
         rateLimiter.recordSuccess(ip);
-
-        if (!remoteConfig.isIpAllowed(ip)) {
-          auto resp = HttpResponse::newHttpResponse();
-          resp->setStatusCode(k403Forbidden);
-          callback(resp);
-          return;
-        }
 
         auto json = req->getJsonObject();
         if (!json || !json->isObject() || !json->isMember("method")) {

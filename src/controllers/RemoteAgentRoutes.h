@@ -27,8 +27,8 @@ namespace wikicore::controllers {
 // the already-required global writeEnabled — a token scoped to ordinary
 // deterministic CRUD does not automatically get this.
 //
-// Same gating order as POST /mcp (feature enabled -> rate limit -> bearer
-// token -> IP allowlist), then: global writeEnabled, then the matched
+// Same gating order as POST /mcp (feature enabled -> rate limit -> IP
+// allowlist -> bearer token), then: global writeEnabled, then the matched
 // token's own agentAccess bit (403 on either — permission checked before
 // server state, so a token without agentAccess never learns whether an
 // LLM even happens to be configured), then finally whether an LLM is

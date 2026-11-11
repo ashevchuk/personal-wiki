@@ -246,6 +246,8 @@ able to toggle this without restarting the server:
   replacement for it. Leaving it empty means no IP restriction at all. It
   accepts IPv4 and IPv6, either as a CIDR range or a bare address
   (treated as `/32` or `/128` respectively) — see `src/auth/CidrMatch.h`.
+  It is checked before the token: a caller outside the list gets `403`
+  whether or not its token is valid.
 
 **This requires TLS somewhere in front of the app.** That can be either
 a reverse proxy (see [`docs/sbc-deployment.md`](sbc-deployment.md)'s
@@ -333,7 +335,7 @@ with that answer appended as a `user` turn — the server has no memory of
 its own between calls.
 
 **This is gated on top of, not instead of, everything `POST /mcp` already
-requires** (enabled, rate limit, bearer token, IP allowlist, write access) —
+requires** (enabled, rate limit, IP allowlist, bearer token, write access) —
 plus a second, token-specific opt-in: each token's own **Agent access**
 checkbox on the Account page (default off, independent of a token already
 having ordinary create/update/attach access). The reasoning: naming a tool

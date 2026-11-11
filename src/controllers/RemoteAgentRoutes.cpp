@@ -55,6 +55,14 @@ void registerRemoteAgentRoutes(HttpAppFramework& app, McpRemoteConfig& remoteCon
           return;
         }
 
+        // Before the token, same reasoning as POST /mcp.
+        if (!remoteConfig.isIpAllowed(ip)) {
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k403Forbidden);
+          callback(resp);
+          return;
+        }
+
         const std::string authHeader = req->getHeader("Authorization");
         constexpr std::string_view kBearerPrefix = "Bearer ";
         const bool hasBearer = authHeader.size() > kBearerPrefix.size() &&
@@ -70,13 +78,6 @@ void registerRemoteAgentRoutes(HttpAppFramework& app, McpRemoteConfig& remoteCon
           return;
         }
         rateLimiter.recordSuccess(ip);
-
-        if (!remoteConfig.isIpAllowed(ip)) {
-          auto resp = HttpResponse::newHttpResponse();
-          resp->setStatusCode(k403Forbidden);
-          callback(resp);
-          return;
-        }
 
         // Past this point the caller has already proven a valid
         // credential, so "not available" gets a real status/message

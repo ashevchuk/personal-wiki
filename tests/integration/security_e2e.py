@@ -889,6 +889,30 @@ def run_checks(sandbox, vault):
     check("enable remote MCP writes -> 200", status == 200, f"got {status}")
 
     mcp_auth = {"Authorization": f"Bearer {mcp_token}"}
+
+    # IP allowlist is checked before the token: from outside it, a valid
+    # and an invalid token are indistinguishable and neither is "used".
+    def token_last_used():
+        _, _, listing = admin.get_json("/api/admin/mcp-remote-config/tokens")
+        return next(t["lastUsedAt"] for t in listing["tokens"] if t["id"] == mcp_token_id)
+
+    last_used_before = token_last_used()
+    status, _, _ = admin.post_json("/api/admin/mcp-remote-config/allowed-cidrs",
+                                    {"cidr": "203.0.113.0/24"}, headers={"X-CSRF-Token": csrf})
+    check("add an allowlist entry that excludes this client -> 200", status == 200, f"got {status}")
+    ping = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+    for label, hdrs in (("valid", mcp_auth), ("invalid", {"Authorization": "Bearer " + "0" * 64})):
+        for route in ("/mcp", "/mcp/agent"):
+            status, _, _ = anon.post_json(route, ping, headers=hdrs)
+            check(f"{route} from outside the allowlist with a {label} token -> 403",
+                  status == 403, f"got {status}")
+    check("token last_used_at untouched by requests from outside the allowlist",
+          token_last_used() == last_used_before,
+          f"before={last_used_before!r} after={token_last_used()!r}")
+    status, _, _ = admin.delete(
+        "/api/admin/mcp-remote-config/allowed-cidrs?cidr=203.0.113.0/24",
+        headers={"X-CSRF-Token": csrf})
+    check("remove the allowlist entry -> 200", status == 200, f"got {status}")
     status, _, body = admin.post_json(
         "/mcp",
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -974,8 +998,8 @@ def run_checks(sandbox, vault):
     #     authorized call still can't actually run the LLM -- that's the
     #     503 branch, which is exactly as far as this test can verify
     #     without a real API key, and it's enough to prove the whole
-    #     auth/gating chain (enabled -> rate limit -> token -> IP
-    #     allowlist -> LLM-configured -> writeEnabled -> agentAccess) ran
+    #     auth/gating chain (enabled -> rate limit -> IP
+    #     allowlist -> token -> LLM-configured -> writeEnabled -> agentAccess) ran
     #     to completion rather than rejecting earlier for the wrong reason.
     status, _, body = admin.post_json(
         "/mcp/agent", {"messages": [{"role": "user", "content": "hi"}]}, headers=mcp_auth)
