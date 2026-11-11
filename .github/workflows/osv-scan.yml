@@ -26,7 +26,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Same FULL-clone reasoning as ci.yml/codeql.yml's own comment --
       # builtin-baseline resolution needs real history, not a shallow tip.
@@ -37,7 +37,7 @@ jobs:
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
       - name: Cache vcpkg installed packages
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: build/vcpkg_installed
           key: vcpkg-installed-${{ runner.os }}-${{ hashFiles('vcpkg.json') }}
