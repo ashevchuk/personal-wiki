@@ -28,6 +28,9 @@ binaries — check a running/built copy with `wiki-server --version` or
   its token is valid, and the token's "last used" time is not updated.
 - The CSRF token is accepted only in the `X-CSRF-Token` header, no longer
   as a `csrf_token` request parameter.
+- New passwords (`wiki-server --create-admin`, the Account page) must be at
+  least 12 characters. An existing shorter password keeps working until it
+  is changed. Passwords over 1024 bytes are rejected without being hashed.
 
 ## [0.10.0] - 2026-11-06
 

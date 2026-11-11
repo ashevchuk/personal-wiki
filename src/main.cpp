@@ -104,8 +104,9 @@ int runCreateAdmin(wikicore::index::Database& db) {
     std::cerr << "passwords did not match\n";
     return 1;
   }
-  if (password.empty()) {
-    std::cerr << "password must not be empty\n";
+  if (const std::string problem = wikicore::auth::newPasswordProblem(password);
+      !problem.empty()) {
+    std::cerr << problem << "\n";
     return 1;
   }
 

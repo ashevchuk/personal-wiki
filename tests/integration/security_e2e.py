@@ -1127,6 +1127,24 @@ def run_checks(sandbox, vault):
         "/api/account/password", {"currentPassword": "WRONG", "newPassword": "NewSecret456"},
         headers={"X-CSRF-Token": csrf})
     check("password change with wrong current password -> 401", status == 401, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/account/password", {"currentPassword": "SuperSecret123", "newPassword": "Short12345!"},
+        headers={"X-CSRF-Token": csrf})
+    check("password change to an 11-character password -> 400", status == 400, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/account/password",
+        {"currentPassword": "SuperSecret123", "newPassword": "x" * 1025},
+        headers={"X-CSRF-Token": csrf})
+    check("password change to a 1025-byte password -> 400", status == 400, f"got {status}")
+    status, _, _ = admin.post_json(
+        "/api/account/password",
+        {"currentPassword": "x" * 1025, "newPassword": "NewSecret456"},
+        headers={"X-CSRF-Token": csrf})
+    check("password change with a 1025-byte current password -> 400",
+          status == 400, f"got {status}")
+    status, _, _ = Client(HOST, PORT).post_json(
+        "/api/login", {"username": "admin", "password": "x" * 1025})
+    check("login with a 1025-byte password -> 400", status == 400, f"got {status}")
 
     status, _, _ = admin.post_json(
         "/api/account/password", {"currentPassword": "SuperSecret123", "newPassword": "NewSecret456"},

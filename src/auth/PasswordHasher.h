@@ -1,8 +1,21 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 namespace wikicore::auth {
+
+// Minimum for a NEW password, in characters (UTF-8 code points). Existing
+// shorter passwords keep working until they are changed.
+inline constexpr size_t kMinPasswordLength = 12;
+
+// Maximum, in bytes, for any password a request submits. Nothing longer is
+// ever hashed or compared.
+inline constexpr size_t kMaxPasswordBytes = 1024;
+
+// Empty when `password` is acceptable as a new password, otherwise the
+// reason to show the person choosing it.
+std::string newPasswordProblem(const std::string& password);
 
 // argon2id password hashing. Parameters below are the OWASP-baseline
 // minimums (m_cost=19 MiB, t_cost=2, p=1) — trivial memory/CPU cost for

@@ -134,6 +134,10 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled, bool trustProx
         }
         const std::string username = (*json)["username"].asString();
         const std::string password = (*json)["password"].asString();
+        if (password.size() > kMaxPasswordBytes) {
+          callback(jsonError(k400BadRequest, "password too long"));
+          return;
+        }
 
         const auto admin = AuthServices::admin().find();
         // Hash-verify on every attempt, even for a wrong username, so
@@ -205,8 +209,12 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled, bool trustProx
         }
         const std::string currentPassword = (*json)["currentPassword"].asString();
         const std::string newPassword = (*json)["newPassword"].asString();
-        if (newPassword.empty()) {
-          callback(jsonError(k400BadRequest, "new password must not be empty"));
+        if (currentPassword.size() > kMaxPasswordBytes) {
+          callback(jsonError(k400BadRequest, "password too long"));
+          return;
+        }
+        if (const std::string problem = newPasswordProblem(newPassword); !problem.empty()) {
+          callback(jsonError(k400BadRequest, "new " + problem));
           return;
         }
 

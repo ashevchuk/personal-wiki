@@ -35,6 +35,20 @@ std::array<uint8_t, kSaltLen> randomSalt() {
 
 }  // namespace
 
+std::string newPasswordProblem(const std::string& password) {
+  if (password.size() > kMaxPasswordBytes) {
+    return "password must be at most " + std::to_string(kMaxPasswordBytes) + " bytes";
+  }
+  size_t characters = 0;
+  for (unsigned char c : password) {
+    if ((c & 0xC0) != 0x80) ++characters;
+  }
+  if (characters < kMinPasswordLength) {
+    return "password must be at least " + std::to_string(kMinPasswordLength) + " characters";
+  }
+  return {};
+}
+
 std::string PasswordHasher::hash(const std::string& plaintextPassword) {
   const auto salt = randomSalt();
 
