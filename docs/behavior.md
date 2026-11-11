@@ -13,6 +13,11 @@ code is built, just what you'll notice as someone using or running it.
 - **Deleting a document doesn't really delete it.** It moves the
   document (and its attachments) into a `.trash/` folder inside the
   vault, at the same relative path. Nothing is destroyed outright.
+- **Anything whose name starts with a dot is not a document.** A path
+  with a dot-prefixed file or folder name (`.trash/`, `.git/`, the index
+  database, ...) can't be read, written, moved or attached to through
+  the web UI, the API or MCP, whoever asks. A trashed document is
+  reachable only from the Trash list on the Account page.
 - **Saving a document is all-or-nothing.** A save either lands
   completely or not at all — there's no state where a half-written file
   is left on disk.

@@ -875,6 +875,26 @@ def run_checks(sandbox, vault):
                                   "source_path": "/etc/passwd"}}},
         headers=mcp_auth)
     rpc = json.loads(body) if body else {}
+    hidden_dir = os.path.join(vault, ".hidden")
+    os.makedirs(hidden_dir, exist_ok=True)
+    with open(os.path.join(hidden_dir, "secret.md"), "w") as f:
+        f.write("---\ntitle: Hidden\nvisibility: public\n---\nhiddenprobe\n")
+    hidden_status, _, hidden_body = admin.post_json(
+        "/mcp",
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+         "params": {"name": "get_document",
+                    "arguments": {"id_or_path": ".hidden/secret.md"}}},
+        headers=mcp_auth)
+    hidden_rpc = json.loads(hidden_body) if hidden_body else {}
+    check("remote get_document refuses a dot-directory path",
+          hidden_status == 200 and hidden_rpc.get("result", {}).get("isError") is True
+          and b"hiddenprobe" not in hidden_body,
+          f"status={hidden_status} body={hidden_body[:240]!r}")
+    for route in ("/api/documents/.hidden/secret.md", "/api/documents/.hidden/secret.md/raw",
+                  "/api/attachments/.hidden/secret.md", "/api/graph?around=.hidden/secret.md"):
+        hidden_status, _, _ = admin.get(route)
+        check(f"admin GET {route} -> 404", hidden_status == 404, f"got {hidden_status}")
+
     check("remote attach_file source_path is rejected (host LFI)",
           status == 200 and rpc.get("result", {}).get("isError") is True
           and "source_path" in rpc.get("result", {}).get("content", [{}])[0].get("text", ""),
@@ -1004,6 +1024,17 @@ def run_checks(sandbox, vault):
           os.path.exists(os.path.join(vault, ".trash", "notes", "public.md")))
     status, _, _ = admin.get("/api/documents/notes/public.md")
     check("deleted doc gone from the JSON API", status == 404, f"got {status}")
+    # Soft delete keeps the file and its `visibility: public` front matter
+    # under .trash/ -- that copy must not be addressable as a document.
+    for who, client in (("anon", anon), ("admin", admin)):
+        for suffix in ("", "/raw"):
+            status, _, _ = client.get("/api/documents/.trash/notes/public.md" + suffix)
+            check(f"{who} GET /api/documents/.trash/...{suffix} -> 404",
+                  status == 404, f"got {status}")
+    status, _, body = admin.get_json("/api/admin/trash")
+    check("trashed doc still listed in the admin trash view",
+          status == 200 and any(i["path"] == "notes/public.md" for i in body["items"]),
+          f"status={status} body={body!r}")
 
     # --- 9. VaultWatcher: external filesystem change picked up live ----
     live_dir = os.path.join(vault, "external")

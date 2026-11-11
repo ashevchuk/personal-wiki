@@ -24,6 +24,19 @@ PathTraversalError::PathTraversalError(std::string_view requestedPath)
     : std::runtime_error("path escapes vault root: " +
                           std::string(requestedPath)) {}
 
+void requireVisiblePath(std::string_view requestedRelativePath) {
+  size_t segmentStart = 0;
+  while (segmentStart <= requestedRelativePath.size()) {
+    if (segmentStart < requestedRelativePath.size() &&
+        requestedRelativePath[segmentStart] == '.') {
+      throw PathTraversalError(requestedRelativePath);
+    }
+    const size_t slash = requestedRelativePath.find('/', segmentStart);
+    if (slash == std::string_view::npos) break;
+    segmentStart = slash + 1;
+  }
+}
+
 PathGuard::PathGuard(fs::path vaultRoot)
     : vaultRoot_(fs::canonical(std::move(vaultRoot))) {}
 

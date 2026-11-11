@@ -1,5 +1,7 @@
 #include "vault/AttachmentService.h"
 
+#include "vault/PathGuard.h"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
@@ -200,4 +202,16 @@ TEST_CASE("AttachmentService::remove refuses a path that is not under .assets/",
   REQUIRE_THROWS_AS(svc.remove("notes/foo.md"), vault::AttachmentRejectedError);
   REQUIRE_THROWS_AS(svc.remove("notes/foo.assets"), vault::AttachmentRejectedError);
   REQUIRE(fs::exists(dir.root() / "notes/foo.assets/x.bin"));
+}
+
+TEST_CASE("AttachmentService refuses paths with a dot-prefixed segment",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);
+
+  REQUIRE_THROWS_AS(svc.store(".trash/foo.md", "a.png", "x"), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(svc.listForDocument(".trash/foo.md"), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(svc.remove(".trash/foo.assets/a.png"), vault::PathTraversalError);
+  REQUIRE_FALSE(fs::exists(dir.root() / ".trash"));
 }

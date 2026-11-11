@@ -4,6 +4,8 @@
 #include "index/SnapshotStore.h"
 #include "vault/DocumentService.h"
 
+#include "vault/PathGuard.h"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <filesystem>
@@ -373,4 +375,31 @@ TEST_CASE("DocumentService::rename rejects missing source, occupied dest, "
   const auto same = svc.rename("a.md", "a");
   REQUIRE(same.path == "a.md");
   REQUIRE(fs::exists(env.vaultRoot() / "a.md"));
+}
+
+TEST_CASE("DocumentService refuses paths with a dot-prefixed segment", "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.title = "Doc";
+  input.visibility = "public";
+  svc.create("notes/a.md", input);
+  svc.softDelete("notes/a.md");
+  REQUIRE(fs::exists(env.vaultRoot() / ".trash/notes/a.md"));
+
+  REQUIRE_THROWS_AS(svc.get(".trash/notes/a.md"), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(svc.update(".trash/notes/a.md", input), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(svc.softDelete(".trash/notes/a.md"), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(svc.create(".hidden/b.md", input), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(svc.create("notes/.b", input), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(svc.rename(".trash/notes/a.md", "notes/a.md"), vault::PathTraversalError);
+  svc.create("notes/c.md", input);
+  REQUIRE_THROWS_AS(svc.rename("notes/c.md", ".trash/c.md"), vault::PathTraversalError);
+  REQUIRE(fs::exists(env.vaultRoot() / "notes/c.md"));
 }

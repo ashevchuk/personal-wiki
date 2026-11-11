@@ -1,6 +1,7 @@
 #include "vault/AttachmentService.h"
 
 #include "util/Uuid.h"
+#include "vault/PathGuard.h"
 
 #include <algorithm>
 #include <cctype>
@@ -135,6 +136,7 @@ bool AttachmentService::isSafeToRenderInline(const std::string& extensionNoDot) 
 AttachmentInfo AttachmentService::store(const std::string& documentRelativePath,
                                          const std::string& originalFilename,
                                          const std::string& content) {
+  requireVisiblePath(documentRelativePath);
   const PlannedDest dest = planDest(vault_, documentRelativePath, originalFilename);
   vault_.writeRawAtomic(dest.relativePath, content);
 
@@ -148,6 +150,7 @@ AttachmentInfo AttachmentService::store(const std::string& documentRelativePath,
 AttachmentInfo AttachmentService::storeFromPath(const std::string& documentRelativePath,
                                                  const std::string& originalFilename,
                                                  const fs::path& sourcePath) {
+  requireVisiblePath(documentRelativePath);
   std::error_code statEc;
   const auto st = fs::status(sourcePath, statEc);
   if (statEc || !fs::exists(st)) {
@@ -169,6 +172,7 @@ AttachmentInfo AttachmentService::storeFromPath(const std::string& documentRelat
 
 std::vector<AttachmentInfo> AttachmentService::listForDocument(
     const std::string& documentRelativePath) const {
+  requireVisiblePath(documentRelativePath);
   const std::string assetsDir = assetsDirFor(documentRelativePath);
   std::vector<std::string> paths = vault_.listRegularFiles(assetsDir);
   std::sort(paths.begin(), paths.end());
@@ -192,6 +196,7 @@ std::vector<AttachmentInfo> AttachmentService::listForDocument(
 }
 
 bool AttachmentService::remove(const std::string& assetRelativePath) {
+  requireVisiblePath(assetRelativePath);
   const fs::path p(assetRelativePath);
   const std::string dirName = p.parent_path().filename().string();
   constexpr std::string_view kSuffix = ".assets";

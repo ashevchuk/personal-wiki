@@ -52,4 +52,12 @@ class PathGuard {
   std::filesystem::path vaultRoot_;  // canonical, set once at construction
 };
 
+// Throws PathTraversalError when any '/'-separated segment of a
+// caller-supplied path starts with '.'. PathGuard::resolve deliberately
+// allows such paths (the app itself keeps .trash/, .mcp-uploads/ and the
+// index db under the vault root); this is the extra gate for paths that
+// arrive from outside — HTTP routes, MCP tools, agent tools — so those
+// internal areas are never addressable as documents, folders or assets.
+void requireVisiblePath(std::string_view requestedRelativePath);
+
 }  // namespace wikicore::vault

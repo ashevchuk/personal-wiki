@@ -5,6 +5,7 @@
 #include "util/Time.h"
 #include "vault/BackupService.h"
 #include "vault/FrontMatter.h"
+#include "vault/PathGuard.h"
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
 #include "index/EmbeddingIndexer.h"
@@ -485,6 +486,7 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
         }
         const std::string path = (*json)["path"].asString();
         try {
+          requireVisiblePath(path);
           // A document could have been re-created at this same path
           // since it was trashed — restoring would silently clobber it,
           // so this checks first rather than letting rename() overwrite
@@ -537,6 +539,7 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
           return;
         }
         try {
+          requireVisiblePath(path);
           vault.purgeFromTrash(path);
           mcpAuditLog.record("admin:trash-purge", path, true, "permanently deleted");
           Json::Value body;

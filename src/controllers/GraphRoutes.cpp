@@ -87,6 +87,7 @@ void registerGraphRoutes(HttpAppFramework& app, GraphQueries& graph,
 
         std::string centerPath;
         try {
+          requireVisiblePath(around);
           const fs::path abs = vault.pathGuard().resolve(around);
           centerPath = fs::relative(abs, vault.pathGuard().root()).generic_string();
         } catch (const PathTraversalError&) {

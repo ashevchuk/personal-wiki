@@ -14,6 +14,11 @@ binaries — check a running/built copy with `wiki-server --version` or
   `tel` URLs and for relative links. A link with any other scheme
   (`javascript:`, `data:`, ...) renders as plain text, so a document body can
   no longer run script in the reader's session when a link is clicked.
+- Paths with a dot-prefixed file or folder name are rejected by every
+  document, folder and attachment operation (web API, remote and stdio MCP,
+  agent tools). A soft-deleted public document is no longer readable under
+  `.trash/`, and an MCP token can no longer read the index database or
+  other internal files that live inside the vault directory.
 
 ## [0.10.0] - 2026-11-06
 

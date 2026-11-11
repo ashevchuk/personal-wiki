@@ -6,6 +6,8 @@
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
 
+#include "vault/PathGuard.h"
+
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
@@ -237,4 +239,26 @@ TEST_CASE("FolderService remove requires an existing, empty directory",
   REQUIRE(folderSvc.isEmpty("probe"));
   folderSvc.remove("probe");
   REQUIRE_FALSE(fs::exists(env.vaultRoot() / "probe"));
+}
+
+TEST_CASE("FolderService refuses paths with a dot-prefixed segment", "[FolderService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  index::IndexBuilder indexBuilder(repo, indexUpdater);
+  vault::FolderService folderSvc(repo, indexUpdater, indexBuilder);
+
+  fs::create_directories(env.vaultRoot() / ".trash/old");
+  fs::create_directories(env.vaultRoot() / "notes");
+
+  REQUIRE_THROWS_AS(folderSvc.remove("."), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(folderSvc.remove(".trash"), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(folderSvc.isEmpty(".trash/old"), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(folderSvc.move(".trash/old", "restored"), vault::PathTraversalError);
+  REQUIRE_THROWS_AS(folderSvc.move("notes", ".trash/notes"), vault::PathTraversalError);
+  REQUIRE(fs::exists(env.vaultRoot() / ".trash/old"));
+  REQUIRE(fs::exists(env.vaultRoot() / "notes"));
 }

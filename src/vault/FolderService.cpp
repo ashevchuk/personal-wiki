@@ -86,6 +86,8 @@ int64_t FolderService::move(const std::string& oldRelativePathIn,
   if (newRelativePath.rfind(oldRelativePath + "/", 0) == 0) {
     throw InvalidFolderMoveError("can't move a folder into itself");
   }
+  requireVisiblePath(oldRelativePath);
+  requireVisiblePath(newRelativePath);
 
   const fs::path oldAbs = vault_.pathGuard().resolve(oldRelativePath);
   if (!fs::exists(oldAbs) || !fs::is_directory(oldAbs)) {
@@ -160,6 +162,7 @@ int64_t FolderService::move(const std::string& oldRelativePathIn,
 }
 
 bool FolderService::isEmpty(const std::string& relativePath) const {
+  requireVisiblePath(relativePath);
   const fs::path abs = vault_.pathGuard().resolve(trimTrailingSlash(relativePath));
   if (!fs::exists(abs) || !fs::is_directory(abs)) {
     return false;
@@ -169,6 +172,7 @@ bool FolderService::isEmpty(const std::string& relativePath) const {
 
 void FolderService::remove(const std::string& relativePathIn) {
   const std::string relativePath = trimTrailingSlash(relativePathIn);
+  requireVisiblePath(relativePath);
   const fs::path abs = vault_.pathGuard().resolve(relativePath);
   if (!fs::exists(abs) || !fs::is_directory(abs)) {
     throw FolderNotFoundError(relativePath);

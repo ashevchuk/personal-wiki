@@ -11,6 +11,7 @@
 namespace fs = std::filesystem;
 using wikicore::vault::PathGuard;
 using wikicore::vault::PathTraversalError;
+using wikicore::vault::requireVisiblePath;
 
 namespace {
 
@@ -170,4 +171,21 @@ TEST_CASE(
   // vault, so this must still be rejected.
   REQUIRE_THROWS_AS(guard.resolve("escape_link/new-file.md"),
                      PathTraversalError);
+}
+
+TEST_CASE("requireVisiblePath rejects any segment that starts with a dot", "[PathGuard]") {
+  for (const char* path : {".trash/a.md", ".index.db", "notes/.hidden.md", "notes/.git/config",
+                           "a/../b.md", "./a.md", "a/./b.md", "..", "notes/.assets/x"}) {
+    INFO(path);
+    REQUIRE_THROWS_AS(requireVisiblePath(path), PathTraversalError);
+  }
+}
+
+TEST_CASE("requireVisiblePath accepts ordinary paths, dots inside a name included",
+          "[PathGuard]") {
+  for (const char* path : {"a.md", "notes/foo.md", "notes/v1.2/release.notes.md",
+                           "notes/foo.assets/a.png", "", "notes/"}) {
+    INFO(path);
+    REQUIRE_NOTHROW(requireVisiblePath(path));
+  }
 }
