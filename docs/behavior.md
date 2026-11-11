@@ -62,10 +62,12 @@ code is built, just what you'll notice as someone using or running it.
   works.** It shows as a "red" link now, and starts resolving
   automatically the moment a document is created at that path — no need
   to go back and fix anything.
-- **Attachments have no size cap set by the app itself.** The real
-  limit is whatever the server (2 GiB) and, if you're using one, your
-  reverse proxy allow. If a large upload fails, check your reverse
-  proxy's own body-size setting (`client_max_body_size` for nginx) first.
+- **An upload can be at most 100 MiB.** That is the server's limit on
+  any single request, and so on an attachment uploaded through the web
+  UI or remote MCP. A reverse proxy in front may allow less: if a large
+  upload fails, check its body-size setting (`client_max_body_size` for
+  nginx) first. A local `wiki-mcp` attaching a file by `source_path`
+  copies it on disk and has no such limit.
 - **Every edit is saved as a version**, and any version can be restored
   — restoring itself creates a new version too, so it's never a one-way
   trip. See `/history/{path}` in the web UI.

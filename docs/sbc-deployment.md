@@ -620,7 +620,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/wiki.example.com/privkey.pem;
 
     location / {
-        client_max_body_size 0;  # unlimited; wiki-server's own 2 GiB request cap still applies
+        client_max_body_size 100m;  # matches wiki-server's own 100 MiB request cap
         proxy_pass http://127.0.0.1:8080/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -633,9 +633,9 @@ server {
 }
 ```
 
-`client_max_body_size 0` is required for large attachment uploads (a
-120 MB PDF, etc.) — nginx's default is 1m, which would `413` before
-`wiki-server` ever saw the body.
+`client_max_body_size 100m` is required for large attachment uploads —
+nginx's default is 1m, which would `413` before `wiki-server` ever saw
+the body. `wiki-server` itself refuses any request body over 100 MiB.
 
 ### Under a subpath of an existing site (e.g. `/wiki`)
 
@@ -649,7 +649,7 @@ location = /wiki {
 }
 
 location /wiki/ {
-    client_max_body_size 0;  # unlimited; wiki-server's own 2 GiB request cap still applies
+    client_max_body_size 100m;  # matches wiki-server's own 100 MiB request cap
     proxy_pass http://127.0.0.1:8080/;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;

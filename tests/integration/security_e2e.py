@@ -1146,6 +1146,27 @@ def run_checks(sandbox, vault):
         "/api/login", {"username": "admin", "password": "x" * 1025})
     check("login with a 1025-byte password -> 400", status == 400, f"got {status}")
 
+    # Request bodies over the 100 MiB cap are refused before any handler
+    # runs, for an anonymous caller too. Drogon may answer 413 or just
+    # drop the connection once it has seen Content-Length.
+    oversized = b'{"username":"admin","password":"' + b"x" * (101 * 1024 * 1024) + b'"}'
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=120)
+    try:
+        conn.request("POST", "/api/login", body=oversized,
+                     headers={"Content-Type": "application/json"})
+        status = conn.getresponse().status
+        outcome = f"status {status}"
+        refused = status == 413
+    except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError,
+            http.client.RemoteDisconnected) as e:
+        outcome = f"connection closed by server: {e!r}"
+        refused = True
+    finally:
+        conn.close()
+    check(f"anonymous 101 MiB request body is refused ({outcome})", refused, outcome)
+    status, _, _ = anon.get("/healthz")
+    check("server still healthy after the oversized request", status == 200, f"got {status}")
+
     status, _, _ = admin.post_json(
         "/api/account/password", {"currentPassword": "SuperSecret123", "newPassword": "NewSecret456"},
         headers={"X-CSRF-Token": csrf})

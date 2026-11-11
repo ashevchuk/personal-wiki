@@ -230,7 +230,7 @@ Json::Value buildToolsList(bool writeEnabled) {
           "attach_file",
           "Attach a file to an existing document and append a markdown link. "
           "On this HTTP transport, pass content_base64 for small files. "
-          "For a large file (a 120 MB PDF) call attach_file_begin, then HTTP "
+          "For a larger file (up to 100 MiB) call attach_file_begin, then HTTP "
           "PUT the raw bytes to /mcp/uploads/{upload_id} on the same host "
           "(the id is a capability URL — no Bearer token on that PUT). "
           "source_path is rejected here. The owning document must already "

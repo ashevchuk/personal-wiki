@@ -7,7 +7,7 @@ correctness) and stress_concurrency.py (race conditions).
 
 1. Concurrent large attachment uploads — there is no app-level attachment
    size cap (src/vault/AttachmentService.cpp); Drogon itself is capped at
-   2 GiB (setClientMaxBodySize, src/main.cpp). This fires several ~24 MiB
+   100 MiB (setClientMaxBodySize, src/main.cpp). This fires several ~24 MiB
    uploads AT ONCE and checks the server's own memory doesn't balloon far
    past what that many legitimate files should cost, and that it stays
    responsive throughout.
@@ -61,7 +61,7 @@ def stress_concurrent_uploads(server):
     check("seed document created -> 201", status == 201, f"got {status}")
 
     UPLOADERS = 6
-    SIZE = 24 * 1024 * 1024  # large, well under the 2 GiB request-body cap
+    SIZE = 24 * 1024 * 1024  # large, well under the 100 MiB request-body cap
     payload = os.urandom(1024) * (SIZE // 1024)  # not all-zero, avoids sparse-file skew
 
     rss_before = server.rss_kb()

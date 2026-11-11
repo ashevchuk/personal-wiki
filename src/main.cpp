@@ -430,12 +430,12 @@ int main(int argc, char** argv) {
   // static/ is the ONLY thing served as static files — never the project
   // root, which would also expose config.toml/source/etc. over HTTP.
   drogon::app().setDocumentRoot("static");
-  // 2 GiB — fits 32-bit size_t (the armv7 cross-compile). There is no
-  // app-level attachment cap anymore (a 120 MiB PDF is a legitimate
-  // upload); this is just so a single request can't be unbounded. Disk
-  // is the real bound. A reverse proxy in front still needs its own
-  // client_max_body_size raised (nginx defaults to 1m).
-  drogon::app().setClientMaxBodySize(static_cast<size_t>(2) * 1024u * 1024u * 1024u);
+  // Applies to every route, authenticated or not: the body is received
+  // and spooled to disk before any handler or filter runs, so this is the
+  // only bound an anonymous caller is held to. It is also the effective
+  // attachment size limit over HTTP. A reverse proxy in front still needs
+  // its own client_max_body_size raised to match (nginx defaults to 1m).
+  drogon::app().setClientMaxBodySize(static_cast<size_t>(100) * 1024u * 1024u);
 
   // Don't advertise the exact framework+version in every response —
   // `Server: drogon/1.9.13` by default, no reason to hand a would-be

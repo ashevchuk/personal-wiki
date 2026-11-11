@@ -227,9 +227,8 @@ able to toggle this without restarting the server:
   remote caller read arbitrary files off the wiki host. A multipart
   `POST` with a file field also works as an alternative. Upload tickets
   live in `<vault>/.mcp-uploads/` — a dotdir, skipped by the indexer and
-  excluded from backups. Drogon's `setClientMaxBodySize` (2 GiB) and the
-  reverse proxy's own `client_max_body_size` still bound the HTTP
-  request; the app itself has no attachment size cap of its own.
+  excluded from backups. The server's 100 MiB request-body limit and the
+  reverse proxy's own `client_max_body_size` bound the upload.
 - **Bearer tokens** — the Account page's "Tokens" list holds any number of
   independently labeled tokens (one per client is the intended use: Claude
   Desktop, a Claude Code remote connection, a standalone client, ...), each

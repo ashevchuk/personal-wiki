@@ -713,7 +713,7 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/$domain/privkey.pem;
 
     location / {
-        client_max_body_size 0;  # unlimited; wiki-server's own 2 GiB request cap still applies
+        client_max_body_size 100m;  # matches wiki-server's own 100 MiB request cap
         proxy_pass http://127.0.0.1:8080/;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
@@ -732,7 +732,7 @@ location = $base_path {
 }
 
 location $base_path/ {
-    client_max_body_size 0;  # unlimited; wiki-server's own 2 GiB request cap still applies
+    client_max_body_size 100m;  # matches wiki-server's own 100 MiB request cap
     proxy_pass http://127.0.0.1:8080/;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;

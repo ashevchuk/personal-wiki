@@ -32,6 +32,16 @@ binaries — check a running/built copy with `wiki-server --version` or
   least 12 characters. An existing shorter password keeps working until it
   is changed. Passwords over 1024 bytes are rejected without being hashed.
 
+### Changed
+
+- A single request body, and therefore an attachment uploaded through the
+  web UI or remote MCP, is limited to 100 MiB (was 2 GiB). The limit applies
+  before authentication, so it also bounds what an anonymous caller can make
+  the server receive and spool to disk. The documented nginx configuration
+  now sets `client_max_body_size 100m` to match; an existing proxy config
+  with `client_max_body_size 0` keeps working. Local `wiki-mcp`
+  `attach_file` with `source_path` is not affected.
+
 ## [0.10.0] - 2026-11-06
 
 ### Added
