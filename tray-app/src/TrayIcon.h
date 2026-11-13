@@ -20,12 +20,12 @@ namespace wikitray {
 // which the main loop is responsible for picking up safely.
 class TrayIcon {
  public:
-  explicit TrayIcon(std::string serviceName);
+  // The callbacks are taken here, not via setters, because the D-Bus
+  // thread starts inside the constructor and may invoke them at once.
+  // onQuit runs right after quitRequested() becomes true.
+  TrayIcon(std::string serviceName, std::function<void()> onActivate,
+           std::function<void()> onQuit);
   ~TrayIcon();
-
-  void setOnActivate(std::function<void()> callback);
-  // Runs on the D-Bus thread right after quitRequested() becomes true.
-  void setOnQuit(std::function<void()> callback);
 
   // True once the context menu's Quit item has been clicked. Safe to
   // poll from the main loop every frame.
@@ -40,8 +40,8 @@ class TrayIcon {
   std::unique_ptr<sdbus::IConnection> connection_;
   std::unique_ptr<sdbus::IObject> object_;
   std::unique_ptr<sdbus::IObject> menuObject_;
-  std::function<void()> onActivate_;
-  std::function<void()> onQuit_;
+  const std::function<void()> onActivate_;
+  const std::function<void()> onQuit_;
   std::atomic<bool> quitRequested_{false};
 };
 

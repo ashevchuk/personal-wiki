@@ -36,19 +36,20 @@ int main(int argc, char** argv) {
 
   wikitray::Config cfg = wikitray::Config::load();
 
-  // Declared before the tray so it outlives the D-Bus thread that calls wake().
+  // Declared before the tray so both outlive the D-Bus thread whose
+  // callbacks reference them.
   wikitray::IdleWait idleWait;
+  std::atomic<bool> showRequested{false};
 
   // Requesting this bus name IS the single-instance check — a second
   // process throws here if one is already running.
-  wikitray::TrayIcon tray(kTrayServiceName);
-
-  std::atomic<bool> showRequested{false};
-  tray.setOnActivate([&showRequested, &idleWait] {
-    showRequested = true;
-    idleWait.wake();
-  });
-  tray.setOnQuit([&idleWait] { idleWait.wake(); });
+  wikitray::TrayIcon tray(
+      kTrayServiceName,
+      [&showRequested, &idleWait] {
+        showRequested = true;
+        idleWait.wake();
+      },
+      [&idleWait] { idleWait.wake(); });
 
   wikitray::GlobalHotkey hotkey(cfg.hotkey);
   if (!hotkey.grabbed()) {

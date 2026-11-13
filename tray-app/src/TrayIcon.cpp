@@ -93,7 +93,9 @@ using MenuItem = sdbus::Struct<int32_t, std::map<std::string, sdbus::Variant>,
                                 std::vector<sdbus::Variant>>;
 }  // namespace
 
-TrayIcon::TrayIcon(std::string serviceName) {
+TrayIcon::TrayIcon(std::string serviceName, std::function<void()> onActivate,
+                   std::function<void()> onQuit)
+    : onActivate_(std::move(onActivate)), onQuit_(std::move(onQuit)) {
   // Requesting this name IS the single-instance check: a second process
   // asking for a name the first already holds gets an sdbus::Error here,
   // before anything else about this app starts.
@@ -235,14 +237,6 @@ TrayIcon::TrayIcon(std::string serviceName) {
 }
 
 TrayIcon::~TrayIcon() = default;
-
-void TrayIcon::setOnActivate(std::function<void()> callback) {
-  onActivate_ = std::move(callback);
-}
-
-void TrayIcon::setOnQuit(std::function<void()> callback) {
-  onQuit_ = std::move(callback);
-}
 
 void TrayIcon::notify(const std::string& summary, const std::string& body) {
   auto proxy = sdbus::createProxy(*connection_,
