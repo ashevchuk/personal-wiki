@@ -39,6 +39,7 @@ add_executable(wiki-tray
   src/GlobalHotkey.cpp
   src/ChatWindow.cpp
   src/WindowRaise.cpp
+  src/IdleWait.cpp
 )
 
 # third_party/raygui.h shadows vcpkg's own copy (listed first, so it's

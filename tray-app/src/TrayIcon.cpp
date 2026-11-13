@@ -151,6 +151,7 @@ TrayIcon::TrayIcon(std::string serviceName) {
       if (onActivate_) onActivate_();
     } else if (id == kQuitItemId) {
       quitRequested_ = true;
+      if (onQuit_) onQuit_();
     }
   };
 
@@ -237,6 +238,10 @@ TrayIcon::~TrayIcon() = default;
 
 void TrayIcon::setOnActivate(std::function<void()> callback) {
   onActivate_ = std::move(callback);
+}
+
+void TrayIcon::setOnQuit(std::function<void()> callback) {
+  onQuit_ = std::move(callback);
 }
 
 void TrayIcon::notify(const std::string& summary, const std::string& body) {

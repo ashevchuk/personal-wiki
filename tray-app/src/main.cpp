@@ -4,6 +4,7 @@
 #include "ChatWindow.h"
 #include "Config.h"
 #include "GlobalHotkey.h"
+#include "IdleWait.h"
 #include "TrayIcon.h"
 
 #include "WindowRaise.h"
@@ -35,12 +36,19 @@ int main(int argc, char** argv) {
 
   wikitray::Config cfg = wikitray::Config::load();
 
+  // Declared before the tray so it outlives the D-Bus thread that calls wake().
+  wikitray::IdleWait idleWait;
+
   // Requesting this bus name IS the single-instance check — a second
   // process throws here if one is already running.
   wikitray::TrayIcon tray(kTrayServiceName);
 
   std::atomic<bool> showRequested{false};
-  tray.setOnActivate([&showRequested] { showRequested = true; });
+  tray.setOnActivate([&showRequested, &idleWait] {
+    showRequested = true;
+    idleWait.wake();
+  });
+  tray.setOnQuit([&idleWait] { idleWait.wake(); });
 
   wikitray::GlobalHotkey hotkey(cfg.hotkey);
   if (!hotkey.grabbed()) {
@@ -149,6 +157,14 @@ int main(int argc, char** argv) {
 
       if (tray.quitRequested()) {
         running = false;
+      }
+
+      if (!visible) {
+        if (running) {
+          idleWait.wait(hotkey.display());
+        }
+        previousTime = GetTime();
+        continue;
       }
 
       SwapScreenBuffer();

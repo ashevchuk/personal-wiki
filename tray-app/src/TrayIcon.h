@@ -24,6 +24,8 @@ class TrayIcon {
   ~TrayIcon();
 
   void setOnActivate(std::function<void()> callback);
+  // Runs on the D-Bus thread right after quitRequested() becomes true.
+  void setOnQuit(std::function<void()> callback);
 
   // True once the context menu's Quit item has been clicked. Safe to
   // poll from the main loop every frame.
@@ -39,6 +41,7 @@ class TrayIcon {
   std::unique_ptr<sdbus::IObject> object_;
   std::unique_ptr<sdbus::IObject> menuObject_;
   std::function<void()> onActivate_;
+  std::function<void()> onQuit_;
   std::atomic<bool> quitRequested_{false};
 };
 

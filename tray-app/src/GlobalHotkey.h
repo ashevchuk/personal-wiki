@@ -29,6 +29,10 @@ class GlobalHotkey {
 
   void poll(const std::function<void()>& onPressed);
 
+  // The hotkey's own X11 connection (null if it couldn't be opened), so
+  // the main loop can block on it while the window is hidden.
+  struct _XDisplay* display() const { return display_; }
+
  private:
   struct _XDisplay* display_ = nullptr;
   unsigned int modifiers_ = 0;
