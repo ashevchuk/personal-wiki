@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-15
+
 ### Changed
 
 - `GET /api/documents/{path}` accepts `?content=html` (only `renderedHtml`)
