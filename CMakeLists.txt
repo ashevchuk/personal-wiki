@@ -1,12 +1,4 @@
 cmake_minimum_required(VERSION 3.21)
-# Bump this on every user-visible fix/feature and record it in
-# CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
-# `wiki-mcp --version`) and reported as the MCP serverInfo.version.
-project(personal_wiki VERSION 0.10.1 LANGUAGES CXX)
-
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Release (optimized, no debug info), not RelWithDebInfo: a statically-
 # linked RelWithDebInfo wiki-server carries roughly 100MB of DWARF debug
@@ -15,9 +7,23 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # `strip` used to need to claw back). Pass -DCMAKE_BUILD_TYPE=
 # RelWithDebInfo explicitly for a build that keeps symbols around for
 # addr2line/gdb.
-if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+# Must run before project(): the vcpkg toolchain file is evaluated there and
+# puts debug/lib first on the library search path when CMAKE_BUILD_TYPE is
+# still unset, so Drogon's find_library() modules would cache the debug
+# builds of OpenSSL, jsoncpp, sqlite3 and others into a "Release" build.
+get_property(_wiki_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT CMAKE_BUILD_TYPE AND NOT _wiki_multi_config)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
+
+# Bump this on every user-visible fix/feature and record it in
+# CHANGELOG.md — it's embedded in both binaries (`wiki-server --version`,
+# `wiki-mcp --version`) and reported as the MCP serverInfo.version.
+project(personal_wiki VERSION 0.10.1 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Prefer static linking of our own code + light dependencies; system libc/libstdc++/
 # OpenSSL/zlib stay dynamic (see docs/architecture.md, "Build & Deployment").

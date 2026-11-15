@@ -8,6 +8,15 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Fixed
+
+- A native build configured without `-DCMAKE_BUILD_TYPE` now links the
+  release builds of its vcpkg dependencies. Previously it reported itself as
+  Release but linked the unoptimized debug builds of OpenSSL, jsoncpp,
+  sqlite3, argon2, brotli and libuuid, which made document API responses
+  several times slower. Release artifacts and `tools/wiki-ops.sh` builds
+  always pass the build type explicitly and were not affected.
+
 ## [0.10.1] - 2026-11-11
 
 ### Security
