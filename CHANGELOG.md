@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-15
+
 ### Fixed
 
 - A native build configured without `-DCMAKE_BUILD_TYPE` now links the
