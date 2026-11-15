@@ -139,7 +139,7 @@ int64_t FolderService::move(const std::string& oldRelativePathIn,
     rewritten = rewriteAssetPrefix(std::move(rewritten), oldPrefix, newPrefix);
     if (rewritten == parsed.body) continue;
 
-    vault_.writeRawAtomic(diskPath, serializeFrontMatter(parsed.frontMatter, rewritten));
+    vault_.writeRawAtomic(diskPath, replaceBody(raw, rewritten));
     rewrittenDiskPaths.insert(diskPath);
   }
 

@@ -2,8 +2,11 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
+#include <array>
 #include <optional>
 #include <utility>
+#include <vector>
 
 namespace wikicore::vault {
 
@@ -148,7 +151,84 @@ ImportedDocument parseForImport(std::string_view rawContent) {
   return result;
 }
 
+namespace {
+
+constexpr std::array<std::string_view, 9> kModeledKeys = {
+    "id", "title", "tags", "visibility", "type", "created", "updated", "due", "recur"};
+
+// Top-level entries of `existingRaw`'s front matter whose key FrontMatter
+// does not model, in file order. Empty when there is no usable block.
+std::vector<std::pair<YAML::Node, YAML::Node>> unmodeledEntries(std::string_view existingRaw) {
+  std::vector<std::pair<YAML::Node, YAML::Node>> entries;
+  const auto split = splitFrontMatterBlock(existingRaw);
+  if (!split) return entries;
+  YAML::Node doc;
+  try {
+    doc = YAML::Load(split->first);
+  } catch (const YAML::Exception&) {
+    return entries;
+  }
+  if (!doc.IsMap()) return entries;
+  for (const auto& entry : doc) {
+    const bool modeled =
+        entry.first.IsScalar() &&
+        std::find(kModeledKeys.begin(), kModeledKeys.end(), entry.first.Scalar()) !=
+            kModeledKeys.end();
+    if (!modeled) entries.emplace_back(entry.first, entry.second);
+  }
+  return entries;
+}
+
+struct IdLines {
+  int count = 0;
+  size_t valueStart = 0;  // first byte after "id:" of the last match
+  size_t valueEnd = 0;    // end of that line, excluding "\r\n"/"\n"
+};
+
+// Top-level `id:` lines inside the block that spans [yamlStart, yamlEnd).
+IdLines findTopLevelIdLines(std::string_view raw, size_t yamlStart, size_t yamlEnd) {
+  constexpr std::string_view kIdKey = "id:";
+  IdLines found;
+  for (size_t lineStart = yamlStart; lineStart < yamlEnd;) {
+    size_t lineEnd = raw.find('\n', lineStart);
+    if (lineEnd == std::string_view::npos || lineEnd > yamlEnd) lineEnd = yamlEnd;
+    std::string_view line = raw.substr(lineStart, lineEnd - lineStart);
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+
+    const bool isTopLevelIdKey =
+        line.substr(0, kIdKey.size()) == kIdKey &&
+        (line.size() == kIdKey.size() || line[kIdKey.size()] == ' ' ||
+         line[kIdKey.size()] == '\t');
+    if (isTopLevelIdKey) {
+      ++found.count;
+      found.valueStart = lineStart + kIdKey.size();
+      found.valueEnd = lineStart + line.size();
+    }
+    lineStart = lineEnd + 1;
+  }
+  return found;
+}
+
+bool differsOnlyInId(std::string_view original, std::string_view rewritten,
+                     std::string_view newId) {
+  const ParsedDocument before = parseFrontMatter(original);
+  const ParsedDocument after = parseFrontMatter(rewritten);
+  const FrontMatter& b = before.frontMatter;
+  const FrontMatter& a = after.frontMatter;
+  return a.id == newId && after.body == before.body && a.title == b.title &&
+         a.tags == b.tags && a.visibility == b.visibility && a.type == b.type &&
+         a.created == b.created && a.updated == b.updated && a.due == b.due &&
+         a.recur == b.recur;
+}
+
+}  // namespace
+
 std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body) {
+  return serializeFrontMatter(fm, body, {});
+}
+
+std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body,
+                                 std::string_view existingRaw) {
   YAML::Emitter out;
   out << YAML::BeginMap;
   out << YAML::Key << "id" << YAML::Value << fm.id;
@@ -166,53 +246,53 @@ std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body)
   out << YAML::Key << "updated" << YAML::Value << fm.updated;
   out << YAML::Key << "due" << YAML::Value << fm.due;
   out << YAML::Key << "recur" << YAML::Value << fm.recur;
+  for (const auto& [key, value] : unmodeledEntries(existingRaw)) {
+    out << YAML::Key << key << YAML::Value << value;
+  }
   out << YAML::EndMap;
 
   return "---\n" + std::string(out.c_str()) + "\n---\n" + body;
+}
+
+std::string replaceBody(std::string_view rawContent, std::string_view newBody) {
+  const size_t bodySize = parseFrontMatter(rawContent).body.size();
+  std::string out(rawContent.substr(0, rawContent.size() - bodySize));
+  out += newBody;
+  return out;
 }
 
 std::optional<std::string> replaceFrontMatterId(std::string_view rawContent,
                                                 std::string_view newId) {
   const auto split = splitFrontMatterBlock(rawContent);
   if (!split) return std::nullopt;
-  const size_t yamlStart = rawContent.find('\n') + 1;
-  const size_t yamlEnd = split->second;
+  const IdLines idLines =
+      findTopLevelIdLines(rawContent, rawContent.find('\n') + 1, split->second);
+  if (idLines.count != 1) return std::nullopt;
 
-  constexpr std::string_view kIdKey = "id:";
-  std::optional<std::pair<size_t, size_t>> valueRange;
-  for (size_t lineStart = yamlStart; lineStart < yamlEnd;) {
-    size_t lineEnd = rawContent.find('\n', lineStart);
-    if (lineEnd == std::string_view::npos || lineEnd > yamlEnd) lineEnd = yamlEnd;
-    std::string_view line = rawContent.substr(lineStart, lineEnd - lineStart);
-    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
-
-    const bool isTopLevelIdKey =
-        line.substr(0, kIdKey.size()) == kIdKey &&
-        (line.size() == kIdKey.size() || line[kIdKey.size()] == ' ' ||
-         line[kIdKey.size()] == '\t');
-    if (isTopLevelIdKey) {
-      if (valueRange) return std::nullopt;  // duplicate key: ambiguous
-      valueRange = {lineStart + kIdKey.size(), lineStart + line.size()};
-    }
-    lineStart = lineEnd + 1;
-  }
-  if (!valueRange) return std::nullopt;
-
-  std::string rewritten(rawContent.substr(0, valueRange->first));
+  std::string rewritten(rawContent.substr(0, idLines.valueStart));
   rewritten += ' ';
   rewritten += newId;
-  rewritten += rawContent.substr(valueRange->second);
+  rewritten += rawContent.substr(idLines.valueEnd);
+  if (!differsOnlyInId(rawContent, rewritten, newId)) return std::nullopt;
+  return rewritten;
+}
 
-  const ParsedDocument before = parseFrontMatter(rawContent);
-  const ParsedDocument after = parseFrontMatter(rewritten);
-  const FrontMatter& b = before.frontMatter;
-  const FrontMatter& a = after.frontMatter;
-  const bool onlyIdChanged =
-      a.id == newId && after.body == before.body && a.title == b.title &&
-      a.tags == b.tags && a.visibility == b.visibility && a.type == b.type &&
-      a.created == b.created && a.updated == b.updated && a.due == b.due &&
-      a.recur == b.recur;
-  if (!onlyIdChanged) return std::nullopt;
+std::optional<std::string> withFrontMatterId(std::string_view rawContent,
+                                             std::string_view newId) {
+  const auto split = splitFrontMatterBlock(rawContent);
+  if (!split) return std::nullopt;
+  const size_t openerEnd = rawContent.find('\n');
+  if (findTopLevelIdLines(rawContent, openerEnd + 1, split->second).count != 0) {
+    return replaceFrontMatterId(rawContent, newId);
+  }
+
+  const bool crlf = openerEnd > 0 && rawContent[openerEnd - 1] == '\r';
+  std::string rewritten(rawContent.substr(0, openerEnd + 1));
+  rewritten += "id: ";
+  rewritten += newId;
+  rewritten += crlf ? "\r\n" : "\n";
+  rewritten += rawContent.substr(openerEnd + 1);
+  if (!differsOnlyInId(rawContent, rewritten, newId)) return std::nullopt;
   return rewritten;
 }
 

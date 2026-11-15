@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <vector>
 
@@ -261,4 +262,35 @@ TEST_CASE("FolderService refuses paths with a dot-prefixed segment", "[FolderSer
   REQUIRE_THROWS_AS(folderSvc.move("notes", ".trash/notes"), vault::PathTraversalError);
   REQUIRE(fs::exists(env.vaultRoot() / ".trash/old"));
   REQUIRE(fs::exists(env.vaultRoot() / "notes"));
+}
+
+TEST_CASE("FolderService move rewrites only the body of a linker", "[FolderService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  index::IndexBuilder indexBuilder(repo, indexUpdater);
+  vault::DocumentService docSvc(repo, indexUpdater, snapshots);
+  vault::FolderService folderSvc(repo, indexUpdater, indexBuilder);
+
+  vault::DocumentInput input;
+  input.title = "Deep";
+  input.body = "deep";
+  docSvc.create("notes/cpp/deep.md", input);
+  input.title = "Outsider";
+  input.body = "see [[notes/cpp/deep]]";
+  const auto outsider = docSvc.create("other.md", input);
+
+  const std::string frontMatter = "---\n# written by hand\nid: " + outsider.frontMatter.id +
+                                  "\ntitle: Outsider\naliases: [one]\n---\n";
+  std::ofstream(env.vaultRoot() / "other.md") << frontMatter << "see [[notes/cpp/deep]]\n";
+  indexBuilder.reindexOneFile("other.md");
+
+  folderSvc.move("notes/cpp", "archive/cpp");
+
+  std::ifstream in(env.vaultRoot() / "other.md", std::ios::binary);
+  REQUIRE(std::string(std::istreambuf_iterator<char>(in), {}) ==
+          frontMatter + "see [[archive/cpp/deep]]\n");
 }

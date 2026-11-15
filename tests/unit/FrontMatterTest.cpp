@@ -1,11 +1,14 @@
 #include "vault/FrontMatter.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <yaml-cpp/yaml.h>
 
 using wikicore::vault::FrontMatter;
 using wikicore::vault::parseForImport;
 using wikicore::vault::parseFrontMatter;
 using wikicore::vault::serializeFrontMatter;
+using wikicore::vault::replaceBody;
+using wikicore::vault::withFrontMatterId;
 
 TEST_CASE("FrontMatter parses a well-formed block", "[FrontMatter]") {
   const auto parsed = parseFrontMatter(
@@ -164,7 +167,7 @@ TEST_CASE("parseForImport distinguishes absent keys from empty ones",
 
 TEST_CASE("parseForImport treats a file without usable front matter as pure body",
           "[FrontMatter][import]") {
-  for (const std::string content :
+  for (const std::string& content :
        {std::string("Just text.\n"), std::string("---\ntitle: [unclosed\n---\nBody\n"),
         std::string("---\n- a\n- b\n---\nBody\n")}) {
     CAPTURE(content);
@@ -201,5 +204,61 @@ TEST_CASE("replaceFrontMatterId rewrites only the top-level id line",
       CAPTURE(raw);
       REQUIRE_FALSE(replaceFrontMatterId(raw, newId).has_value());
     }
+  }
+}
+
+TEST_CASE("serializeFrontMatter keeps keys of the existing file it does not model",
+          "[FrontMatter]") {
+  FrontMatter fm;
+  fm.id = "doc-1";
+  fm.title = "New title";
+  fm.visibility = "public";
+
+  SECTION("a file with only modeled keys serializes exactly as without one") {
+    const std::string existing = "---\nid: doc-1\ntitle: Old\nvisibility: public\n---\nold";
+    REQUIRE(serializeFrontMatter(fm, "body", existing) == serializeFrontMatter(fm, "body"));
+  }
+  SECTION("unmodeled keys follow the modeled ones, modeled keys come from fm") {
+    const std::string existing =
+        "---\ntitle: Old\naliases: [one, two]\nmeta:\n  source: obsidian\n---\nold";
+    const std::string out = serializeFrontMatter(fm, "body", existing);
+    const std::string base = serializeFrontMatter(fm, "body");
+    const std::string baseBlock = base.substr(0, base.rfind("\n---\n"));
+    REQUIRE(out.rfind(baseBlock, 0) == 0);
+    const auto parsed = parseFrontMatter(out);
+    REQUIRE(parsed.frontMatter.title == "New title");
+    REQUIRE(parsed.body == "body");
+    const YAML::Node block = YAML::Load(out.substr(4, out.rfind("\n---\n") - 4));
+    REQUIRE(block["aliases"].as<std::vector<std::string>>() ==
+            std::vector<std::string>{"one", "two"});
+    REQUIRE(block["meta"]["source"].as<std::string>() == "obsidian");
+  }
+  SECTION("an existing file without usable front matter contributes nothing") {
+    for (const std::string& existing :
+         {std::string("plain text"), std::string("---\ntitle: [unclosed\n---\nx")}) {
+      CAPTURE(existing);
+      REQUIRE(serializeFrontMatter(fm, "body", existing) == serializeFrontMatter(fm, "body"));
+    }
+  }
+}
+
+TEST_CASE("replaceBody keeps the front-matter block byte for byte", "[FrontMatter]") {
+  REQUIRE(replaceBody("---\r\n# note\r\ntitle: A\r\n---\r\nold\r\n", "new\r\n") ==
+          "---\r\n# note\r\ntitle: A\r\n---\r\nnew\r\n");
+  REQUIRE(replaceBody("no front matter", "new") == "new");
+  REQUIRE(replaceBody("---\ntitle: [unclosed\n---\nold", "new") == "new");
+}
+
+TEST_CASE("withFrontMatterId replaces an id line or adds one", "[FrontMatter]") {
+  const std::string newId = "99999999-2222-4333-8444-555555555555";
+  REQUIRE(withFrontMatterId("---\nid: old\ntitle: A\n---\nbody", newId) ==
+          "---\nid: " + newId + "\ntitle: A\n---\nbody");
+  REQUIRE(withFrontMatterId("---\r\ntitle: A\r\n---\r\nbody", newId) ==
+          "---\r\nid: " + newId + "\r\ntitle: A\r\n---\r\nbody");
+  for (const std::string& raw :
+       {std::string("no front matter"), std::string("---\n{title: Flow}\n---\nbody"),
+        std::string("---\ntitle: [unclosed\n---\nbody")}) {
+    CAPTURE(raw);
+    REQUIRE_FALSE(withFrontMatterId(raw, newId).has_value());
   }
 }

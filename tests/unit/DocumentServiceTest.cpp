@@ -7,10 +7,12 @@
 #include "vault/PathGuard.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <yaml-cpp/yaml.h>
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 
 namespace fs = std::filesystem;
 using namespace wikicore;
@@ -478,4 +480,79 @@ TEST_CASE("DocumentService::rename gives a rewritten linker without an id of "
   REQUIRE(ids[0] == linker.frontMatter.id);
   std::sort(ids.begin(), ids.end());
   REQUIRE(std::adjacent_find(ids.begin(), ids.end()) == ids.end());
+}
+
+TEST_CASE("DocumentService update keeps front-matter keys it does not model",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.title = "Original";
+  input.body = "v1";
+  const auto created = svc.create("a.md", input);
+  std::ofstream(env.vaultRoot() / "a.md")
+      << "---\nid: " << created.frontMatter.id
+      << "\ntitle: Original\naliases: [one, two]\nmeta:\n  source: obsidian\n---\nv1";
+
+  input.title = "Changed";
+  input.body = "v2";
+  svc.update("a.md", input);
+
+  std::ifstream in(env.vaultRoot() / "a.md", std::ios::binary);
+  const std::string raw(std::istreambuf_iterator<char>(in), {});
+  const YAML::Node block = YAML::Load(raw.substr(4, raw.find("\n---\n", 4) - 4));
+  REQUIRE(block["title"].as<std::string>() == "Changed");
+  REQUIRE(block["id"].as<std::string>() == created.frontMatter.id);
+  REQUIRE(block["aliases"].as<std::vector<std::string>>() ==
+          std::vector<std::string>{"one", "two"});
+  REQUIRE(block["meta"]["source"].as<std::string>() == "obsidian");
+  REQUIRE(svc.get("a.md").body == "v2");
+}
+
+TEST_CASE("DocumentService::rename rewrites only the body of a linker",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.title = "Target";
+  input.body = "target";
+  svc.create("target.md", input);
+  input.title = "Linker";
+  input.body = "see [[target]]";
+  const auto linker = svc.create("linker.md", input);
+  svc.create("no-id.md", input);
+
+  const std::string linkerFrontMatter =
+      "---\r\n# written by hand\r\nid: " + linker.frontMatter.id +
+      "\r\ntitle: Linker\r\naliases: [one, two]\r\nvisibility: public\r\n---\r\n";
+  std::ofstream(env.vaultRoot() / "linker.md", std::ios::binary)
+      << linkerFrontMatter << "see [[target]]\r\n";
+  std::ofstream(env.vaultRoot() / "no-id.md", std::ios::binary)
+      << "---\ntitle: No id\naliases: [a]\n---\nsee [[target]]\n";
+
+  svc.rename("target.md", "moved.md");
+
+  auto readFile = [&](const char* path) {
+    std::ifstream in(env.vaultRoot() / path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), {});
+  };
+  REQUIRE(readFile("linker.md") == linkerFrontMatter + "see [[moved]]\r\n");
+
+  const std::string noIdId = svc.get("no-id.md").frontMatter.id;
+  REQUIRE(!noIdId.empty());
+  REQUIRE(readFile("no-id.md") ==
+          "---\nid: " + noIdId + "\ntitle: No id\naliases: [a]\n---\nsee [[moved]]\n");
+  REQUIRE(indexUpdater.findPathByUuid(noIdId) == std::string("no-id.md"));
 }

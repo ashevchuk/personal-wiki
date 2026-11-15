@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace wikicore::vault {
@@ -103,7 +104,8 @@ class DocumentService {
 
  private:
   DocumentRecord writeAndIndex(const std::string& relativePath,
-                                const DocumentInput& input, FrontMatter fm);
+                                const DocumentInput& input, FrontMatter fm,
+                                std::string_view existingRaw = {});
 
   // `existingId`, or a new id when it is empty or indexed for another path
   // (documents.uuid is UNIQUE).

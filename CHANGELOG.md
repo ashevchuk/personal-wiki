@@ -33,6 +33,11 @@ binaries — check a running/built copy with `wiki-server --version` or
   example on a locked index database); the error is logged and the existing
   index is served. `wiki-server --reindex` reports such a failure and exits
   with status 1 instead of aborting.
+- Renaming a document or moving a folder no longer rewrites the front
+  matter of the documents that link to it: only their body changes, so
+  hand-written keys and comments in those files are kept. Saving a document
+  from the editor keeps front-matter keys the app does not manage (YAML
+  comments in the block are still not kept).
 
 ## [0.10.1] - 2026-11-11
 

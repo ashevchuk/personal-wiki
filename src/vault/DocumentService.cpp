@@ -154,7 +154,7 @@ DocumentRecord DocumentService::update(const std::string& relativePath,
   fm.created = existing.frontMatter.created.empty() ? now : existing.frontMatter.created;
   fm.updated = now;
 
-  return writeAndIndex(relativePath, input, std::move(fm));
+  return writeAndIndex(relativePath, input, std::move(fm), existingRaw);
 }
 
 DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
@@ -192,8 +192,10 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
   const auto indexed = indexUpdater_.allIndexedPaths();
   for (const auto& path : indexed) {
     DocumentRecord rec;
+    std::string existingRaw;
     try {
       rec = get(path);
+      existingRaw = vault_.readRaw(path);
     } catch (const DocumentNotFoundError&) {
       continue;
     } catch (const std::filesystem::filesystem_error&) {
@@ -214,8 +216,15 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
       continue;
     }
 
-    rec.frontMatter.id = idToWrite(rec.frontMatter.id, path);
-    const std::string raw = serializeFrontMatter(rec.frontMatter, rewritten);
+    // Only the body is rewritten: this document was not the one renamed, and
+    // its front matter may hold keys and comments FrontMatter does not model.
+    std::string raw = replaceBody(existingRaw, rewritten);
+    const std::string id = idToWrite(rec.frontMatter.id, path);
+    if (id != rec.frontMatter.id) {
+      // Without a rewritable block the new id is a non-persisted stand-in.
+      if (auto withId = withFrontMatterId(raw, id)) raw = std::move(*withId);
+      rec.frontMatter.id = id;
+    }
     vault_.writeRawAtomic(path, raw);
 
     index::DocumentIndexEntry entry;
@@ -261,13 +270,9 @@ void DocumentService::softDelete(const std::string& relativePath) {
 
 DocumentRecord DocumentService::writeAndIndex(const std::string& relativePath,
                                                const DocumentInput& input,
-                                               FrontMatter fm) {
-  const std::string raw = serializeFrontMatter(fm, input.body);
-  vault_.writeRawAtomic(relativePath, raw);
-  const VaultRepository::FileStat stat = vault_.statFile(relativePath);
-
+                                               FrontMatter fm,
+                                               std::string_view existingRaw) {
   index::DocumentIndexEntry entry;
-  entry.uuid = fm.id;
   entry.path = relativePath;
   entry.title = fm.title;
   entry.docType = fm.type;
@@ -276,11 +281,14 @@ DocumentRecord DocumentService::writeAndIndex(const std::string& relativePath,
   entry.updatedAt = fm.updated;
   entry.dueAt = fm.due;
   entry.recur = fm.recur;
-  entry.fileMtime = stat.mtimeUnix;
-  entry.fileSize = stat.size;
   entry.excerpt = util::plainTextExcerpt(input.body);
   entry.tags = fm.tags;
   entry.body = input.body;
+  vault_.writeRawAtomic(relativePath, serializeFrontMatter(fm, input.body, existingRaw));
+  const VaultRepository::FileStat stat = vault_.statFile(relativePath);
+  entry.uuid = fm.id;
+  entry.fileMtime = stat.mtimeUnix;
+  entry.fileSize = stat.size;
   indexUpdater_.upsertOne(entry);
 
   return DocumentRecord{relativePath, std::move(fm), input.body};

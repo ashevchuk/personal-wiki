@@ -52,6 +52,16 @@ ParsedDocument parseFrontMatter(std::string_view rawContent);
 // what DocumentService writes to disk.
 std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body);
 
+// Same, for rewriting an existing file: top-level keys of `existingRaw`'s
+// front matter that FrontMatter does not model are emitted after the
+// modeled ones, so a hand-written key survives a save. YAML comments do not.
+std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body,
+                                 std::string_view existingRaw);
+
+// `rawContent` with its body (as parseFrontMatter defines it) replaced by
+// `newBody` and the front-matter block before it kept byte for byte.
+std::string replaceBody(std::string_view rawContent, std::string_view newBody);
+
 // Returns `rawContent` with the value of its top-level `id:` line replaced
 // by `newId` and every other byte untouched, so keys FrontMatter does not
 // model survive (serializeFrontMatter would drop them). nullopt when the
@@ -60,6 +70,11 @@ std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body)
 // id changed.
 std::optional<std::string> replaceFrontMatterId(std::string_view rawContent,
                                                 std::string_view newId);
+
+// replaceFrontMatterId, or, when the block has no `id:` line, an `id:` line
+// inserted right after the opening delimiter. Same nullopt contract.
+std::optional<std::string> withFrontMatterId(std::string_view rawContent,
+                                             std::string_view newId);
 
 // The editable fields of an uploaded .md file. A field is set only when the
 // file's front matter actually has that key, so a caller can leave its own
