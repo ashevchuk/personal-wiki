@@ -29,6 +29,10 @@ binaries — check a running/built copy with `wiki-server --version` or
   process holds the index database locked) is logged instead of stopping
   `wiki-server`; the file is picked up on its next change, a restart or a
   reindex.
+- The startup reindex no longer stops `wiki-server` when it fails (for
+  example on a locked index database); the error is logged and the existing
+  index is served. `wiki-server --reindex` reports such a failure and exits
+  with status 1 instead of aborting.
 
 ## [0.10.1] - 2026-11-11
 

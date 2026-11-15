@@ -50,6 +50,7 @@ import os
 import re
 import sys
 import sqlite3
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -310,6 +311,34 @@ def stress_watcher_vs_locked_index(server):
           f"status={status} body={body}")
 
 
+def stress_startup_rescan_vs_locked_index(server_bin):
+    print("\n--- 6. Startup rescan and --reindex while another process holds the index lock -")
+    held = {}
+
+    def hold_write_lock(server):
+        # A RESERVED lock lets the startup migration read the schema but makes
+        # every index write wait out busy_timeout (5 s) and fail.
+        held["conn"] = sqlite3.connect(os.path.join(server.sandbox, "index.db"),
+                                       isolation_level=None)
+        held["conn"].execute("BEGIN IMMEDIATE")
+        with open(os.path.join(server.vault, "startup.md"), "w") as f:
+            f.write("---\ntitle: Startup\nvisibility: public\n---\nindexed-at-startup\n")
+
+    with Server(server_bin, threads=2, before_start=hold_write_lock) as server:
+        try:
+            time.sleep(7)  # startup rescan waits out busy_timeout (5 s), then fails
+            check("server survives a startup rescan that fails with SQLITE_BUSY",
+                  server.is_alive())
+            proc = subprocess.run([server.server_bin, "--reindex"], cwd=server.sandbox,
+                                  capture_output=True, text=True, timeout=30)
+            check("--reindex reports a locked index and exits 1 instead of aborting",
+                  proc.returncode == 1 and "Reindex failed" in proc.stderr,
+                  f"exit={proc.returncode} stderr={proc.stderr[-200:]!r}")
+        finally:
+            held["conn"].execute("ROLLBACK")
+            held["conn"].close()
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: stress_concurrency.py <path-to-wiki-server-binary>", file=sys.stderr)
@@ -333,6 +362,7 @@ def main():
         stress_api_vs_external_writer(server)
     with Server(server_bin, threads=4) as server:
         stress_watcher_vs_locked_index(server)
+    stress_startup_rescan_vs_locked_index(server_bin)
 
     print(f"\n{'=' * 60}")
     if FAILURES:

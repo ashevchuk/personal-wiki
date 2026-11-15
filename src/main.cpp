@@ -127,9 +127,14 @@ int runReindex(const wikicore::config::AppConfig& cfg, wikicore::index::Database
                                               cfg.embeddingsMinContentWords);
   wikicore::index::IndexBuilder builder(vault, indexUpdater);
 
-  const wikicore::index::RescanStats stats = builder.fullRescan();
-  std::cout << "Reindexed " << stats.documentsIndexed << " document(s), removed "
-            << stats.staleRowsRemoved << " stale row(s).\n";
+  try {
+    const wikicore::index::RescanStats stats = builder.fullRescan();
+    std::cout << "Reindexed " << stats.documentsIndexed << " document(s), removed "
+              << stats.staleRowsRemoved << " stale row(s).\n";
+  } catch (const std::exception& e) {
+    std::cerr << "Reindex failed: " << e.what() << "\n";
+    return 1;
+  }
   return 0;
 }
 
@@ -347,9 +352,15 @@ int main(int argc, char** argv) {
   // RescanProgress.h's own comment on why this needs no mutex.
   wikicore::index::RescanProgress rescanProgress;
   std::thread startupRescanThread([&indexBuilder, &rescanProgress] {
-    const wikicore::index::RescanStats stats = indexBuilder.fullRescan(&rescanProgress);
-    LOG_INFO << "startup reindex: " << stats.documentsIndexed << " document(s), "
-             << stats.staleRowsRemoved << " stale row(s) removed";
+    // An exception escaping this thread would std::terminate the server.
+    try {
+      const wikicore::index::RescanStats stats = indexBuilder.fullRescan(&rescanProgress);
+      LOG_INFO << "startup reindex: " << stats.documentsIndexed << " document(s), "
+               << stats.staleRowsRemoved << " stale row(s) removed";
+    } catch (const std::exception& e) {
+      LOG_ERROR << "startup reindex failed: " << e.what()
+                << " — serving the existing index; run a reindex to bring it up to date";
+    }
   });
 
   // VaultWatcher runs on its own background thread and gets its OWN

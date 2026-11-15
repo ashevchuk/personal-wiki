@@ -131,7 +131,7 @@ class Server:
     it verbatim. Use as a context manager."""
 
     def __init__(self, server_bin, threads=4, admin_password="SuperSecret123",
-                 embeddings_model_path=None):
+                 embeddings_model_path=None, before_start=None):
         self.server_bin = os.path.abspath(server_bin)
         self.threads = threads
         self.admin_password = admin_password
@@ -150,6 +150,9 @@ class Server:
         # gates on that build flag before ever constructing a Server this
         # way (see stress_embeddings_concurrency.py).
         self.embeddings_model_path = embeddings_model_path
+        # Optional callable(server), run after --create-admin and before
+        # the server process starts (the index db exists by then).
+        self.before_start = before_start
 
     def __enter__(self):
         os.makedirs(self.vault, exist_ok=True)
@@ -190,6 +193,9 @@ level = "warn"
         if admin_proc.returncode != 0:
             shutil.rmtree(self.sandbox, ignore_errors=True)
             raise RuntimeError(f"--create-admin failed: {admin_proc.stdout} {admin_proc.stderr}")
+
+        if self.before_start:
+            self.before_start(self)
 
         self.proc = subprocess.Popen(
             [self.server_bin], cwd=self.sandbox,
