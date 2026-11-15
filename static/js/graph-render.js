@@ -31,6 +31,7 @@ window.WikiGraphRender = (function () {
   var LABEL_DY = 18;
   var CENTER_LABEL_DY = 22;
   var ABOVE_LABEL_DY = -12;
+  var CENTER_ABOVE_LABEL_DY = ABOVE_LABEL_DY - (CENTER_LABEL_DY - LABEL_DY);
   var LABEL_HALF_ALLOWANCE = 110;
   var LABEL_CHAR_W = 6.6;
   var LABEL_BOX_H = 13;
@@ -48,6 +49,18 @@ window.WikiGraphRender = (function () {
       d[edges[i].target] = (d[edges[i].target] || 0) + 1;
     }
     return d;
+  }
+
+  function buildNeighbors(edges) {
+    var n = {};
+    function add(a, b) {
+      (n[a] = n[a] || []).push(b);
+    }
+    for (var i = 0; i < edges.length; i++) {
+      add(edges[i].source, edges[i].target);
+      add(edges[i].target, edges[i].source);
+    }
+    return n;
   }
 
   function matchesQuery(node, q) {
@@ -140,6 +153,7 @@ window.WikiGraphRender = (function () {
       query: (options.query || "").trim(),
       labelMode: mode,
       degrees: buildDegrees(edges),
+      neighbors: buildNeighbors(edges),
       centerPath: options.centerPath || null,
       matchPaths: options.matchPaths || {},
     };
@@ -373,13 +387,26 @@ window.WikiGraphRender = (function () {
     return node.title || node.path;
   }
 
-  // In a local graph the edges of a node above the centre run downward,
-  // straight through a label placed below it, so such labels go above.
+  // A label sits on the side of its node that its edges leave from: in a
+  // local graph (centre plus neighbours of neighbours) a node's edges do
+  // not all run toward the centre, so the centre's position says nothing
+  // about where they would cross a label. The full graph keeps every label
+  // below its node.
   function labelDy(node, p, view, positions) {
-    if (node.path === view.centerPath) return CENTER_LABEL_DY;
-    var centre = view.centerPath && positions[view.centerPath];
-    if (centre && p.y < centre.y) return ABOVE_LABEL_DY;
-    return LABEL_DY;
+    var isCenter = node.path === view.centerPath;
+    if (view.centerPath && edgesMostlyBelow(node, p, view, positions)) {
+      return isCenter ? CENTER_ABOVE_LABEL_DY : ABOVE_LABEL_DY;
+    }
+    return isCenter ? CENTER_LABEL_DY : LABEL_DY;
+  }
+
+  function edgesMostlyBelow(node, p, view, positions) {
+    var sumDy = 0;
+    (view.neighbors[node.path] || []).forEach(function (other) {
+      var q = positions[other];
+      if (q) sumDy += q.y - p.y;
+    });
+    return sumDy > 0;
   }
 
   function readPalette(host) {

@@ -16,6 +16,13 @@ binaries — check a running/built copy with `wiki-server --version` or
   HTML only and the editor and history pages for markdown only, so each
   page load transfers and renders only what it shows.
 
+### Fixed
+
+- In a document's local graph, each label is placed above or below its
+  node on the side away from that node's own edges, so edges no longer run
+  through labels when the graph reaches neighbours of neighbours or when
+  the current document sits above the rest of the graph.
+
 ## [0.10.2] - 2026-11-15
 
 ### Fixed
