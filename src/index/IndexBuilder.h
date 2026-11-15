@@ -51,9 +51,18 @@ class IndexBuilder {
   // IndexUpdater::removeOne itself; this method deliberately doesn't do
   // that removal on the caller's behalf, since "file missing" and "file
   // unreadable" would otherwise be indistinguishable to the caller.
+  //
+  // A front-matter id already indexed for another path is resolved here,
+  // because documents.uuid is UNIQUE: if that other file still carries the
+  // id, this file is a copy and gets a fresh id written into its front
+  // matter (only the `id:` line changes); if the other file is gone (a
+  // rename nothing saw) its row moves to this path, history included; if it
+  // now carries a different id, its row lets go of this one.
   bool reindexOneFile(const std::string& relativePath);
 
  private:
+  bool idHeldByAnotherFile(const std::string& id, const std::string& relativePath);
+
   vault::VaultRepository& vault_;
   IndexUpdater& indexUpdater_;
 };

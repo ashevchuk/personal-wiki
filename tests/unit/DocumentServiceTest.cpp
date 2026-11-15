@@ -121,6 +121,35 @@ TEST_CASE("DocumentService update preserves id/created, bumps updated, "
                      vault::DocumentNotFoundError);
 }
 
+TEST_CASE("DocumentService update gives a document whose id another file "
+          "holds a new id of its own",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.title = "Original";
+  input.body = "v1";
+  const auto original = svc.create("a.md", input);
+  fs::copy_file(env.vaultRoot() / "a.md", env.vaultRoot() / "b.md");
+
+  input.title = "Copy";
+  input.body = "v2";
+  const auto updated = svc.update("b.md", input);
+
+  REQUIRE(!updated.frontMatter.id.empty());
+  REQUIRE(updated.frontMatter.id != original.frontMatter.id);
+  REQUIRE(svc.get("b.md").frontMatter.id == updated.frontMatter.id);
+  REQUIRE(svc.get("a.md").frontMatter.id == original.frontMatter.id);
+  REQUIRE(indexUpdater.findPathByUuid(original.frontMatter.id) == std::string("a.md"));
+  REQUIRE(indexUpdater.findPathByUuid(updated.frontMatter.id) == std::string("b.md"));
+}
+
 TEST_CASE("DocumentService::update snapshots the PRE-edit state, "
           "create() snapshots nothing",
           "[DocumentService]") {

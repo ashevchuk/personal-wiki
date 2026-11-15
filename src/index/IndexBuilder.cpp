@@ -37,13 +37,25 @@ bool IndexBuilder::reindexOneFile(const std::string& relativePath) {
   }
   // A rescan describes what's on disk — it does NOT write anything back
   // to a file nobody asked it to touch, even if that file's front matter
-  // is missing an id. But documents.uuid is NOT NULL UNIQUE, so an empty
+  // is missing an id (the one exception is a copied id, below). But
+  // documents.uuid is NOT NULL UNIQUE, so an empty
   // id still needs a stand-in value for the index row; this is generated
   // fresh (and NOT persisted), so it'll simply be regenerated differently
   // next time until the file is actually saved through DocumentService
   // once — acceptable churn for something that was never a stable
   // identifier to begin with.
-  const std::string uuidForIndex = fm.id.empty() ? util::newUuidV4() : fm.id;
+  std::string uuidForIndex = fm.id.empty() ? util::newUuidV4() : fm.id;
+  if (!fm.id.empty() && idHeldByAnotherFile(fm.id, relativePath)) {
+    uuidForIndex = util::newUuidV4();
+    // If the file can't be rewritten (unusual front-matter layout, read-only
+    // vault), the fresh id is a non-persisted stand-in like a missing id.
+    if (const auto healed = vault::replaceFrontMatterId(raw, uuidForIndex)) {
+      try {
+        vault_.writeRawAtomic(relativePath, *healed);
+      } catch (const std::exception&) {
+      }
+    }
+  }
 
   DocumentIndexEntry idxEntry;
   idxEntry.uuid = uuidForIndex;
@@ -68,6 +80,31 @@ bool IndexBuilder::reindexOneFile(const std::string& relativePath) {
 
   indexUpdater_.upsertOne(idxEntry);
   return true;
+}
+
+bool IndexBuilder::idHeldByAnotherFile(const std::string& id,
+                                       const std::string& relativePath) {
+  const auto holder = indexUpdater_.findPathByUuid(id);
+  if (!holder || *holder == relativePath) return false;
+
+  std::string holderRaw;
+  try {
+    holderRaw = vault_.readRaw(*holder);
+  } catch (const std::exception&) {
+    // Renamed outside the app: move the row so its history follows the file.
+    if (indexUpdater_.rowIdForPath(relativePath)) {
+      indexUpdater_.removeOne(*holder);
+    } else {
+      indexUpdater_.repathOne(*holder, relativePath);
+    }
+    return false;
+  }
+  if (vault::parseFrontMatter(holderRaw).frontMatter.id == id) return true;
+
+  // The holder's file now carries another id and gets its own row updated
+  // when it is re-indexed (the rescan visits it; the watcher has its event).
+  indexUpdater_.releaseUuid(*holder);
+  return false;
 }
 
 RescanStats IndexBuilder::fullRescan(RescanProgress* progress) {

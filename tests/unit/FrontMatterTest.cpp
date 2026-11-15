@@ -175,3 +175,31 @@ TEST_CASE("parseForImport treats a file without usable front matter as pure body
     REQUIRE_FALSE(imported.fields.visibility.has_value());
   }
 }
+
+TEST_CASE("replaceFrontMatterId rewrites only the top-level id line",
+          "[FrontMatter]") {
+  using wikicore::vault::replaceFrontMatterId;
+  const std::string newId = "99999999-2222-4333-8444-555555555555";
+
+  SECTION("every other byte of the file is kept") {
+    const std::string raw =
+        "---\ntitle: Note\nid: old-id\naliases: [x, y]\nmeta:\n  id: nested\n---\nbody id: old-id\n";
+    REQUIRE(replaceFrontMatterId(raw, newId) ==
+            "---\ntitle: Note\nid: " + newId +
+                "\naliases: [x, y]\nmeta:\n  id: nested\n---\nbody id: old-id\n");
+  }
+  SECTION("CRLF line endings survive") {
+    REQUIRE(replaceFrontMatterId("---\r\nid: \"old-id\"\r\n---\r\nbody\r\n", newId) ==
+            "---\r\nid: " + newId + "\r\n---\r\nbody\r\n");
+  }
+  SECTION("front matter it cannot rewrite in place is refused") {
+    for (const std::string& raw :
+         {std::string("no front matter, id: old-id\n"),
+          std::string("---\n{id: old-id, title: Flow}\n---\nbody\n"),
+          std::string("---\nid: >\n  folded-old-id\n---\nbody\n"),
+          std::string("---\ntitle: No id here\n---\nbody\n")}) {
+      CAPTURE(raw);
+      REQUIRE_FALSE(replaceFrontMatterId(raw, newId).has_value());
+    }
+  }
+}

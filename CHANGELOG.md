@@ -16,6 +16,12 @@ binaries — check a running/built copy with `wiki-server --version` or
   sqlite3, argon2, brotli and libuuid, which made document API responses
   several times slower. Release artifacts and `tools/wiki-ops.sh` builds
   always pass the build type explicitly and were not affected.
+- `wiki-server` no longer fails to start, and no longer exits while
+  running, when two vault files share a front-matter `id`. A copied
+  document gets a new `id` written into its own front matter (only that
+  line changes; the original keeps its `id`). A document renamed outside
+  the app while the server was stopped keeps its `id` and its version
+  history.
 
 ## [0.10.1] - 2026-11-11
 

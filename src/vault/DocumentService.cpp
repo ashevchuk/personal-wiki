@@ -144,7 +144,11 @@ DocumentRecord DocumentService::update(const std::string& relativePath,
   }
 
   FrontMatter fm;
-  fm.id = existing.frontMatter.id.empty() ? util::newUuidV4() : existing.frontMatter.id;
+  const std::string& existingId = existing.frontMatter.id;
+  const auto idHolder =
+      existingId.empty() ? std::nullopt : indexUpdater_.findPathByUuid(existingId);
+  const bool idIsAnotherDocuments = idHolder && *idHolder != relativePath;
+  fm.id = existingId.empty() || idIsAnotherDocuments ? util::newUuidV4() : existingId;
   fm.title = input.title;
   fm.tags = input.tags;
   fm.visibility = normalizeVisibility(input.visibility);

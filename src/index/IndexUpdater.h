@@ -114,6 +114,11 @@ class IndexUpdater {
   // (UNIQUE on documents.path); the caller checks the vault first.
   void repathOne(const std::string& oldPath, const std::string& newPath);
 
+  // Gives the row at `path` a fresh, non-persisted stand-in uuid so its old
+  // one can be indexed for another path, keeping the row (and its history)
+  // until `path` itself is re-indexed. No-op if the path isn't indexed.
+  void releaseUuid(const std::string& path);
+
   // Every currently-indexed document path — used by IndexBuilder's stale
   // sweep to find rows whose file no longer exists on disk.
   std::vector<std::string> allIndexedPaths() const;

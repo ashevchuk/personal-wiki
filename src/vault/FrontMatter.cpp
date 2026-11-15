@@ -171,4 +171,49 @@ std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body)
   return "---\n" + std::string(out.c_str()) + "\n---\n" + body;
 }
 
+std::optional<std::string> replaceFrontMatterId(std::string_view rawContent,
+                                                std::string_view newId) {
+  const auto split = splitFrontMatterBlock(rawContent);
+  if (!split) return std::nullopt;
+  const size_t yamlStart = rawContent.find('\n') + 1;
+  const size_t yamlEnd = split->second;
+
+  constexpr std::string_view kIdKey = "id:";
+  std::optional<std::pair<size_t, size_t>> valueRange;
+  for (size_t lineStart = yamlStart; lineStart < yamlEnd;) {
+    size_t lineEnd = rawContent.find('\n', lineStart);
+    if (lineEnd == std::string_view::npos || lineEnd > yamlEnd) lineEnd = yamlEnd;
+    std::string_view line = rawContent.substr(lineStart, lineEnd - lineStart);
+    if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+
+    const bool isTopLevelIdKey =
+        line.substr(0, kIdKey.size()) == kIdKey &&
+        (line.size() == kIdKey.size() || line[kIdKey.size()] == ' ' ||
+         line[kIdKey.size()] == '\t');
+    if (isTopLevelIdKey) {
+      if (valueRange) return std::nullopt;  // duplicate key: ambiguous
+      valueRange = {lineStart + kIdKey.size(), lineStart + line.size()};
+    }
+    lineStart = lineEnd + 1;
+  }
+  if (!valueRange) return std::nullopt;
+
+  std::string rewritten(rawContent.substr(0, valueRange->first));
+  rewritten += ' ';
+  rewritten += newId;
+  rewritten += rawContent.substr(valueRange->second);
+
+  const ParsedDocument before = parseFrontMatter(rawContent);
+  const ParsedDocument after = parseFrontMatter(rewritten);
+  const FrontMatter& b = before.frontMatter;
+  const FrontMatter& a = after.frontMatter;
+  const bool onlyIdChanged =
+      a.id == newId && after.body == before.body && a.title == b.title &&
+      a.tags == b.tags && a.visibility == b.visibility && a.type == b.type &&
+      a.created == b.created && a.updated == b.updated && a.due == b.due &&
+      a.recur == b.recur;
+  if (!onlyIdChanged) return std::nullopt;
+  return rewritten;
+}
+
 }  // namespace wikicore::vault

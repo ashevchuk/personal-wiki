@@ -3,6 +3,7 @@
 #include "index/Statement.h"
 #include "util/LinkItems.h"
 #include "util/TodoItems.h"
+#include "util/Uuid.h"
 #include "util/WikiLinks.h"
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
@@ -499,6 +500,13 @@ void IndexUpdater::repathOne(const std::string& oldPath, const std::string& newP
     rollback.run();
     throw;
   }
+}
+
+void IndexUpdater::releaseUuid(const std::string& path) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  Statement update(db_.handle(), "UPDATE documents SET uuid = ?1 WHERE path = ?2;");
+  update.bind(1, util::newUuidV4()).bind(2, path);
+  update.run();
 }
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
