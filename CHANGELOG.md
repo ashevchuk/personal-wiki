@@ -22,6 +22,9 @@ binaries — check a running/built copy with `wiki-server --version` or
   line changes; the original keeps its `id`). A document renamed outside
   the app while the server was stopped keeps its `id` and its version
   history.
+- Renaming a document no longer fails partway when a document that links
+  to it has no `id` or carries another document's `id`; that linker gets
+  a new `id` of its own.
 
 ## [0.10.1] - 2026-11-11
 

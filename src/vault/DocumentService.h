@@ -105,6 +105,10 @@ class DocumentService {
   DocumentRecord writeAndIndex(const std::string& relativePath,
                                 const DocumentInput& input, FrontMatter fm);
 
+  // `existingId`, or a new id when it is empty or indexed for another path
+  // (documents.uuid is UNIQUE).
+  std::string idToWrite(const std::string& existingId, const std::string& relativePath) const;
+
   VaultRepository& vault_;
   index::IndexUpdater& indexUpdater_;
   index::SnapshotStore& snapshots_;

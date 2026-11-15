@@ -8,6 +8,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 
@@ -431,4 +432,50 @@ TEST_CASE("DocumentService refuses paths with a dot-prefixed segment", "[Documen
   svc.create("notes/c.md", input);
   REQUIRE_THROWS_AS(svc.rename("notes/c.md", ".trash/c.md"), vault::PathTraversalError);
   REQUIRE(fs::exists(env.vaultRoot() / "notes/c.md"));
+}
+
+TEST_CASE("DocumentService::rename gives a rewritten linker without an id of "
+          "its own a new one",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.title = "Target";
+  input.body = "target";
+  svc.create("target.md", input);
+  input.title = "Linker";
+  input.body = "see [[target]]";
+  const auto linker = svc.create("linker.md", input);
+  svc.create("copy.md", input);
+  svc.create("no-id-1.md", input);
+  svc.create("no-id-2.md", input);
+
+  // Overwritten on disk but not yet re-indexed: copy.md now carries
+  // linker.md's id, and the no-id files carry none.
+  fs::copy_file(env.vaultRoot() / "linker.md", env.vaultRoot() / "copy.md",
+                fs::copy_options::overwrite_existing);
+  for (const char* path : {"no-id-1.md", "no-id-2.md"}) {
+    std::ofstream(env.vaultRoot() / path) << "---\ntitle: No id\n---\nsee [[target]]";
+  }
+
+  svc.rename("target.md", "moved.md");
+
+  std::vector<std::string> ids;
+  for (const char* path : {"linker.md", "copy.md", "no-id-1.md", "no-id-2.md"}) {
+    CAPTURE(path);
+    const auto rec = svc.get(path);
+    REQUIRE(rec.body.find("[[moved]]") != std::string::npos);
+    REQUIRE(!rec.frontMatter.id.empty());
+    REQUIRE(indexUpdater.findPathByUuid(rec.frontMatter.id) == std::string(path));
+    ids.push_back(rec.frontMatter.id);
+  }
+  REQUIRE(ids[0] == linker.frontMatter.id);
+  std::sort(ids.begin(), ids.end());
+  REQUIRE(std::adjacent_find(ids.begin(), ids.end()) == ids.end());
 }

@@ -144,11 +144,7 @@ DocumentRecord DocumentService::update(const std::string& relativePath,
   }
 
   FrontMatter fm;
-  const std::string& existingId = existing.frontMatter.id;
-  const auto idHolder =
-      existingId.empty() ? std::nullopt : indexUpdater_.findPathByUuid(existingId);
-  const bool idIsAnotherDocuments = idHolder && *idHolder != relativePath;
-  fm.id = existingId.empty() || idIsAnotherDocuments ? util::newUuidV4() : existingId;
+  fm.id = idToWrite(existing.frontMatter.id, relativePath);
   fm.title = input.title;
   fm.tags = input.tags;
   fm.visibility = normalizeVisibility(input.visibility);
@@ -218,6 +214,7 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
       continue;
     }
 
+    rec.frontMatter.id = idToWrite(rec.frontMatter.id, path);
     const std::string raw = serializeFrontMatter(rec.frontMatter, rewritten);
     vault_.writeRawAtomic(path, raw);
 
@@ -244,6 +241,13 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
   }
 
   return get(newPath);
+}
+
+std::string DocumentService::idToWrite(const std::string& existingId,
+                                       const std::string& relativePath) const {
+  if (existingId.empty()) return util::newUuidV4();
+  const auto holder = indexUpdater_.findPathByUuid(existingId);
+  return holder && *holder != relativePath ? util::newUuidV4() : existingId;
 }
 
 void DocumentService::softDelete(const std::string& relativePath) {
