@@ -249,6 +249,12 @@ int64_t IndexUpdater::upsertOne(const DocumentIndexEntry& entry) {
   begin.run();
 
   try {
+    {
+      Statement holder(db_.handle(),
+                       "SELECT 1 FROM documents WHERE uuid = ?1 AND path <> ?2;");
+      holder.bind(1, entry.uuid).bind(2, entry.path);
+      if (holder.step()) throw UuidTakenError("uuid already indexed for another path");
+    }
     const auto existingRowId = findRowIdByPath(db_, entry.path);
 
     if (existingRowId) {

@@ -44,21 +44,22 @@ bool IndexBuilder::reindexOneFile(const std::string& relativePath) {
   // next time until the file is actually saved through DocumentService
   // once — acceptable churn for something that was never a stable
   // identifier to begin with.
-  std::string uuidForIndex = fm.id.empty() ? util::newUuidV4() : fm.id;
-  if (!fm.id.empty() && idHeldByAnotherFile(fm.id, relativePath)) {
-    uuidForIndex = util::newUuidV4();
+  auto resolveUuid = [&]() {
+    if (fm.id.empty()) return util::newUuidV4();
+    if (!idHeldByAnotherFile(fm.id, relativePath)) return fm.id;
+    const std::string freshId = util::newUuidV4();
     // If the file can't be rewritten (unusual front-matter layout, read-only
     // vault), the fresh id is a non-persisted stand-in like a missing id.
-    if (const auto healed = vault::replaceFrontMatterId(raw, uuidForIndex)) {
+    if (const auto healed = vault::replaceFrontMatterId(raw, freshId)) {
       try {
         vault_.writeRawAtomic(relativePath, *healed);
       } catch (const std::exception&) {
       }
     }
-  }
+    return freshId;
+  };
 
   DocumentIndexEntry idxEntry;
-  idxEntry.uuid = uuidForIndex;
   idxEntry.path = relativePath;
   idxEntry.title = fm.title;
   idxEntry.docType = fm.type;
@@ -70,16 +71,26 @@ bool IndexBuilder::reindexOneFile(const std::string& relativePath) {
   idxEntry.tags = fm.tags;
   idxEntry.body = parsed.body;
   idxEntry.excerpt = util::plainTextExcerpt(parsed.body);
-  try {
-    const auto stat = vault_.statFile(relativePath);
-    idxEntry.fileMtime = stat.mtimeUnix;
-    idxEntry.fileSize = stat.size;
-  } catch (const std::exception&) {
-    // leave at 0 -- not worth failing over
-  }
 
-  indexUpdater_.upsertOne(idxEntry);
-  return true;
+  // A second attempt covers another connection indexing the same id for
+  // another path between idHeldByAnotherFile's check and the upsert.
+  constexpr int kAttempts = 2;
+  for (int attempt = 1;; ++attempt) {
+    idxEntry.uuid = resolveUuid();
+    try {
+      const auto stat = vault_.statFile(relativePath);
+      idxEntry.fileMtime = stat.mtimeUnix;
+      idxEntry.fileSize = stat.size;
+    } catch (const std::exception&) {
+      // leave at 0 -- not worth failing over
+    }
+    try {
+      indexUpdater_.upsertOne(idxEntry);
+      return true;
+    } catch (const UuidTakenError&) {
+      if (attempt == kAttempts) throw;
+    }
+  }
 }
 
 bool IndexBuilder::idHeldByAnotherFile(const std::string& id,

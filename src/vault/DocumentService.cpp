@@ -14,6 +14,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
+constexpr int kUpsertAttempts = 2;
+
 std::string normalizeVisibility(const std::string& v) {
   return v == "public" ? "public" : "private";  // fail-safe, same rule as parsing
 }
@@ -246,7 +248,16 @@ DocumentRecord DocumentService::rename(const std::string& oldRelativePathIn,
       entry.fileSize = stat.size;
     } catch (const std::exception&) {
     }
-    indexUpdater_.upsertOne(entry);
+    try {
+      indexUpdater_.upsertOne(entry);
+    } catch (const index::UuidTakenError&) {
+      // Same race as in writeAndIndex: take a fresh id and retry once.
+      entry.uuid = util::newUuidV4();
+      if (auto withId = withFrontMatterId(raw, entry.uuid)) {
+        vault_.writeRawAtomic(path, *withId);
+      }
+      indexUpdater_.upsertOne(entry);
+    }
   }
 
   return get(newPath);
@@ -284,12 +295,23 @@ DocumentRecord DocumentService::writeAndIndex(const std::string& relativePath,
   entry.excerpt = util::plainTextExcerpt(input.body);
   entry.tags = fm.tags;
   entry.body = input.body;
-  vault_.writeRawAtomic(relativePath, serializeFrontMatter(fm, input.body, existingRaw));
-  const VaultRepository::FileStat stat = vault_.statFile(relativePath);
-  entry.uuid = fm.id;
-  entry.fileMtime = stat.mtimeUnix;
-  entry.fileSize = stat.size;
-  indexUpdater_.upsertOne(entry);
+
+  // A second attempt covers another connection (VaultWatcher) indexing this
+  // id for another path after idToWrite's check.
+  for (int attempt = 1;; ++attempt) {
+    vault_.writeRawAtomic(relativePath, serializeFrontMatter(fm, input.body, existingRaw));
+    const VaultRepository::FileStat stat = vault_.statFile(relativePath);
+    entry.uuid = fm.id;
+    entry.fileMtime = stat.mtimeUnix;
+    entry.fileSize = stat.size;
+    try {
+      indexUpdater_.upsertOne(entry);
+      break;
+    } catch (const index::UuidTakenError&) {
+      if (attempt == kUpsertAttempts) throw;
+      fm.id = util::newUuidV4();
+    }
+  }
 
   return DocumentRecord{relativePath, std::move(fm), input.body};
 }

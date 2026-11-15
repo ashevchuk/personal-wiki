@@ -314,3 +314,29 @@ TEST_CASE("IndexBuilder::fullRescan indexes a duplicate id it cannot rewrite in 
   q.includePrivate = true;
   REQUIRE(search.search(q).size() == 2);
 }
+
+TEST_CASE("IndexUpdater::upsertOne refuses a uuid indexed for another path and "
+          "leaves the index as it was",
+          "[IndexBuilder]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater updater(db);
+
+  index::DocumentIndexEntry entry;
+  entry.uuid = kSharedId;
+  entry.path = "a.md";
+  entry.title = "A";
+  entry.visibility = "public";
+  entry.body = "body";
+  updater.upsertOne(entry);
+
+  entry.path = "b.md";
+  REQUIRE_THROWS_AS(updater.upsertOne(entry), index::UuidTakenError);
+  REQUIRE(updater.allIndexedPaths() == std::vector<std::string>{"a.md"});
+
+  entry.uuid = "99999999-2222-4333-8444-555555555555";
+  updater.upsertOne(entry);
+  REQUIRE(updater.findPathByUuid(entry.uuid) == std::string("b.md"));
+  REQUIRE(updater.findPathByUuid(kSharedId) == std::string("a.md"));
+}

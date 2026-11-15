@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <mutex>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,15 @@ struct DocumentIndexEntry {
   std::string excerpt;
   std::vector<std::string> tags;
   std::string body;  // fed into documents_fts, not stored as its own column
+};
+
+// upsertOne was given a uuid that the index already holds for another path
+// (documents.uuid is UNIQUE). Checked inside upsertOne's write transaction,
+// so it also catches a row another connection wrote after the caller's own
+// check; the caller picks another id and retries.
+class UuidTakenError : public std::runtime_error {
+ public:
+  using std::runtime_error::runtime_error;
 };
 
 // Keeps the SQLite index in sync with one document at a time, as it's
