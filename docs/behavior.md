@@ -30,6 +30,17 @@ code is built, just what you'll notice as someone using or running it.
   about a second and updates search automatically. This is best-effort,
   not a hard guarantee — if something ever looks out of date, restart
   the server or run `wiki-server --reindex` to force a full resync.
+- **A copied document gets its own `id` automatically.** Every document
+  has a unique `id` in its front matter. If you copy a file inside the
+  vault, the app writes a new `id` into the copy the next time it indexes
+  it; only that one line changes, and the original keeps its `id`. A
+  file you rename or move outside the app keeps its `id` and its version
+  history.
+- **The app only rewrites the front-matter keys it manages.** Renaming
+  or moving a document changes only the body of the documents that link
+  to it. Saving a document from the editor keeps keys the app doesn't use
+  (`aliases`, plugin settings, ...), but not YAML comments inside the
+  front-matter block.
 
 ## Visibility and privacy
 

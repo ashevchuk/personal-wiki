@@ -339,6 +339,35 @@ def stress_startup_rescan_vs_locked_index(server_bin):
             held["conn"].close()
 
 
+def stress_copy_while_running(server):
+    print("\n--- 7. A document copied into the vault while the server runs -")
+    original_id = "11111111-2222-4333-8444-555555555555"
+    original = (f"---\nid: {original_id}\ntitle: Original\naliases: [kept]\n"
+                "visibility: public\n---\ncopied-while-running\n")
+    with open(os.path.join(server.vault, "original.md"), "w") as f:
+        f.write(original)
+    time.sleep(1.5)  # VaultWatcher debounce + processing headroom
+    with open(os.path.join(server.vault, "copy.md"), "w") as f:
+        f.write(original)
+    time.sleep(1.5)
+
+    check("server survives a copy that shares the original's id", server.is_alive())
+    with open(os.path.join(server.vault, "original.md")) as f:
+        check("the original file is untouched", f.read() == original)
+    with open(os.path.join(server.vault, "copy.md")) as f:
+        copy = f.read()
+    copy_id = re.search(r"^id: (\S+)$", copy, re.M)
+    check("the copy got a new id written into its front matter",
+          copy_id is not None and copy_id.group(1) != original_id, f"copy={copy!r}")
+    check("nothing else in the copy changed",
+          copy_id is not None and copy == original.replace(original_id, copy_id.group(1)),
+          f"copy={copy!r}")
+    status, _, body = server.client().get_json("/api/search?q=copied-while-running")
+    paths = sorted(r["path"] for r in body["results"]) if body else []
+    check("both documents are searchable", paths == ["copy.md", "original.md"],
+          f"status={status} paths={paths}")
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: stress_concurrency.py <path-to-wiki-server-binary>", file=sys.stderr)
@@ -363,6 +392,8 @@ def main():
     with Server(server_bin, threads=4) as server:
         stress_watcher_vs_locked_index(server)
     stress_startup_rescan_vs_locked_index(server_bin)
+    with Server(server_bin, threads=2) as server:
+        stress_copy_while_running(server)
 
     print(f"\n{'=' * 60}")
     if FAILURES:
