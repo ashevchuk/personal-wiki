@@ -8,6 +8,14 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Changed
+
+- `GET /api/documents/{path}` accepts `?content=html` (only `renderedHtml`)
+  or `?content=markdown` (only `body`, without rendering the markdown);
+  without the parameter the response is unchanged. The view page asks for
+  HTML only and the editor and history pages for markdown only, so each
+  page load transfers and renders only what it shows.
+
 ## [0.10.2] - 2026-11-15
 
 ### Fixed

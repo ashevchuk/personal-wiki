@@ -145,7 +145,7 @@ window.WikiPages = window.WikiPages || {};
   }
 
   window.WikiPages.renderView = function (container, docPath, session) {
-    fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath), {
+    fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath) + "?content=html", {
       credentials: "same-origin",
     })
       .then(function (resp) {

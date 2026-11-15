@@ -49,7 +49,7 @@ window.WikiPages = window.WikiPages || {};
       return;
     }
 
-    fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath), {
+    fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath) + "?content=markdown", {
       credentials: "same-origin",
     })
       .then(function (resp) {

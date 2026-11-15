@@ -157,11 +157,23 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
   // here as "this is a new, not-yet-saved document" rather than an error.
   // Same fail-safe-private visibility gating /d/{path...} always had:
   // 404, not 403, for a private document to an anonymous caller.
+  // `?content=html` returns only renderedHtml, `?content=markdown` only
+  // body (and skips rendering); without it the response carries both.
   app.registerHandlerViaRegex(
       "^/api/documents/(.*)$",
       [&vault, &nav](const HttpRequestPtr& req,
                std::function<void(const HttpResponsePtr&)>&& callback,
                const std::string& docPath) {
+        // Checked before the document is looked up, so the answer to a bad
+        // value never depends on whether a private document exists.
+        const std::string content = req->getParameter("content");
+        if (!content.empty() && content != "html" && content != "markdown") {
+          callback(jsonError(k400BadRequest, "'content' must be 'html' or 'markdown'"));
+          return;
+        }
+        const bool includeMarkdown = content != "html";
+        const bool includeHtml = content != "markdown";
+
         std::string raw;
         try {
           requireDocumentPath(docPath);
@@ -190,12 +202,14 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         body["visibility"] = fm.visibility;
         body["due"] = fm.due;
         body["recur"] = fm.recur;
-        body["body"] = parsed.body;
+        if (includeMarkdown) body["body"] = parsed.body;
         // [[wiki-links]] rewritten to plain markdown links BEFORE md4c
         // ever sees the body — md4c has no idea this syntax exists (see
         // util::rewriteWikiLinksToMarkdownLinks's own doc comment).
-        body["renderedHtml"] =
-            util::renderMarkdownToHtml(util::rewriteWikiLinksToMarkdownLinks(parsed.body));
+        if (includeHtml) {
+          body["renderedHtml"] =
+              util::renderMarkdownToHtml(util::rewriteWikiLinksToMarkdownLinks(parsed.body));
+        }
         body["created"] = fm.created;
         body["updated"] = fm.updated;
         // Same fail-safe-private gating as the document itself: a

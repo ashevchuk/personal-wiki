@@ -429,6 +429,30 @@ def run_checks(sandbox, vault):
     status, _, _ = admin.get("/api/documents/notes/private.md")
     check("admin sees private doc", status == 200, f"got {status}")
 
+    # ?content= picks one representation of the document body; without it
+    # the response keeps both, and every variant keeps the same gating.
+    status, _, doc = anon.get_json("/api/documents/notes/public.md")
+    check("no ?content: response has both body and renderedHtml",
+          status == 200 and "body" in doc and "renderedHtml" in doc, f"status={status}")
+    status, _, doc = anon.get_json("/api/documents/notes/public.md?content=html")
+    check("?content=html: renderedHtml only, metadata kept",
+          status == 200 and "body" not in doc and "systemd public content" in doc.get("renderedHtml", "")
+          and doc.get("title") == "Public Doc", f"status={status} keys={sorted(doc or {})}")
+    status, _, doc = anon.get_json("/api/documents/notes/public.md?content=markdown")
+    check("?content=markdown: body only, metadata kept",
+          status == 200 and "renderedHtml" not in doc and "systemd public content" in doc.get("body", "")
+          and doc.get("title") == "Public Doc", f"status={status} keys={sorted(doc or {})}")
+    for content in ("html", "markdown"):
+        status, _, _ = anon.get(f"/api/documents/notes/private.md?content={content}")
+        check(f"anon private doc with ?content={content} -> 404", status == 404, f"got {status}")
+        status, _, _ = admin.get(f"/api/documents/notes/private.md?content={content}")
+        check(f"admin private doc with ?content={content} -> 200", status == 200, f"got {status}")
+    status_private, _, body_private = anon.get("/api/documents/notes/private.md?content=xml")
+    status_missing, _, body_missing = anon.get("/api/documents/notes/does-not-exist.md?content=xml")
+    check("unknown ?content -> 400, identical for a private and a missing doc",
+          status_private == 400 and status_missing == 400 and body_private == body_missing,
+          f"private={status_private} {body_private[:80]!r} missing={status_missing}")
+
     status, _, body = admin.post_json(
         "/api/documents",
         {"path": "notes/no-suffix", "title": "No Suffix", "visibility": "public",

@@ -43,7 +43,7 @@ window.WikiPages = window.WikiPages || {};
     container.innerHTML = renderBreadcrumbs(docPath) + "<h1>History</h1><p>Loading&hellip;</p>";
 
     Promise.all([
-      fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath), {
+      fetch(basePath() + "/api/documents/" + encodeVaultPath(docPath) + "?content=markdown", {
         credentials: "same-origin",
       }).then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
