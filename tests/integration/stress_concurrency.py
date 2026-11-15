@@ -281,6 +281,35 @@ def stress_api_vs_external_writer(server):
         check("index.db PRAGMA integrity_check reports ok after the race", False, str(e))
 
 
+def stress_watcher_vs_locked_index(server):
+    print("\n--- 5. VaultWatcher event while another process holds the index lock -")
+    # Index updates hit SQLITE_BUSY once a lock outlives Database's
+    # busy_timeout (5 s) -- e.g. a concurrent --reindex or a backup.
+    db_path = os.path.join(server.sandbox, "index.db")
+    doc = os.path.join(server.vault, "locked-window.md")
+
+    def write_doc(marker):
+        with open(doc, "w") as f:
+            f.write(f"---\ntitle: Locked\nvisibility: public\n---\n{marker}\n")
+
+    lock = sqlite3.connect(db_path, isolation_level=None)
+    lock.execute("BEGIN EXCLUSIVE")
+    try:
+        write_doc("written-while-locked")
+        time.sleep(7)  # watcher debounce + busy_timeout (5 s) + headroom
+    finally:
+        lock.execute("ROLLBACK")
+        lock.close()
+    check("server survives an index update that fails with SQLITE_BUSY", server.is_alive())
+
+    write_doc("written-after-unlock")
+    time.sleep(1.5)  # VaultWatcher debounce + processing headroom
+    status, _, body = server.client().get_json("/api/search?q=written-after-unlock")
+    check("the file's next change is indexed once the lock is gone",
+          body and any(r["path"] == "locked-window.md" for r in body["results"]),
+          f"status={status} body={body}")
+
+
 def main():
     if len(sys.argv) < 2:
         print("usage: stress_concurrency.py <path-to-wiki-server-binary>", file=sys.stderr)
@@ -302,6 +331,8 @@ def main():
         stress_password_change_race(server)
     with Server(server_bin, threads=4) as server:
         stress_api_vs_external_writer(server)
+    with Server(server_bin, threads=4) as server:
+        stress_watcher_vs_locked_index(server)
 
     print(f"\n{'=' * 60}")
     if FAILURES:

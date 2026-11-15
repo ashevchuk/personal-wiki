@@ -380,14 +380,26 @@ int main(int argc, char** argv) {
   wikicore::index::IndexBuilder watcherIndexBuilder(vault, watcherIndexUpdater);
   wikicore::index::VaultWatcher vaultWatcher(
       cfg.vaultPath,
+      // An exception escaping these callbacks would end the watcher thread
+      // and with it the whole process (std::terminate).
       [&watcherIndexBuilder, &watcherIndexUpdater](const std::string& relativePath) {
-        if (!watcherIndexBuilder.reindexOneFile(relativePath)) {
-          watcherIndexUpdater.removeOne(relativePath);
+        try {
+          if (!watcherIndexBuilder.reindexOneFile(relativePath)) {
+            watcherIndexUpdater.removeOne(relativePath);
+          }
+        } catch (const std::exception& e) {
+          LOG_ERROR << "failed to update the index for " << relativePath << ": " << e.what()
+                    << " — it catches up on the file's next change, a restart, or a reindex";
         }
       },
       [&watcherIndexBuilder]() {
         LOG_WARN << "inotify event queue overflowed — falling back to a full rescan";
-        watcherIndexBuilder.fullRescan();
+        try {
+          watcherIndexBuilder.fullRescan();
+        } catch (const std::exception& e) {
+          LOG_ERROR << "full rescan after inotify overflow failed: " << e.what()
+                    << " — run a reindex to bring the index up to date";
+        }
       });
   vaultWatcher.start();
 

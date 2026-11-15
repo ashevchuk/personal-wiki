@@ -25,6 +25,10 @@ binaries — check a running/built copy with `wiki-server --version` or
 - Renaming a document no longer fails partway when a document that links
   to it has no `id` or carries another document's `id`; that linker gets
   a new `id` of its own.
+- A vault change the index cannot record (for example while another
+  process holds the index database locked) is logged instead of stopping
+  `wiki-server`; the file is picked up on its next change, a restart or a
+  reindex.
 
 ## [0.10.1] - 2026-11-11
 
