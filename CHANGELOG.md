@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-18
+
 ### Fixed
 
 - `tools/wiki-ops.sh deploy` for the container variants uploads the Docker
