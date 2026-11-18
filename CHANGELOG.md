@@ -8,6 +8,13 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Fixed
+
+- `tools/wiki-ops.sh deploy` for the container variants uploads the Docker
+  image into the same private `mktemp -d` directory as the other staged
+  files instead of directly under `/tmp`, so the file that `sudo docker
+  load` reads is not in a world-writable directory.
+
 ## [0.11.0] - 2026-11-15
 
 ### Changed

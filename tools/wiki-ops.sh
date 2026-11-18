@@ -1283,10 +1283,11 @@ cmd_deploy_container() {
     return
   fi
 
-  local tmp_image remote_image
+  local tmp_image remote_image stage
   tmp_image=$(mktemp /tmp/wiki-ops-image-XXXXXX.tar)
   run bash -c "docker save '$image_tag' -o '$tmp_image'"
-  remote_image="/tmp/$(basename "$tmp_image")"
+  stage=$(remote_tmpdir)
+  remote_image="$stage/image.tar"
   copy_to_target "$tmp_image" "$remote_image"
   # sudo on docker load/compose below: unlike the native/cross paths,
   # this doesn't assume the target's docker group — only that the SSH
@@ -1300,8 +1301,6 @@ cmd_deploy_container() {
   # target, same as every other deploy path's staging dance (see
   # deploy_swap_tree) — a non-root SSH login user's scp would otherwise
   # fail outright with "Permission denied" before docker ever runs.
-  local stage
-  stage=$(remote_tmpdir)
   copy_to_target docker-compose.yml "$stage/docker-compose.yml"
   remote_sh "sudo mkdir -p '$install_root' && sudo mv '$stage/docker-compose.yml' '$install_root/docker-compose.yml'"
   if [ "$variant" = container-arm ]; then
