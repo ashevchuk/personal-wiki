@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AgentClient.h"
+#include "Config.h"
 
 #include <raylib.h>
 
@@ -30,7 +31,8 @@ class ChatWindow {
   static constexpr int kMinWidth = 320;
   static constexpr int kMinHeight = 300;
 
-  ChatWindow(std::string serverUrl, std::string token);
+  ChatWindow(std::string serverUrl, std::string token,
+             std::vector<PresetPrompt> prompts);
   ~ChatWindow();
 
   void onShow();
@@ -47,6 +49,8 @@ class ChatWindow {
   };
 
   void startSend(const std::string& text);
+  void sendPreset(const PresetPrompt& prompt);
+  std::vector<Rectangle> layoutPresetButtons(int width) const;
   void drawHistory(int x, int y, int width, int height);
   void pollClipboard();
   std::string clipboardLabel(int maxWidth) const;
@@ -55,6 +59,7 @@ class ChatWindow {
 
   std::string serverUrl_;
   std::string token_;
+  std::vector<PresetPrompt> prompts_;
   std::shared_ptr<AgentClient> client_;
   std::shared_ptr<SendState> pendingSend_;
 

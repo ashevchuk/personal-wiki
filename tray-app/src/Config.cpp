@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <sys/stat.h>
 
@@ -29,7 +30,13 @@ void writeDefaultConfig(const std::filesystem::path& path) {
          "token = \"\"\n"
          "\n"
          "[hotkey]\n"
-         "binding = \"Ctrl+Alt+W\"\n";
+         "binding = \"Ctrl+Alt+W\"\n"
+         "\n"
+         "# One button per entry above the input: click sends it (including\n"
+         "# the offered clipboard), Shift+click puts it in the input instead.\n"
+         "# [[prompts]]\n"
+         "# label = \"Public EN\"\n"
+         "# text = \"Make a public document in English\"\n";
   out.close();
   if (::chmod(path.c_str(), S_IRUSR | S_IWUSR) != 0) {
     throw std::runtime_error("Config::load: failed to chmod 0600 '" +
@@ -87,6 +94,19 @@ Config Config::load() {
   }
   if (auto* hotkey = root["hotkey"].as_table()) {
     cfg.hotkey = (*hotkey)["binding"].value_or(cfg.hotkey);
+  }
+  if (auto* prompts = root["prompts"].as_array()) {
+    for (auto& entry : *prompts) {
+      auto* prompt = entry.as_table();
+      auto label = prompt ? (*prompt)["label"].value<std::string>() : std::nullopt;
+      auto text = prompt ? (*prompt)["text"].value<std::string>() : std::nullopt;
+      if (!label || label->empty() || !text || text->empty()) {
+        throw std::runtime_error("Config::load: '" + path.string() +
+                                  "': every [[prompts]] entry needs a "
+                                  "non-empty label and text");
+      }
+      cfg.prompts.push_back({std::move(*label), std::move(*text)});
+    }
   }
 
   if (cfg.token.empty()) {

@@ -8,6 +8,7 @@
 
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <filesystem>
 #include <thread>
@@ -19,6 +20,8 @@ namespace {
 constexpr int kPadding = 10;
 constexpr int kInputHeight = 30;
 constexpr int kButtonWidth = 70;
+constexpr int kPresetButtonHeight = 24;
+constexpr int kPresetGap = 6;
 
 // Terminal green-on-black palette.
 constexpr Color kBg{8, 8, 8, 255};
@@ -160,8 +163,11 @@ void setWindowIconFromResources() {
 }
 }  // namespace
 
-ChatWindow::ChatWindow(std::string serverUrl, std::string token)
-    : serverUrl_(std::move(serverUrl)), token_(std::move(token)) {
+ChatWindow::ChatWindow(std::string serverUrl, std::string token,
+                       std::vector<PresetPrompt> prompts)
+    : serverUrl_(std::move(serverUrl)),
+      token_(std::move(token)),
+      prompts_(std::move(prompts)) {
   setWindowIconFromResources();
   font_ = loadEmbeddedFont();
   GuiSetFont(font_);
@@ -223,6 +229,35 @@ void ChatWindow::startSend(const std::string& text) {
     state->ready = true;
     state->result = std::move(result);
   }).detach();
+}
+
+// A preset stands in for the whole Include -> type -> Send sequence, so a
+// clipboard offer still on screen is included rather than silently dropped.
+void ChatWindow::sendPreset(const PresetPrompt& prompt) {
+  if (clipboardOfferShown_) {
+    clipboardIncluded_ = true;
+    clipboardOfferShown_ = false;
+  }
+  startSend(prompt.text);
+}
+
+// Buttons sized to their labels, wrapped onto as many rows as the width
+// needs; rectangles are relative to the top-left of the button area.
+std::vector<Rectangle> ChatWindow::layoutPresetButtons(int width) const {
+  std::vector<Rectangle> rects;
+  float x = 0;
+  float y = 0;
+  for (const auto& prompt : prompts_) {
+    const float labelWidth = MeasureTextEx(font_, prompt.label.c_str(), 16.0f, 1.0f).x;
+    const float buttonWidth = std::min(labelWidth + 2.0f * kPadding, static_cast<float>(width));
+    if (x > 0 && x + buttonWidth > width) {
+      x = 0;
+      y += kPresetButtonHeight + kPresetGap;
+    }
+    rects.push_back({x, y, buttonWidth, static_cast<float>(kPresetButtonHeight)});
+    x += buttonWidth + kPresetGap;
+  }
+  return rects;
 }
 
 void ChatWindow::drawHistory(int x, int y, int width, int height) {
@@ -354,8 +389,12 @@ void ChatWindow::update() {
     topY += 24 + kPadding;
   }
 
+  const std::vector<Rectangle> presetRects = layoutPresetButtons(screenW - 2 * kPadding);
+  const int presetAreaHeight =
+      presetRects.empty() ? 0 : static_cast<int>(presetRects.back().y) + kPresetButtonHeight + kPadding;
+
   const int historyBottom = screenH - kInputHeight - 2 * kPadding -
-                              (lastError_.empty() ? 0 : 20);
+                              (lastError_.empty() ? 0 : 20) - presetAreaHeight;
   drawHistory(kPadding, topY, screenW - 2 * kPadding, historyBottom - topY);
 
   int inputY = historyBottom + kPadding;
@@ -366,6 +405,20 @@ void ChatWindow::update() {
   }
 
   const bool sending = pendingSend_ != nullptr;
+
+  for (size_t i = 0; i < presetRects.size(); ++i) {
+    Rectangle rect = presetRects[i];
+    rect.x += kPadding;
+    rect.y += inputY;
+    if (GuiButton(rect, prompts_[i].label.c_str()) && !sending) {
+      if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT)) {
+        std::snprintf(inputBuffer_, sizeof(inputBuffer_), "%s", prompts_[i].text.c_str());
+      } else {
+        sendPreset(prompts_[i]);
+      }
+    }
+  }
+  inputY += presetAreaHeight;
   GuiTextBox({kPadding, static_cast<float>(inputY),
               screenW - 2.0f * kPadding - kButtonWidth - kPadding,
               static_cast<float>(kInputHeight)},

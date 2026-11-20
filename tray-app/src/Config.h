@@ -1,13 +1,20 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 namespace wikitray {
+
+struct PresetPrompt {
+  std::string label;
+  std::string text;
+};
 
 struct Config {
   std::string serverUrl = "https://wiki.example.com/wiki";
   std::string token;
   std::string hotkey = "Ctrl+Alt+W";
+  std::vector<PresetPrompt> prompts;
 
   // Loads ~/.config/wiki-tray/config.toml, creating it with defaults (and
   // an empty token) on first run. Throws on a missing token, a config file

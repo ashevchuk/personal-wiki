@@ -78,7 +78,7 @@ int main(int argc, char** argv) {
   // confirmed live via a real crash on Quit, backtrace through
   // ~ChatWindow -> UnloadFont -> UnloadTexture -> rlUnloadTexture.
   {
-    wikitray::ChatWindow chatWindow(cfg.serverUrl, cfg.token);
+    wikitray::ChatWindow chatWindow(cfg.serverUrl, cfg.token, cfg.prompts);
     bool visible = false;
 
     const std::function<void()> onHotkeyOrActivate = [&showRequested] {
