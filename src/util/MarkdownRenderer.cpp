@@ -275,6 +275,39 @@ std::string substituteCircuitBlocks(std::string html) {
   return out;
 }
 
+// ```latex and ```math fences become a display-math placeholder that
+// static/js/math-render.js typesets with KaTeX; content stays HTML-escaped
+// for the same reason as in substituteMermaidBlocks.
+std::string substituteMathBlocks(std::string html) {
+  constexpr std::string_view kCloseMarker = "</code></pre>";
+  for (const std::string_view openMarker : {std::string_view("<pre><code class=\"language-latex\">"),
+                                            std::string_view("<pre><code class=\"language-math\">")}) {
+    std::string out;
+    out.reserve(html.size());
+    size_t pos = 0;
+    while (true) {
+      const size_t open = html.find(openMarker, pos);
+      if (open == std::string::npos) {
+        out.append(html, pos, std::string::npos);
+        break;
+      }
+      out.append(html, pos, open - pos);
+      const size_t contentStart = open + openMarker.size();
+      const size_t close = html.find(kCloseMarker, contentStart);
+      if (close == std::string::npos) {
+        out.append(html, open, std::string::npos);
+        break;
+      }
+      out.append("<div class=\"math-display\">");
+      out.append(html, contentStart, close - contentStart);
+      out.append("</div>");
+      pos = close + kCloseMarker.size();
+    }
+    html = std::move(out);
+  }
+  return html;
+}
+
 bool isAllowedLinkScheme(std::string_view scheme) {
   return scheme == "http" || scheme == "https" || scheme == "mailto" || scheme == "tel";
 }
@@ -352,8 +385,8 @@ std::string renderMarkdownToHtml(std::string_view markdown) {
   if (rc != 0) {
     throw std::runtime_error("markdown rendering failed");
   }
-  return substituteCircuitBlocks(substituteQueryBlocks(substituteMermaidBlocks(
-      substituteYouTubeEmbeds(stripUnsafeLinkHrefs(std::move(html))))));
+  return substituteMathBlocks(substituteCircuitBlocks(substituteQueryBlocks(
+      substituteMermaidBlocks(substituteYouTubeEmbeds(stripUnsafeLinkHrefs(std::move(html)))))));
 }
 
 }  // namespace wikicore::util

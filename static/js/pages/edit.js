@@ -271,12 +271,12 @@ window.WikiPages = window.WikiPages || {};
   //
   // List is the Prism bundle (static/js/prism/VENDORED.md) plus the
   // aliases that bundle actually registers (js/ts/py/html/sh/yml) plus
-  // circuit/mermaid/query, which aren't Prism grammars but are real
+  // circuit/latex/math/mermaid/query, which aren't Prism grammars but are real
   // fences this app understands. An unrecognized value still saves —
   // Toast UI writes whatever string is in the input, same as before.
   var CODE_FENCE_LANGUAGES = [
     "bash", "c", "circuit", "cpp", "css", "go", "html", "javascript", "js",
-    "json", "mermaid", "py", "python", "query", "rust", "sh", "sql", "toml",
+    "json", "latex", "math", "mermaid", "py", "python", "query", "rust", "sh", "sql", "toml",
     "ts", "typescript", "yaml", "yml",
   ];
 

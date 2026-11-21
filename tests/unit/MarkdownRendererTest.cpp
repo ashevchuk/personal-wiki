@@ -187,3 +187,19 @@ TEST_CASE("renderMarkdownToHtml: ordinary links keep their href", "[MarkdownRend
     REQUIRE(html.find(expected) != std::string::npos);
   }
 }
+
+TEST_CASE("renderMarkdownToHtml: dollar-delimited text is not math",
+          "[MarkdownRenderer]") {
+  const std::string html = renderMarkdownToHtml("Ohm: $R = U/I$ and $$x$$.");
+  REQUIRE(html.find("math-") == std::string::npos);
+  REQUIRE(html.find("$R = U/I$ and $$x$$") != std::string::npos);
+}
+
+TEST_CASE("renderMarkdownToHtml: ```latex and ```math fences become display math",
+          "[MarkdownRenderer]") {
+  const std::string html =
+      renderMarkdownToHtml("```latex\n\\rho = 2\\pi a R\n```\n\n```math\na<b\n```\n\n```tex\nx\n```");
+  REQUIRE(html.find("<div class=\"math-display\">\\rho = 2\\pi a R\n</div>") != std::string::npos);
+  REQUIRE(html.find("<div class=\"math-display\">a&lt;b\n</div>") != std::string::npos);
+  REQUIRE(html.find("<pre><code class=\"language-tex\">") != std::string::npos);
+}

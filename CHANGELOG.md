@@ -8,6 +8,12 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Added
+
+- ` ```latex ` and ` ```math ` fenced blocks render as display formulas
+  with KaTeX, vendored under `static/js/katex/` and loaded only on
+  documents that contain one.
+
 ### Fixed
 
 - Attachment filenames keep non-ASCII letters (Cyrillic and other

@@ -67,8 +67,11 @@ code is built, just what you'll notice as someone using or running it.
 - **No raw HTML in markdown.** `<div>`, `<script>`, any hand-typed HTML
   tag gets shown as literal text, not rendered — this is deliberate and
   is the actual security boundary against malicious documents, not a
-  bug. YouTube embeds and Mermaid diagrams are special-cased separately
-  and do render.
+  bug. YouTube embeds, Mermaid diagrams and ` ```latex ` / ` ```math `
+  formulas are special-cased separately and do render.
+- **Math goes in ` ```latex ` or ` ```math ` blocks only.** `$...$` and
+  `$$...$$` stay plain text: the WYSIWYG editor escapes `\` and `_`
+  inside them on save, so they cannot survive an edit as math.
 - **Attachment filenames keep their letters in any script** (Cyrillic
   included). Spaces, punctuation other than `.`, `-` and `_`, and
   invisible or bidirectional-control characters become `_`.

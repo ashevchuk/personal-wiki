@@ -92,6 +92,10 @@ to touch.
   same-origin way as the mermaid blocks above.
 - Syntax-highlighted code blocks on every document view (Prism.js, loaded
   lazily, themed to match the active site theme).
+- ` ```latex ` / ` ```math ` code blocks render as typeset display
+  formulas ([KaTeX](https://katex.org/), loaded lazily, only on documents
+  that use one). Inline `$...$` is not math: Toast UI's WYSIWYG mode
+  escapes `\` and `_` inside it on save, which would corrupt the formula.
 
 **Live, queryable pages**
 
@@ -301,6 +305,7 @@ either on the next `wiki-server` startup or with `wiki-server --reindex`.
 | Local embeddings | [llama.cpp](https://github.com/ggml-org/llama.cpp) (vendored via `FetchContent`) — build-time-optional |
 | Diagrams | [mermaid.js](https://mermaid.js.org/) (vendored, ~5.3 MiB) — loaded client-side, lazily, only on documents that use it |
 | Syntax highlighting | [Prism.js](https://prismjs.com/) (vendored, custom bundle) — view page only, lazily loaded |
+| Math | [KaTeX](https://katex.org/) (vendored, woff2 fonts only) — view page only, lazily loaded |
 | Tests | [Catch2](https://github.com/catchorg/Catch2) (unit) + a stdlib-only Python HTTP suite (integration) |
 | Package manager | [vcpkg](https://github.com/microsoft/vcpkg), manifest mode |
 | Cross-compilation | [zig](https://ziglang.org/) → static `arm-linux-musleabihf`, for old/weak ARM targets |

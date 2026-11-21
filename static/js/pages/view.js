@@ -274,6 +274,9 @@ window.WikiPages = window.WikiPages || {};
         if (window.WikiPrismHighlight) {
           window.WikiPrismHighlight.highlightIn(container);
         }
+        if (window.WikiMath) {
+          window.WikiMath.renderIn(container);
+        }
         if (window.WikiQueryBlock) {
           window.WikiQueryBlock.renderIn(container);
         }

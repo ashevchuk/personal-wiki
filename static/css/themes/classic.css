@@ -1331,6 +1331,12 @@ pre.mermaid svg {
   height: auto;
 }
 
+/* Long display formulas scroll instead of widening the page. */
+.math-display .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 /* Fenced code blocks (```cpp etc.) had NO screen-mode styling at all
    before this -- only @media print touched pre/code -- so on-screen they
    were plain browser-default black-on-white boxes regardless of theme.

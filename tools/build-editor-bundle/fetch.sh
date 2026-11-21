@@ -182,4 +182,39 @@ or \$PRISM_LANGS in that script deliberately, not silently -- respect each
 new language's own "require" entry in prismjs's components.json.
 EOF
 
+KATEX_VERSION="0.19.1"
+# Only the woff2 fonts: katex.min.css lists woff2 first in every @font-face
+# src, so browsers never request the woff/ttf fallbacks.
+KATEX_BASE="https://cdn.jsdelivr.net/npm/katex@${KATEX_VERSION}/dist"
+KATEX_FONTS="AMS-Regular Caligraphic-Bold Caligraphic-Regular Fraktur-Bold
+  Fraktur-Regular Main-Bold Main-BoldItalic Main-Italic Main-Regular
+  Math-BoldItalic Math-Italic SansSerif-Bold SansSerif-Italic SansSerif-Regular
+  Script-Regular Size1-Regular Size2-Regular Size3-Regular Size4-Regular
+  Typewriter-Regular"
+rm -rf "${STATIC_JS}/katex"
+mkdir -p "${STATIC_JS}/katex/fonts"
+curl -sSf --max-time 30 -o "${STATIC_JS}/katex/katex.min.js" "${KATEX_BASE}/katex.min.js"
+curl -sSf --max-time 30 -o "${STATIC_JS}/katex/katex.min.css" "${KATEX_BASE}/katex.min.css"
+for font in ${KATEX_FONTS}; do
+  curl -sSf --max-time 30 -o "${STATIC_JS}/katex/fonts/KaTeX_${font}.woff2" \
+    "${KATEX_BASE}/fonts/KaTeX_${font}.woff2"
+done
+(cd "${STATIC_JS}/katex" && sha256sum katex.min.js katex.min.css fonts/*.woff2 > SHA256SUMS)
+cat > "${STATIC_JS}/katex/VENDORED.md" <<EOF
+# Vendored: KaTeX
+
+- Version: ${KATEX_VERSION}
+- Source: ${KATEX_BASE}/ (katex.min.js, katex.min.css, fonts/*.woff2)
+- License: MIT (Khan Academy and other contributors)
+- Checksums: see SHA256SUMS in this directory
+- Only the woff2 fonts are vendored; katex.min.css lists woff2 first in
+  every @font-face rule, so the woff/ttf fallbacks are never requested.
+- Loaded LAZILY, only on a document view containing math -- see
+  static/js/math-render.js.
+
+Re-vendor with \`tools/build-editor-bundle/fetch.sh\`. Bump \$KATEX_VERSION
+in that script deliberately, not silently -- verify the new checksums
+before committing.
+EOF
+
 echo "Done. Verify with: sha256sum -c <dest>/SHA256SUMS in each vendored dir."
