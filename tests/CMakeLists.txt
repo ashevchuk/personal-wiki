@@ -177,7 +177,9 @@ if(TARGET wiki-server)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/integration/tls_e2e.py
             $<TARGET_FILE:wiki-server>
   )
-  set_tests_properties(tls_e2e PROPERTIES TIMEOUT 60)
+  # Fully QEMU-emulated container builds (Dockerfile under a foreign
+  # --platform) emulate python3/openssl too: ~45s for this test on armv7.
+  set_tests_properties(tls_e2e PROPERTIES TIMEOUT 300)
 
   # Stress tests: concurrency races and resource-exhaustion behavior, NOT
   # logical correctness (that's security_e2e.py above) — see
