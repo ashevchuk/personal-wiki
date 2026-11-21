@@ -10,6 +10,12 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ### Fixed
 
+- Attachment filenames keep non-ASCII letters (Cyrillic and other
+  scripts) instead of turning every UTF-8 byte into `_`. Malformed UTF-8,
+  Unicode spaces and invisible or bidirectional-control characters still
+  become `_`, one per character. A forced download sends the name as an
+  RFC 5987 `filename*=UTF-8''...` parameter with an ASCII fallback.
+
 - `docker buildx build --platform ...` (and `docker compose build` with
   `docker-compose.arm.yml`) builds the binaries for the requested platform
   with both `Dockerfile` and `Dockerfile.release`. Previously the

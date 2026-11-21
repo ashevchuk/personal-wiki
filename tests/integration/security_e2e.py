@@ -839,6 +839,23 @@ def run_checks(sandbox, vault):
     status, _, _ = anon.get(f"/assets/{attach_path}")
     check("anon CANNOT fetch attachment of private doc", status == 404, f"got {status}")
 
+    # Non-ASCII filenames keep their letters, both through the URL-encoded
+    # /assets/ path and in a forced download's Content-Disposition.
+    status, _, body = admin.upload("/api/attachments/notes/private.md", "Схема опис.docx",
+                                    b"docx bytes", headers={"X-CSRF-Token": csrf})
+    check("upload Cyrillic-named attachment -> 201", status == 201, f"got {status}")
+    cyrillic_path = json.loads(body)["path"]
+    check("Cyrillic filename is stored with its letters",
+          cyrillic_path == "notes/private.assets/Схема_опис.docx", f"got {cyrillic_path!r}")
+    status, hdrs, content = admin.get("/assets/" + urllib.parse.quote(cyrillic_path))
+    check("Cyrillic-named attachment is served", status == 200 and content == b"docx bytes",
+          f"got {status}")
+    disposition = {k.lower(): v for k, v in hdrs.items()}.get("content-disposition", "")
+    check("forced download carries an RFC 5987 UTF-8 filename",
+          disposition == "attachment; filename=\"" + "_" * 19 + ".docx\"; filename*=UTF-8''"
+          + urllib.parse.quote("Схема_опис.docx", safe=""),
+          f"got {disposition!r}")
+
     # A markdown attachment carrying its own `visibility: public` front
     # matter is still an attachment of a private document, not a document.
     status, _, body = admin.upload(

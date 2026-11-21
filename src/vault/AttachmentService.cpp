@@ -21,17 +21,73 @@ std::string lowerAscii(std::string s) {
   return s;
 }
 
-// Keeps only [A-Za-z0-9._-], collapses anything else to '_'. Applied to
-// just the basename (see store()) — this alone is enough to rule out path
-// separators, NUL bytes, and the rest of PathGuard's usual concerns, but
-// PathGuard still validates the final resolved path regardless.
+// Length in bytes of the well-formed UTF-8 sequence starting at `pos`
+// (non-ASCII lead byte), or 0 if it is malformed, overlong, a surrogate
+// or beyond U+10FFFF. `codePoint` receives the decoded value.
+size_t utf8SequenceLength(std::string_view s, size_t pos, char32_t& codePoint) {
+  const auto byte = [&](size_t i) { return static_cast<unsigned char>(s[pos + i]); };
+  const unsigned char lead = byte(0);
+  size_t len = 0;
+  char32_t minValue = 0;
+  if (lead >= 0xC2 && lead <= 0xDF) {
+    len = 2, codePoint = lead & 0x1F, minValue = 0x80;
+  } else if (lead >= 0xE0 && lead <= 0xEF) {
+    len = 3, codePoint = lead & 0x0F, minValue = 0x800;
+  } else if (lead >= 0xF0 && lead <= 0xF4) {
+    len = 4, codePoint = lead & 0x07, minValue = 0x10000;
+  } else {
+    return 0;
+  }
+  if (pos + len > s.size()) return 0;
+  for (size_t i = 1; i < len; ++i) {
+    if ((byte(i) & 0xC0) != 0x80) return 0;
+    codePoint = (codePoint << 6) | (byte(i) & 0x3F);
+  }
+  if (codePoint < minValue || codePoint > 0x10FFFF) return 0;
+  if (codePoint >= 0xD800 && codePoint <= 0xDFFF) return 0;
+  return len;
+}
+
+// Invisible or layout-changing characters: C1 controls, Unicode spaces,
+// zero-width and bidi-control characters. A name containing them can look
+// identical to a different one or reorder itself on screen.
+bool isDisallowedNonAscii(char32_t cp) {
+  return (cp >= 0x80 && cp <= 0xA0) || cp == 0xAD || (cp >= 0x2000 && cp <= 0x200F) ||
+         (cp >= 0x2028 && cp <= 0x202F) || (cp >= 0x205F && cp <= 0x206F) ||
+         cp == 0x3000 || cp == 0xFEFF;
+}
+
+// Keeps [A-Za-z0-9._-] and well-formed non-ASCII UTF-8 characters (Cyrillic
+// and other scripts), collapses anything else to '_' — one '_' per
+// character, not per byte. Applied to just the basename (see store()) —
+// this alone is enough to rule out path separators, NUL bytes, and the
+// rest of PathGuard's usual concerns, but PathGuard still validates the
+// final resolved path regardless.
 std::string sanitizeBasename(const std::string& name) {
   std::string out;
   out.reserve(name.size());
-  for (char c : name) {
-    const bool ok = std::isalnum(static_cast<unsigned char>(c)) || c == '.' ||
-                     c == '-' || c == '_';
-    out += ok ? c : '_';
+  size_t pos = 0;
+  while (pos < name.size()) {
+    const unsigned char c = static_cast<unsigned char>(name[pos]);
+    if (c < 0x80) {
+      const bool ok = std::isalnum(c) || c == '.' || c == '-' || c == '_';
+      out += ok ? static_cast<char>(c) : '_';
+      ++pos;
+      continue;
+    }
+    char32_t codePoint = 0;
+    const size_t len = utf8SequenceLength(name, pos, codePoint);
+    if (len == 0) {
+      out += '_';
+      ++pos;
+      continue;
+    }
+    if (isDisallowedNonAscii(codePoint)) {
+      out += '_';
+    } else {
+      out.append(name, pos, len);
+    }
+    pos += len;
   }
   return out;
 }

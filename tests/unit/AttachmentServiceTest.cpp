@@ -145,6 +145,33 @@ TEST_CASE("AttachmentService sanitizes a filename with path separators / "
   REQUIRE(info.relativePath.find("..") == std::string::npos);
 }
 
+TEST_CASE("AttachmentService keeps non-ASCII letters in a filename",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);
+
+  const auto info = svc.store("notes/foo.md", "Схема — опис v2.pdf", "x");
+  REQUIRE(info.relativePath == "notes/foo.assets/Схема_—_опис_v2.pdf");
+
+  vault::VaultRepository verify(dir.root());
+  REQUIRE(verify.readRaw(info.relativePath) == "x");
+}
+
+TEST_CASE("AttachmentService replaces malformed UTF-8 and invisible characters "
+          "with one '_' each",
+          "[AttachmentService]") {
+  TempVaultDir dir;
+  vault::VaultRepository repo(dir.root());
+  vault::AttachmentService svc(repo);
+
+  // \xC0\xAF is an overlong '/', \xED\xA0\x80 a UTF-16 surrogate,
+  // \xE2\x80\xAE U+202E right-to-left override, \xC2\xA0 U+00A0 no-break space.
+  const auto info = svc.store("notes/foo.md",
+                              "a\xC0\xAF" "b\xED\xA0\x80" "c\xE2\x80\xAE" "d\xC2\xA0" "e.txt", "x");
+  REQUIRE(info.relativePath == "notes/foo.assets/a__b___c_d_e.txt");
+}
+
 TEST_CASE("AttachmentService de-dupes a filename collision instead of "
           "overwriting",
           "[AttachmentService]") {

@@ -9,6 +9,7 @@
 #include <drogon/HttpResponse.h>
 #include <drogon/MultiPart.h>
 
+#include <cctype>
 #include <filesystem>
 #include <optional>
 
@@ -80,6 +81,28 @@ std::optional<std::string> owningDocumentFor(const std::string& assetPath) {
 // Builds a DocumentInput from a parsed JSON request body. Throws
 // std::invalid_argument (caught by the caller) on missing/malformed
 // required fields.
+// Drogon's own attachment-name parameter writes the name raw and unquoted,
+// which is undefined for non-ASCII bytes. RFC 6266: a quoted ASCII fallback
+// plus the RFC 5987 UTF-8 form, which every current browser prefers.
+std::string contentDispositionAttachment(const std::string& filename) {
+  std::string asciiFallback;
+  std::string encoded;
+  constexpr char kHex[] = "0123456789ABCDEF";
+  for (const char ch : filename) {
+    const auto c = static_cast<unsigned char>(ch);
+    const bool unreserved = std::isalnum(c) || c == '.' || c == '-' || c == '_';
+    asciiFallback += unreserved ? ch : '_';
+    if (unreserved) {
+      encoded += ch;
+    } else {
+      encoded += '%';
+      encoded += kHex[c >> 4];
+      encoded += kHex[c & 0x0F];
+    }
+  }
+  return "attachment; filename=\"" + asciiFallback + "\"; filename*=UTF-8''" + encoded;
+}
+
 DocumentInput parseDocumentInput(const Json::Value& json) {
   DocumentInput input;
   input.title = json.get("title", "").asString();
@@ -589,10 +612,12 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         std::string ext = fullPath.extension().string();
         if (!ext.empty() && ext.front() == '.') ext.erase(0, 1);
         const std::string mimeType = attachmentService.mimeTypeForExtension(ext);
-        const std::string attachmentName =
-            attachmentService.isSafeToRenderInline(ext) ? "" : fullPath.filename().string();
-        callback(HttpResponse::newFileResponse(fullPath.string(), attachmentName, CT_CUSTOM,
-                                                mimeType));
+        auto resp = HttpResponse::newFileResponse(fullPath.string(), "", CT_CUSTOM, mimeType);
+        if (!attachmentService.isSafeToRenderInline(ext)) {
+          resp->addHeader("Content-Disposition",
+                          contentDispositionAttachment(fullPath.filename().string()));
+        }
+        callback(resp);
       },
       {Get, "wikicore::auth::AuthFilter"});
 }
