@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-21
+
 ### Added
 
 - ` ```latex ` and ` ```math ` fenced blocks render as display formulas
