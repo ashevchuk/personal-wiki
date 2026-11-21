@@ -27,6 +27,10 @@ binaries — check a running/built copy with `wiki-server --version` or
   `provider = "local"`, search queries now use their own llama context
   instead of sharing the document context's lock, which on a slow CPU
   delayed every semantic search by up to one chunk (around 30 seconds).
+- Release notes state that the prebuilt binaries include both embeddings
+  providers. They said embeddings support was compiled out and that the
+  installers refuse a non-`"none"` provider, neither of which has been
+  true since 0.8.0.
 
 ## [0.12.0] - 2026-11-21
 

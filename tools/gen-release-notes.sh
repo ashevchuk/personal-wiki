@@ -63,7 +63,7 @@ All four are statically linked (zig + musl), with no runtime dependency on the t
   tools/wiki-ops.sh deploy --target=user@host --variant=release --triplet=arm-musl --first-time
   \`\`\`
 
-Both paths download the matching asset, verify it against \`SHA256SUMS\`, and refuse up front if the target's existing \`config.toml\` already configures an \`[embeddings]\`/\`[llm]\` provider other than \`"none"\` — these binaries are built with local/cloud embeddings support compiled out, and swapping one onto such a target would crash-loop the service.
+Both paths download the matching asset and verify it against \`SHA256SUMS\`. All four binaries are built with both embeddings providers (local llama.cpp and cloud) compiled in, so they run with any \`[embeddings]\`/\`[llm]\` provider a target's \`config.toml\` already uses.
 
 See [\`docs/sbc-deployment.md\`](https://github.com/${repo}/blob/main/docs/sbc-deployment.md#path-c--download-a-prebuilt-release-binary) ("Path C") for the full picture.
 

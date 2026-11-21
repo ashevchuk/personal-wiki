@@ -180,10 +180,12 @@ needed:
 
 - **A toggle** to turn hybrid (semantic) ranking on or off without
   touching `config.toml`.
-- **A "Documents needing attention" list** — anything that failed to
-  embed, with per-document and bulk Retry buttons. A document here
-  means something went wrong (a bad model path, an API error) — not
-  that embedding is merely pending as part of normal operation.
+- **A "Documents needing attention" list** — every document without a
+  stored embedding, with per-document and bulk Retry buttons: one whose
+  last attempt failed (a bad model path, an API error), and one whose
+  first embedding hasn't finished yet. On a slow CPU a long new document
+  stays on this list for as long as its first embedding takes (see
+  below).
 
 Both are logged to the same admin audit log as everything else
 (`GET /api/admin/mcp-audit-log`), and the whole section on the Account
@@ -191,15 +193,17 @@ page simply doesn't appear on a build without embeddings compiled in.
 
 ## The real operational cost of enabling local embeddings
 
-Because every reindexed document also gets a real embedding computed as
-part of the startup rescan, **restart time scales with vault size**
-once `provider = "local"` is set — roughly 1–1.5 seconds per document
-on a constrained ARM SBC with no GPU. A vault of a few dozen documents
-can add tens of seconds to every restart, during which your reverse
-proxy (if any) serves `502` to anyone hitting the site. Worth
-accounting for before enabling local embeddings on a large vault, or
-before restarting at a moment someone might actually be using the
-site. Memory footprint is dominated by the model itself (roughly
+Embeddings are computed in the background: the server answers requests
+right after startup while the startup rescan runs, and saving a document
+does not wait for its embedding. The cost is how long the embedding
+itself takes. A document is split into passages of up to about 384
+tokens, at most 32 per document, and each passage is one model run.
+Measured with `bge-small-en-v1.5` (f16) on a 4-core Cortex-A7 board:
+about 15 seconds per passage with the CPU otherwise idle, 30–40 seconds
+while another service keeps the CPU busy. A short note is embedded in
+seconds to a minute; a 35 KB document reaches the 32-passage cap and
+takes 10–20 minutes. Until its embedding is stored, a document is found
+by full-text search but not by semantic search. Memory footprint is dominated by the model itself (roughly
 100 MiB resident for a small model like `bge-small-en-v1.5`).
 
 A routine restart with no actual content changes stays fast — documents
