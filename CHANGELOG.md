@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-21
+
 ### Added
 
 - `[embeddings] threads` and `query_threads` set the CPU threads for
