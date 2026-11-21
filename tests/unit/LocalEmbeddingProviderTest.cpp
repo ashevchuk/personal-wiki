@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <sstream>
 #include <thread>
@@ -171,6 +172,55 @@ TEST_CASE("LocalEmbeddingProvider: concurrent embed() calls on the SAME "
   for (auto& th : threads) th.join();
 
   REQUIRE(failures.load() == 0);
+}
+
+TEST_CASE("LocalEmbeddingProvider: embedQuery() finishes while a document "
+          "embed() is still running on another thread",
+          "[LocalEmbeddingProvider][real-model]") {
+  using Clock = std::chrono::steady_clock;
+  LocalEmbeddingProvider provider(WIKI_TEST_EMBEDDING_MODEL_PATH);
+  std::string longText;
+  while (longText.size() < 1500) longText += "The quick brown fox jumps over the lazy dog. ";
+
+  const auto soloStart = Clock::now();
+  provider.embed(longText);
+  const auto documentCall = Clock::now() - soloStart;
+
+  // A query issued a quarter of the way into a document call, when the
+  // document thread certainly holds its lock, must return before that call
+  // ends; with one shared lock it can only return after it.
+  // Bounded, so that with a shared lock a starved query still gets to run
+  // (and the test fails) instead of the test hanging.
+  constexpr int kDocumentCalls = 40;
+  std::atomic<Clock::rep> callStartedAt{0};
+  std::atomic<int> finished{0};
+  std::atomic<bool> stop{false};
+  std::atomic<bool> documentsDone{false};
+  std::thread documents([&] {
+    for (int i = 0; i < kDocumentCalls && !stop; ++i) {
+      callStartedAt = Clock::now().time_since_epoch().count();
+      provider.embed(longText);
+      ++finished;
+    }
+    documentsDone = true;
+  });
+
+  int queriesInsideOneDocumentCall = 0;
+  for (int attempt = 0; attempt < 20 && queriesInsideOneDocumentCall == 0; ++attempt) {
+    const auto previousStart = callStartedAt.load();
+    while (callStartedAt == previousStart && !documentsDone) std::this_thread::yield();
+    if (documentsDone) break;
+    const int callIndex = finished;
+    const Clock::time_point callStart{Clock::duration{callStartedAt.load()}};
+    std::this_thread::sleep_until(callStart + documentCall / 4);
+    const auto query = provider.embedQuery("lazy dog");
+    REQUIRE(query.size() == provider.dimensions());
+    if (finished == callIndex) ++queriesInsideOneDocumentCall;
+  }
+  stop = true;
+  documents.join();
+
+  REQUIRE(queriesInsideOneDocumentCall == 1);
 }
 
 TEST_CASE("LocalEmbeddingProvider: embedQuery() with no configured prefix "

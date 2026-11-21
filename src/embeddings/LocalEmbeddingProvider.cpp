@@ -106,7 +106,10 @@ LocalEmbeddingProvider::LocalEmbeddingProvider(const std::string& modelPath,
   ctxParams.n_ubatch = ctxParams.n_batch;
 
   ctx_ = llama_init_from_model(model_, ctxParams);
-  if (ctx_ == nullptr) {
+  if (ctx_ != nullptr) queryCtx_ = llama_init_from_model(model_, ctxParams);
+  if (ctx_ == nullptr || queryCtx_ == nullptr) {
+    if (ctx_ != nullptr) llama_free(ctx_);
+    ctx_ = nullptr;
     llama_model_free(model_);
     model_ = nullptr;
     throw std::runtime_error("LocalEmbeddingProvider: failed to create context for '" +
@@ -118,19 +121,20 @@ LocalEmbeddingProvider::LocalEmbeddingProvider(const std::string& modelPath,
 }
 
 LocalEmbeddingProvider::~LocalEmbeddingProvider() {
+  if (queryCtx_ != nullptr) llama_free(queryCtx_);
   if (ctx_ != nullptr) llama_free(ctx_);
   if (model_ != nullptr) llama_model_free(model_);
 }
 
 std::vector<float> LocalEmbeddingProvider::embed(const std::string& text) {
-  // See embedMutex_'s own comment in LocalEmbeddingProvider.h — this whole
-  // function, not just the llama_decode() call, runs under the lock: the
-  // model/vocab lookups below are read-only against model_ (safe to share),
-  // but everything from here on on touches ctx_'s mutable KV-cache/sequence
-  // state, and locking only part of the function would just move the race
-  // instead of removing it.
+  // See embedMutex_'s own comment in LocalEmbeddingProvider.h — the whole
+  // embedOn() call, not just llama_decode(), runs under the lock: it
+  // touches ctx_'s mutable KV-cache/sequence state throughout.
   std::lock_guard<std::mutex> lock(embedMutex_);
+  return embedOn(ctx_, text);
+}
 
+std::vector<float> LocalEmbeddingProvider::embedOn(llama_context* ctx, const std::string& text) {
   const llama_vocab* vocab = llama_model_get_vocab(model_);
 
   // First call sizes the token buffer; llama_tokenize returns a negative
@@ -178,16 +182,16 @@ std::vector<float> LocalEmbeddingProvider::embed(const std::string& text) {
   // sequence-0 state from the last call would otherwise bleed into this
   // one (see examples/embedding/embedding.cpp's batch_decode, same call
   // before every decode for the same reason).
-  llama_memory_clear(llama_get_memory(ctx_), true);
+  llama_memory_clear(llama_get_memory(ctx), true);
 
-  const int32_t decodeResult = llama_decode(ctx_, batch);
+  const int32_t decodeResult = llama_decode(ctx, batch);
   if (decodeResult < 0) {
     llama_batch_free(batch);
     throw std::runtime_error("LocalEmbeddingProvider::embed: llama_decode failed (code " +
                               std::to_string(decodeResult) + ")");
   }
 
-  const float* embd = llama_get_embeddings_seq(ctx_, /*seq_id=*/0);
+  const float* embd = llama_get_embeddings_seq(ctx, /*seq_id=*/0);
   if (embd == nullptr) {
     // LLAMA_POOLING_TYPE_NONE models have no per-sequence embedding —
     // this provider requires a model whose GGUF metadata declares real
@@ -207,8 +211,8 @@ std::vector<float> LocalEmbeddingProvider::embed(const std::string& text) {
 }
 
 std::vector<float> LocalEmbeddingProvider::embedQuery(const std::string& text) {
-  if (queryPrefix_.empty()) return embed(text);
-  return embed(queryPrefix_ + text);
+  std::lock_guard<std::mutex> lock(queryMutex_);
+  return embedOn(queryCtx_, queryPrefix_ + text);
 }
 
 std::size_t LocalEmbeddingProvider::dimensions() const { return dimensions_; }

@@ -59,6 +59,8 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
   int maxInputTokens() const override;
 
  private:
+  std::vector<float> embedOn(llama_context* ctx, const std::string& text);
+
   llama_model* model_ = nullptr;
   llama_context* ctx_ = nullptr;
   // Guards every embed() call on this instance — llama_context (ctx_) is
@@ -85,6 +87,11 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
   // "concurrently" anyway — ggml already parallelizes internally across
   // threads for a single decode.
   std::mutex embedMutex_;
+  // Search queries get their own context and lock, so a query never waits
+  // behind a document chunk (tens of seconds each on a slow ARM board).
+  // Contexts are independent; the model weights are shared.
+  llama_context* queryCtx_ = nullptr;
+  std::mutex queryMutex_;
   std::size_t dimensions_ = 0;
   // The context's n_ctx (the model's own trained context window — 512 for
   // bge-small-en-v1.5), captured at construction. embed() throws a real,

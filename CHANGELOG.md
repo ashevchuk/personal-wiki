@@ -15,6 +15,10 @@ binaries — check a running/built copy with `wiki-server --version` or
   so on a slow CPU systemd's stop timeout killed the process mid-pass.
 - Embedding progress is saved per chunk, so a pass interrupted by a
   restart resumes instead of re-embedding the whole document.
+- Search no longer waits for a document embedding to finish. With
+  `provider = "local"`, search queries now use their own llama context
+  instead of sharing the document context's lock, which on a slow CPU
+  delayed every semantic search by up to one chunk (around 30 seconds).
 
 ## [0.12.0] - 2026-11-21
 
