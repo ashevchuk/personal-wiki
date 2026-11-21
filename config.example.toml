@@ -148,6 +148,15 @@ write_access = false
 # writeup for the measured before/after numbers.
 # query_prefix = "Represent this sentence for searching relevant passages: "
 #
+# Local only — CPU threads for embedding documents and for embedding
+# search queries. They run in separate llama contexts, so a search never
+# waits for a document being embedded, but both compete for the same
+# cores. 0 (the default) keeps llama.cpp's own default of 4 each. On a
+# small board whose cores are shared with other services, keep
+# threads + query_threads at or below the core count.
+# threads = 0
+# query_threads = 0
+#
 # Local/cloud — the maximum cosine DISTANCE (0 = identical, 2 = opposite)
 # a document may have from the query before hybrid search lets it count
 # as a semantic match at all. Without this, a small vault's "nearest

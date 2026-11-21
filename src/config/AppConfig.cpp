@@ -94,6 +94,14 @@ AppConfig AppConfig::load(const std::string& path) {
     }
     cfg.embeddingsQueryPrefix =
         (*embeddings)["query_prefix"].value_or(cfg.embeddingsQueryPrefix);
+    cfg.embeddingsThreads = (*embeddings)["threads"].value_or(cfg.embeddingsThreads);
+    cfg.embeddingsQueryThreads =
+        (*embeddings)["query_threads"].value_or(cfg.embeddingsQueryThreads);
+    if (cfg.embeddingsThreads < 0 || cfg.embeddingsQueryThreads < 0) {
+      throw std::runtime_error(
+          "embeddings.threads and embeddings.query_threads must be >= 0 "
+          "(0 means the llama.cpp default)");
+    }
     cfg.embeddingsMaxDistance =
         (*embeddings)["max_distance"].value_or(cfg.embeddingsMaxDistance);
     cfg.embeddingsMinContentWords =

@@ -140,6 +140,13 @@ struct AppConfig {
   // for "none"/"cloud" (OpenAI-compatible embeddings are typically
   // symmetric — no query-side convention to apply).
   std::string embeddingsQueryPrefix;
+  // Local only — CPU threads for embedding documents and for embedding
+  // search queries; each has its own llama context, so both can run at
+  // once. 0 keeps llama.cpp's default (4). On a board with few cores
+  // shared with other services, keeping the sum at or below the core count
+  // stops the two from slowing each other down.
+  int embeddingsThreads = 0;
+  int embeddingsQueryThreads = 0;
   // Local/cloud — the maximum cosine DISTANCE (1 - cosine similarity; 0 =
   // identical, 2 = opposite) a document's embedding may have from the
   // query's before FtsSearch::tryHybridSearch() lets it into the semantic

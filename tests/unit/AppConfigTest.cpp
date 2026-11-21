@@ -181,6 +181,29 @@ TEST_CASE("AppConfig::load: embeddings.query_prefix/max_distance/"
   REQUIRE(cfg.embeddingsSemanticTopK == 3);
 }
 
+TEST_CASE("AppConfig::load: embeddings.threads/query_threads default to 0 and "
+          "are read verbatim when set",
+          "[AppConfig]") {
+  TempConfigFile unset("[vault]\npath = \"./vault_data\"\n");
+  const AppConfig defaults = AppConfig::load(unset.path().string());
+  REQUIRE(defaults.embeddingsThreads == 0);
+  REQUIRE(defaults.embeddingsQueryThreads == 0);
+
+  TempConfigFile set("[embeddings]\nprovider = \"local\"\nthreads = 3\nquery_threads = 1\n");
+  const AppConfig cfg = AppConfig::load(set.path().string());
+  REQUIRE(cfg.embeddingsThreads == 3);
+  REQUIRE(cfg.embeddingsQueryThreads == 1);
+}
+
+TEST_CASE("AppConfig::load: a negative embeddings.threads or query_threads is "
+          "rejected",
+          "[AppConfig]") {
+  TempConfigFile docs("[embeddings]\nthreads = -1\n");
+  REQUIRE_THROWS_AS(AppConfig::load(docs.path().string()), std::runtime_error);
+  TempConfigFile queries("[embeddings]\nquery_threads = -2\n");
+  REQUIRE_THROWS_AS(AppConfig::load(queries.path().string()), std::runtime_error);
+}
+
 TEST_CASE("AppConfig::load: llm.provider defaults to none when unset",
           "[AppConfig]") {
   TempConfigFile file("[vault]\npath = \"./vault_data\"\n");

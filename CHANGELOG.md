@@ -8,6 +8,14 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Added
+
+- `[embeddings] threads` and `query_threads` set the CPU threads for
+  embedding documents and search queries with `provider = "local"`
+  (default `0`, llama.cpp's own default of 4 each). On a 4-core board
+  shared with another busy service, `threads = 2` and `query_threads = 2`
+  brought semantic search under load from about 8 seconds to about 2.
+
 ### Fixed
 
 - `wiki-server` stops within one embedding chunk instead of waiting for

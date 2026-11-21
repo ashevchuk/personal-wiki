@@ -33,8 +33,11 @@ class LocalEmbeddingProvider : public EmbeddingProvider {
   // docs/embeddings.md's "hybrid search relevance" writeup for real,
   // measured before/after numbers. Throws std::runtime_error if the model
   // at `modelPath` fails to load.
+  // threads / queryThreads: CPU threads for the document and query
+  // contexts; 0 keeps llama.cpp's default.
   explicit LocalEmbeddingProvider(const std::string& modelPath,
-                                   const std::string& queryPrefix = "");
+                                   const std::string& queryPrefix = "", int threads = 0,
+                                   int queryThreads = 0);
   ~LocalEmbeddingProvider() override;
 
   LocalEmbeddingProvider(const LocalEmbeddingProvider&) = delete;

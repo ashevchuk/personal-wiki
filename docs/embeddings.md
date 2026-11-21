@@ -80,6 +80,9 @@ provider = "none"        # "none" | "local" | "cloud"
                           # (default 1536)
 # query_prefix = "..."   # local only — prepended to search queries only, not
                           # documents (see "Relevance tuning" below)
+# threads = 0            # local only — CPU threads for embedding documents
+# query_threads = 0      # local only — CPU threads for embedding search queries
+                          # (0 = llama.cpp default of 4; see "CPU threads" below)
 # max_distance = 0.5     # cosine-distance cutoff for a semantic match (default 0.5)
 # min_content_words = 6  # skip embedding entirely below this many words (default 6)
 # semantic_top_k = 5     # hard cap on semantic candidates, on top of max_distance (default 5)
@@ -159,6 +162,16 @@ related documents show up in semantic results. Three knobs bound that:
 A document shorter than `min_content_words` (default 6 words) is
 skipped entirely for semantic indexing — too little text to produce a
 vector that reliably means anything.
+
+## CPU threads
+
+With `provider = "local"`, documents and search queries are embedded in
+two separate llama contexts, so a search never waits for a document
+being embedded. Both still compete for the same CPU cores. `threads`
+sets the threads for documents and `query_threads` those for queries;
+`0` (the default) keeps llama.cpp's default of 4 each. On a board whose
+few cores are shared with other services, keep `threads + query_threads`
+at or below the core count.
 
 ## Admin visibility and control
 

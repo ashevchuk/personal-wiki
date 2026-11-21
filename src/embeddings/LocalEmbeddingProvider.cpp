@@ -44,7 +44,8 @@ void l2Normalize(std::vector<float>& v) {
 }  // namespace
 
 LocalEmbeddingProvider::LocalEmbeddingProvider(const std::string& modelPath,
-                                                 const std::string& queryPrefix)
+                                                 const std::string& queryPrefix, int threads,
+                                                 int queryThreads)
     : queryPrefix_(queryPrefix) {
   ensureBackendInit();
 
@@ -115,6 +116,9 @@ LocalEmbeddingProvider::LocalEmbeddingProvider(const std::string& modelPath,
     throw std::runtime_error("LocalEmbeddingProvider: failed to create context for '" +
                               modelPath + "'");
   }
+
+  if (threads > 0) llama_set_n_threads(ctx_, threads, threads);
+  if (queryThreads > 0) llama_set_n_threads(queryCtx_, queryThreads, queryThreads);
 
   dimensions_ = static_cast<std::size_t>(llama_model_n_embd(model_));
   maxTokens_ = ctxParams.n_ctx;

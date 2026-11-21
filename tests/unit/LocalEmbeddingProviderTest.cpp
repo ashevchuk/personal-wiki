@@ -276,3 +276,16 @@ TEST_CASE("LocalEmbeddingProvider: embedQuery() with a configured prefix "
   INFO("gap with prefix: " << gapWithPrefix);
   REQUIRE(gapWithPrefix > gapWithoutPrefix);
 }
+
+TEST_CASE("LocalEmbeddingProvider: explicit thread counts give the same vectors "
+          "as the defaults",
+          "[LocalEmbeddingProvider][real-model]") {
+  LocalEmbeddingProvider defaults(WIKI_TEST_EMBEDDING_MODEL_PATH);
+  LocalEmbeddingProvider oneThread(WIKI_TEST_EMBEDDING_MODEL_PATH, "", 1, 1);
+  const auto a = defaults.embed("The cat sat on the mat.");
+  const auto b = oneThread.embed("The cat sat on the mat.");
+  const auto qa = defaults.embedQuery("cat");
+  const auto qb = oneThread.embedQuery("cat");
+  REQUIRE(cosine(a, b) > 0.9999);
+  REQUIRE(cosine(qa, qb) > 0.9999);
+}
