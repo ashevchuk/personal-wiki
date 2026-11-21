@@ -5,6 +5,7 @@
 #include <sqlite3.h>
 
 #include <algorithm>
+#include <cstring>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -80,6 +81,7 @@ void EmbeddingIndexer::ensureTable(std::size_t dimensions, const std::string& mo
     // left pointing at a hash that would now wrongly look "still current".
     execOrThrow(db_, "DROP TABLE IF EXISTS document_embeddings;");
     execOrThrow(db_, "DELETE FROM document_embedding_state;");
+    execOrThrow(db_, "DELETE FROM embedding_chunk_progress;");
     // chunk_id is the vec0 PK (one row per passage); document_rowid is a
     // metadata INTEGER so DELETE/SELECT by document still work, without
     // the old "document_rowid INTEGER PRIMARY KEY" constraint that forced
@@ -329,6 +331,64 @@ void EmbeddingIndexer::recordEmbeddingFailure(sqlite3_int64 documentRowId,
 void EmbeddingIndexer::clearEmbeddingState(sqlite3_int64 documentRowId) {
   sqlite3_stmt* stmt = nullptr;
   sqlite3_prepare_v2(db_, "DELETE FROM document_embedding_state WHERE document_rowid = ?", -1,
+                      &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, documentRowId);
+  sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+}
+
+std::optional<std::vector<float>> EmbeddingIndexer::cachedChunk(
+    sqlite3_int64 documentRowId, int chunkIndex, const std::string& chunkHash) const {
+  const auto dims = currentDimensions();
+  if (!dims.has_value()) return std::nullopt;
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db_,
+                      "SELECT embedding FROM embedding_chunk_progress "
+                      "WHERE document_rowid = ?1 AND chunk_index = ?2 AND chunk_hash = ?3",
+                      -1, &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, documentRowId);
+  sqlite3_bind_int(stmt, 2, chunkIndex);
+  sqlite3_bind_text(stmt, 3, chunkHash.c_str(), -1, SQLITE_TRANSIENT);
+  std::optional<std::vector<float>> result;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    const int bytes = sqlite3_column_bytes(stmt, 0);
+    if (bytes == static_cast<int>(*dims * sizeof(float))) {
+      std::vector<float> embedding(*dims);
+      std::memcpy(embedding.data(), sqlite3_column_blob(stmt, 0), static_cast<std::size_t>(bytes));
+      result = std::move(embedding);
+    }
+  }
+  sqlite3_finalize(stmt);
+  return result;
+}
+
+void EmbeddingIndexer::saveChunkProgress(sqlite3_int64 documentRowId, int chunkIndex,
+                                         const std::string& chunkHash,
+                                         const std::vector<float>& embedding) {
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db_,
+                      "INSERT INTO embedding_chunk_progress"
+                      "(document_rowid, chunk_index, chunk_hash, embedding) "
+                      "VALUES (?1, ?2, ?3, ?4) "
+                      "ON CONFLICT(document_rowid, chunk_index) DO UPDATE SET "
+                      "chunk_hash = excluded.chunk_hash, embedding = excluded.embedding;",
+                      -1, &stmt, nullptr);
+  sqlite3_bind_int64(stmt, 1, documentRowId);
+  sqlite3_bind_int(stmt, 2, chunkIndex);
+  sqlite3_bind_text(stmt, 3, chunkHash.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_blob(stmt, 4, embedding.data(), static_cast<int>(embedding.size() * sizeof(float)),
+                    SQLITE_TRANSIENT);
+  const int rc = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  if (rc != SQLITE_DONE) {
+    throw std::runtime_error(std::string("EmbeddingIndexer::saveChunkProgress: ") +
+                              sqlite3_errmsg(db_));
+  }
+}
+
+void EmbeddingIndexer::clearChunkProgress(sqlite3_int64 documentRowId) {
+  sqlite3_stmt* stmt = nullptr;
+  sqlite3_prepare_v2(db_, "DELETE FROM embedding_chunk_progress WHERE document_rowid = ?", -1,
                       &stmt, nullptr);
   sqlite3_bind_int64(stmt, 1, documentRowId);
   sqlite3_step(stmt);

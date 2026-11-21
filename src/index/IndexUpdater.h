@@ -11,6 +11,7 @@
 #include <vector>
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
+#include <atomic>
 #include <condition_variable>
 #include <thread>
 #include <unordered_map>
@@ -105,8 +106,14 @@ class IndexUpdater {
   // done"; ordinary document saves do not.
 #ifdef WIKI_ENABLE_SQLITE_VEC
   void flushEmbeddings();
+  // Shutdown: drops every queued embedding job, ignores new ones, and
+  // makes flushEmbeddings() return at once. A job already running stops
+  // at its next chunk boundary; finished chunks stay in
+  // embedding_chunk_progress for the next start to resume from.
+  void abandonPendingEmbeddings();
 #else
   void flushEmbeddings() {}
+  void abandonPendingEmbeddings() {}
 #endif
 
   // Removes the row at `path` (tags/attachments/FTS entry cascade via the
@@ -174,6 +181,7 @@ class IndexUpdater {
   std::condition_variable queueCv_;
   std::unordered_map<int64_t, EmbedJob> pendingByRowId_;
   bool stopWorker_ = false;
+  std::atomic<bool> abandoned_{false};
   bool embedInFlight_ = false;
   bool workerStarted_ = false;
   std::thread embedWorker_;

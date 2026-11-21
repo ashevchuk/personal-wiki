@@ -61,6 +61,7 @@ if(WIKI_ENABLE_LOCAL_EMBEDDINGS OR WIKI_ENABLE_CLOUD_EMBEDDINGS)
   target_sources(unit_tests PRIVATE
     unit/EmbeddingIndexerTest.cpp
     unit/EmbeddingsRuntimeConfigTest.cpp
+    unit/IndexUpdaterChunkProgressTest.cpp
   )
 endif()
 

@@ -135,6 +135,17 @@ class EmbeddingIndexer {
   // clearing tracking state without deleting the document.
   void clearEmbeddingState(sqlite3_int64 documentRowId);
 
+  // Per-chunk progress of an embedding pass (embedding_chunk_progress).
+  // cachedChunk returns the stored vector for chunk `chunkIndex` only if
+  // its text hash equals `chunkHash` and its length matches
+  // currentDimensions(); saveChunkProgress replaces that chunk's row;
+  // clearChunkProgress drops every row for the document.
+  std::optional<std::vector<float>> cachedChunk(sqlite3_int64 documentRowId, int chunkIndex,
+                                                const std::string& chunkHash) const;
+  void saveChunkProgress(sqlite3_int64 documentRowId, int chunkIndex,
+                         const std::string& chunkHash, const std::vector<float>& embedding);
+  void clearChunkProgress(sqlite3_int64 documentRowId);
+
   struct PendingDocument {
     sqlite3_int64 documentRowId;
     std::string path;

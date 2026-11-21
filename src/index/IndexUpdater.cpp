@@ -51,11 +51,15 @@ std::optional<int64_t> findRowIdByPath(Database& db, const std::string& path) {
 // have happened — recoverable by any future edit to the document (which
 // changes the hash again) or a --reindex forcing model/dimension
 // tracking to reset, not a security hole.
-std::string contentHashForEmbedding(const std::string& title, const std::string& body) {
-  const std::size_t h = std::hash<std::string>{}(title + "\n\n" + body);
+std::string textHash(const std::string& text) {
+  const std::size_t h = std::hash<std::string>{}(text);
   std::ostringstream out;
   out << std::hex << std::setfill('0') << std::setw(sizeof(std::size_t) * 2) << h;
   return out.str();
+}
+
+std::string contentHashForEmbedding(const std::string& title, const std::string& body) {
+  return textHash(title + "\n\n" + body);
 }
 
 // Whitespace-separated token count — deliberately not a "real" word count
@@ -518,6 +522,7 @@ void IndexUpdater::releaseUuid(const std::string& path) {
 #ifdef WIKI_ENABLE_SQLITE_VEC
 
 void IndexUpdater::enqueueEmbedJob(EmbedJob job) {
+  if (abandoned_) return;
   // Duplicate of an already-queued or in-flight (rowId, hash) — second
   // Save of the same text, or VaultWatcher seeing this Save's write.
   if (!claimEmbedHash(job.rowId, job.contentHash)) return;
@@ -589,8 +594,26 @@ void IndexUpdater::runEmbedJob(const EmbedJob& job) {
         job.title, job.body, provider_->maxInputTokens());
     std::vector<std::vector<float>> vectors;
     vectors.reserve(chunks.size());
-    for (const auto& chunk : chunks) {
-      vectors.push_back(provider_->embed(chunk));
+    for (std::size_t i = 0; i < chunks.size(); ++i) {
+      const int chunkIndex = static_cast<int>(i);
+      const std::string chunkHash = textHash(chunks[i]);
+      std::optional<std::vector<float>> cached;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cached = EmbeddingIndexer(db_.handle()).cachedChunk(job.rowId, chunkIndex, chunkHash);
+      }
+      if (cached) {
+        vectors.push_back(std::move(*cached));
+        continue;
+      }
+      if (abandoned_) {
+        releaseEmbedClaim(job.rowId, job.contentHash);
+        return;
+      }
+      vectors.push_back(provider_->embed(chunks[i]));
+      std::lock_guard<std::mutex> lock(mutex_);
+      EmbeddingIndexer(db_.handle())
+          .saveChunkProgress(job.rowId, chunkIndex, chunkHash, vectors.back());
     }
     std::lock_guard<std::mutex> lock(mutex_);
     // Drop the write if the document vanished, was shortened below the
@@ -605,6 +628,7 @@ void IndexUpdater::runEmbedJob(const EmbedJob& job) {
     EmbeddingIndexer indexer(db_.handle());
     indexer.upsertChunks(job.rowId, vectors);
     indexer.recordEmbeddingSuccess(job.rowId, job.contentHash);
+    indexer.clearChunkProgress(job.rowId);
     releaseEmbedClaim(job.rowId, job.contentHash);
   } catch (const std::exception& e) {
     try {
@@ -626,7 +650,20 @@ void IndexUpdater::runEmbedJob(const EmbedJob& job) {
 
 void IndexUpdater::flushEmbeddings() {
   std::unique_lock<std::mutex> qlock(queueMutex_);
-  queueCv_.wait(qlock, [this] { return pendingByRowId_.empty() && !embedInFlight_; });
+  queueCv_.wait(qlock, [this] {
+    return abandoned_ || (pendingByRowId_.empty() && !embedInFlight_);
+  });
+}
+
+void IndexUpdater::abandonPendingEmbeddings() {
+  std::unordered_map<int64_t, EmbedJob> dropped;
+  {
+    std::lock_guard<std::mutex> qlock(queueMutex_);
+    abandoned_ = true;
+    dropped.swap(pendingByRowId_);
+  }
+  for (const auto& [rowId, job] : dropped) releaseEmbedClaim(rowId, job.contentHash);
+  queueCv_.notify_all();
 }
 
 void IndexUpdater::stopAndJoinEmbedWorker() {

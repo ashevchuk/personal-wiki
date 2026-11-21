@@ -193,3 +193,12 @@ A routine restart with no actual content changes stays fast — documents
 are only re-embedded when their content has actually changed since the
 last successful embed, or when you switch models (which forces a full
 re-embed of everything).
+
+Stopping the server never waits for pending embeddings. Queued documents
+are dropped and picked up again by the next startup rescan; a document
+being embedded at that moment stops after its current chunk. Each chunk
+vector is saved as soon as it is computed (`embedding_chunk_progress`),
+so an interrupted pass resumes where it stopped instead of starting over.
+On a slow CPU one long document can take tens of minutes, which would
+otherwise exceed systemd's stop timeout and lose all of that work. A
+chunk vector is reused only while that chunk's text is unchanged.

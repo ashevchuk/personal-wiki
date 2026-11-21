@@ -8,6 +8,14 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Fixed
+
+- `wiki-server` stops within one embedding chunk instead of waiting for
+  every pending embedding. Queued embedding jobs were drained on SIGTERM,
+  so on a slow CPU systemd's stop timeout killed the process mid-pass.
+- Embedding progress is saved per chunk, so a pass interrupted by a
+  restart resumes instead of re-embedding the whole document.
+
 ## [0.12.0] - 2026-11-21
 
 ### Added

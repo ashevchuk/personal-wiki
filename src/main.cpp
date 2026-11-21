@@ -673,6 +673,12 @@ int main(int argc, char** argv) {
   // against indexBuilder/indexUpdater/db being destroyed out from under
   // it. In the overwhelmingly common case this is already finished long
   // before shutdown and join() returns immediately.
+  // Pending embeddings are not worth delaying shutdown for: on a slow
+  // CPU one long document takes tens of minutes, far past systemd's stop
+  // timeout. Finished chunks are kept, and the next startup rescan
+  // re-queues whatever is left.
+  indexUpdater.abandonPendingEmbeddings();
+  watcherIndexUpdater.abandonPendingEmbeddings();
   if (startupRescanThread.joinable()) startupRescanThread.join();
 
   return 0;

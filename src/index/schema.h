@@ -332,4 +332,20 @@ inline constexpr const char* kMigration11 = R"sql(
 ALTER TABLE mcp_remote_tokens ADD COLUMN agent_access INTEGER NOT NULL DEFAULT 0;
 )sql";
 
+// Migration 12: per-chunk embedding vectors written as each chunk finishes,
+// so a pass interrupted by a restart or a later save resumes instead of
+// starting over (a long document on a slow CPU can take tens of minutes).
+// chunk_hash is the hash of that chunk's exact text: a vector is reused
+// only for identical text at the same index. Rows are deleted once the
+// document's full set of vectors is stored, and on any model change.
+inline constexpr const char* kMigration12 = R"sql(
+CREATE TABLE embedding_chunk_progress (
+  document_rowid INTEGER NOT NULL REFERENCES documents(rowid_id) ON DELETE CASCADE,
+  chunk_index    INTEGER NOT NULL,
+  chunk_hash     TEXT NOT NULL,
+  embedding      BLOB NOT NULL,
+  PRIMARY KEY (document_rowid, chunk_index)
+);
+)sql";
+
 }  // namespace wikicore::index::schema
