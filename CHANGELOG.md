@@ -8,6 +8,25 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Fixed
+
+- `docker buildx build --platform ...` (and `docker compose build` with
+  `docker-compose.arm.yml`) builds the binaries for the requested platform
+  with both `Dockerfile` and `Dockerfile.release`. Previously the
+  `TARGETARCH=amd64` default in the Dockerfiles overrode the value BuildKit
+  derives from `--platform`, so an ARM image got amd64 binaries unless
+  `TARGETARCH`/`TARGETVARIANT` were also passed as build args.
+- `tools/wiki-ops.sh deploy` for the container variants checks that the
+  loaded image runs on the target before `docker compose up` replaces the
+  running container, and stops with the image's platform in the error
+  instead of leaving a container that fails with `exec format error`.
+
+### Changed
+
+- `Dockerfile.release` downloads and unpacks the release tarball on the
+  build host's own platform, so a cross-platform build no longer runs that
+  stage under QEMU emulation.
+
 ## [0.11.1] - 2026-11-18
 
 ### Fixed

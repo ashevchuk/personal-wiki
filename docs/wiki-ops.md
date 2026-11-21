@@ -205,11 +205,11 @@ that's now possible to pass.
   via `docker create`+`docker cp`, with no `--output`/buildx needed for
   the default case. With no `--platform` given, it builds for whatever
   architecture this Docker daemon's own host is (the plain legacy
-  builder, matching `Dockerfile`'s `TARGETARCH=amd64` default on a
-  typical amd64 dev machine). `--platform=linux/arm64` (which needs
-  buildx) targets a *different* architecture than this host's own — a
-  real alternative to `cross`/`cross-container` for arm64 specifically,
-  with no zig and no musl involved at all.
+  builder falls back to amd64, since it never sets `TARGETARCH`).
+  `--platform=linux/arm64` (which needs buildx) targets a *different*
+  architecture than this host's own — a real alternative to
+  `cross`/`cross-container` for arm64 specifically, with no zig and no
+  musl involved at all.
   ```sh
   ./tools/wiki-ops.sh build container-native          # no Docker needed on the target
   ./tools/wiki-ops.sh verify container-native

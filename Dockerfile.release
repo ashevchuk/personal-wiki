@@ -22,7 +22,10 @@ ARG WIKI_VERSION=latest
 # Stage 1: fetch. Only needs curl/tar/ca-certificates — no compiler, no
 # vcpkg, no multi-minute dependency build.
 # ---------------------------------------------------------------------------
-FROM debian:bookworm-slim AS fetch
+# Runs on the build host's own platform: nothing in this stage executes a
+# target binary, so a cross-platform build needs no QEMU emulation here.
+# The legacy builder never sets BUILDPLATFORM, hence the amd64 fallback.
+FROM --platform=${BUILDPLATFORM:-linux/amd64} debian:bookworm-slim AS fetch
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl tar \
@@ -31,8 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Same TARGETARCH/TARGETVARIANT defaulting as the main Dockerfile, for the
 # same reason: a plain `docker build .` with no buildx involved never
 # populates these on its own.
-ARG TARGETARCH=amd64
-ARG TARGETVARIANT=
+ARG TARGETARCH
+ARG TARGETVARIANT
 ARG WIKI_REPO
 ARG WIKI_VERSION
 
@@ -43,12 +46,12 @@ WORKDIR /tmp/fetch
 # naming family from vcpkg's own glibc triplets the main Dockerfile uses.
 # Fails loudly on anything unmapped rather than guessing.
 RUN set -eu; \
-    case "${TARGETARCH}:${TARGETVARIANT}" in \
+    case "${TARGETARCH:-amd64}:${TARGETVARIANT:-}" in \
       amd64:*) triplet=x64-musl ;; \
       arm64:*) triplet=aarch64-musl ;; \
       arm:v7)  triplet=arm-musl ;; \
       arm:v6)  triplet=armv6-musl ;; \
-      *) echo "Dockerfile.release: no release triplet mapping for TARGETARCH=${TARGETARCH} TARGETVARIANT=${TARGETVARIANT}" >&2; exit 1 ;; \
+      *) echo "Dockerfile.release: no release triplet mapping for TARGETARCH=${TARGETARCH:-amd64} TARGETVARIANT=${TARGETVARIANT:-}" >&2; exit 1 ;; \
     esac; \
     echo "$triplet" > triplet
 

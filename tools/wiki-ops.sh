@@ -268,14 +268,11 @@ platform_tag_suffix() {
 
 # platform_build_args PLATFORM — echoes --build-arg flags for TARGETARCH
 # (and TARGETVARIANT, if the platform string has one) derived from
-# "linux/arm/v7" style strings. Confirmed live: buildx does NOT reliably
-# auto-populate these from --platform alone in every builder/version
-# combination — a real `build container-arm` run with
-# --platform=linux/arm/v7 silently built as TARGETARCH=amd64 (the
-# Dockerfile's own fallback default), wasting over 40 minutes of
-# QEMU-emulated compute before failing on an architecture mismatch
-# further in. Passing them explicitly removes the dependency on that
-# auto-population working at all.
+# "linux/arm/v7" style strings. BuildKit's own values from --platform are
+# lost whenever a Dockerfile declares these ARGs with a default (the
+# default wins, silently building amd64 internals into an arm image);
+# passing them explicitly keeps the build correct regardless of how the
+# Dockerfile declares them.
 platform_build_args() {
   local platform=$1 rest arch variant
   rest="${platform#linux/}"
@@ -1295,6 +1292,13 @@ cmd_deploy_container() {
   # every other remote_sh call in this script already relies on.
   remote_sh "sudo docker load -i '$remote_image' && rm -f '$remote_image'"
   rm -f "$tmp_image"
+  # Before compose replaces the running container: an image built for the
+  # wrong platform otherwise surfaces only as a crash-looping container
+  # with a bare "exec format error". /bin/true rather than wiki-server
+  # --version: binaries older than that flag ignore it and start serving.
+  if ! remote_sh "sudo docker run --rm --entrypoint /bin/true '$image_tag'"; then
+    die "image $image_tag ($(docker image inspect -f '{{.Os}}/{{.Architecture}}{{if .Variant}}/{{.Variant}}{{end}}' "$image_tag")) does not run on $WIKI_DEPLOY_HOST — built for the wrong --platform, or a stale image under that tag; the running container was left untouched"
+  fi
 
   # Staged into /tmp then sudo-moved, not scp'd straight into
   # install_root: install_root (e.g. /opt/wiki) is root-owned on a fresh

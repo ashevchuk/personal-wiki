@@ -31,12 +31,11 @@
 # ---------------------------------------------------------------------------
 FROM debian:bookworm-slim AS build
 
-# Defaulted here (not left to buildx alone) so a plain `docker build .`
-# with no buildx component at all — the legacy builder, still the
-# default on some Docker installs — keeps working unchanged: TARGETARCH
-# is only auto-populated by BuildKit/buildx, never by the legacy builder.
-ARG TARGETARCH=amd64
-ARG TARGETVARIANT=
+# No default on these ARG lines: a declared default overrides the value
+# BuildKit populates from --platform. The legacy builder never populates
+# them, so its amd64 fallback is the ${TARGETARCH:-amd64} expansion below.
+ARG TARGETARCH
+ARG TARGETVARIANT
 # Extra -D... CMake cache flags, e.g. "-DWIKI_ENABLE_CLOUD_EMBEDDINGS=ON" — passed
 # through from `docker build --build-arg WIKI_CMAKE_EXTRA_ARGS=...` (see
 # tools/wiki-ops.sh's --local-embeddings/--cloud-embeddings build flags). Empty by
@@ -78,11 +77,11 @@ RUN git clone https://github.com/microsoft/vcpkg.git vcpkg \
 # ppc64le/s390x/riscv64 etc. aren't mapped because nothing in this repo
 # targets them; add a case here, not a guess, if that ever changes.
 RUN set -eu; \
-    case "${TARGETARCH}:${TARGETVARIANT}" in \
+    case "${TARGETARCH:-amd64}:${TARGETVARIANT:-}" in \
       amd64:*) triplet=x64-linux ;; \
       arm64:*) triplet=arm64-linux ;; \
       arm:v7)  triplet=arm-linux ;; \
-      *) echo "Dockerfile: no vcpkg triplet mapping for TARGETARCH=${TARGETARCH} TARGETVARIANT=${TARGETVARIANT}" >&2; exit 1 ;; \
+      *) echo "Dockerfile: no vcpkg triplet mapping for TARGETARCH=${TARGETARCH:-amd64} TARGETVARIANT=${TARGETVARIANT:-}" >&2; exit 1 ;; \
     esac; \
     echo "$triplet" > /tmp/vcpkg-triplet
 
