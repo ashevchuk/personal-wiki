@@ -333,7 +333,8 @@ json textContent(const std::string& text) {
 // Applies the fail-safe-private rule independently at the tool layer, on
 // top of whatever `includePrivate` already threaded through the query —
 // the same category of check that got missed on the HTTP mutating routes
-// in M2 (see docs/architecture.md's postmortem) doesn't get skipped here.
+// in M2 (see docs/architecture.md, "Request handling and auth") doesn't
+// get skipped here.
 bool isVisibleTo(const std::string& visibility, bool includePrivate) {
   return includePrivate || visibility == "public";
 }

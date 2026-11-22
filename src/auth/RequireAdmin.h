@@ -14,8 +14,8 @@ bool isAuthenticated(const drogon::HttpRequestPtr& req);
 // problem, not a CSRF one, and leaves it for the handler to reject. Every
 // mutating handler MUST call this first: AuthFilter only annotates the
 // request, it never blocks anything itself either. Skipping this call on
-// any handler is a full unauthenticated write — see the M2 postmortem in
-// docs/architecture.md for exactly how easy that is to do by accident.
+// any handler is a full unauthenticated write — see docs/architecture.md,
+// "Request handling and auth".
 //
 // Returns the 401 response to send if unauthenticated, nullopt otherwise.
 std::optional<drogon::HttpResponsePtr> requireAdminApi(const drogon::HttpRequestPtr& req);

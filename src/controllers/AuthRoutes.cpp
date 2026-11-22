@@ -111,9 +111,9 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled, bool trustProx
       // Without it listed here, this always answers false regardless of
       // whether the caller is actually logged in — caught immediately by
       // security_e2e.py's "admin session check" assertion, the exact
-      // class of bug it exists to catch (see the M2 postmortem in
-      // docs/architecture.md: a filter not being listed on a route is a
-      // silent bug, not a build error).
+      // class of bug it exists to catch (see docs/architecture.md,
+      // "Request handling and auth": a filter not being listed on a route
+      // is a silent bug, not a build error).
       {Get, "wikicore::auth::AuthFilter"});
 
   app.registerHandler(
@@ -195,8 +195,8 @@ void registerAuthRoutes(HttpAppFramework& app, bool agentEnabled, bool trustProx
       [](const HttpRequestPtr& req,
          std::function<void(const HttpResponsePtr&)>&& callback) {
         // AuthFilter/CsrfFilter never block by themselves — see
-        // RequireAdmin.h's comment and the M2 postmortem in
-        // docs/architecture.md. This is the actual gate.
+        // RequireAdmin.h's comment and docs/architecture.md,
+        // "Request handling and auth". This is the actual gate.
         if (auto rejection = requireAdminApi(req)) {
           callback(*rejection);
           return;

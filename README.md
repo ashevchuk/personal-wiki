@@ -289,6 +289,9 @@ The vault directory — your actual markdown files — is the only thing that
 has to survive a disaster. The SQLite index is a disposable cache, rebuilt
 either on the next `wiki-server` startup or with `wiki-server --reindex`.
 
+Diagrams of components, data flow, threads and trust boundaries:
+[`docs/architecture.md`](docs/architecture.md).
+
 ## Tech stack
 
 | | |

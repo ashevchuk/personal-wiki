@@ -537,7 +537,7 @@ Json::Value handleCreateDocument(DocumentService& documents, McpAuditLog& auditL
     // filesystem_error::what(). Same "internal path never reaches the
     // caller" rule as every route in DocumentRoutes.cpp/FolderRoutes.cpp/
     // VersionRoutes.cpp, arguably higher stakes here: this IS the public
-    // HTTP surface (docs/architecture.md's "Remote (HTTP) transport").
+    // HTTP surface (docs/mcp.md's "Remote (HTTP) transport").
     auditLog.record("remote:create_document", path, false, e.what(), tokenLabel);
     return toolTextResult("invalid path", true);
   } catch (const std::exception& e) {
