@@ -275,8 +275,9 @@ MCP can and can't touch — see [`docs/behavior.md`](docs/behavior.md).
 
 ## Architecture, in short
 
-Two binaries share one static library, `libwikicore`, which has zero
-dependency on Drogon or OpenSSL:
+Two binaries share one static library, `libwikicore`, which has no
+dependency on Drogon (and links OpenSSL only when the cloud embedding
+provider is compiled in):
 
 - **`wiki-server`** is the HTTP service (Drogon). It's a pure JSON API —
   every page is a static shell plus client-side JS that renders from

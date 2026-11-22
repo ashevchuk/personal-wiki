@@ -67,7 +67,7 @@ flowchart TB
         config["config/<br/>AppConfig"]
         vaultmod["vault/<br/>PathGuard · VaultRepository<br/>DocumentService · AttachmentService<br/>FolderService · BackupService"]
         indexmod["index/<br/>Database · IndexUpdater · IndexBuilder<br/>VaultWatcher · FtsSearch · NavQueries<br/>QueryBlocks · CalendarQueries · GraphQueries<br/>SnapshotStore · McpAuditLog · AgentChatStore"]
-        util["util/<br/>MarkdownRenderer · WikiLinks<br/>YouTubeEmbed · HtmlEscape · ..."]
+        util["util/<br/>MarkdownRenderer · WikiLinks<br/>YouTubeEmbed · ..."]
         embmod["embeddings/<br/>EmbeddingProvider (null / local / cloud)"]
         llmcore["llm/<br/>AgentRuntime · RemoteAgentRuntime"]
     end

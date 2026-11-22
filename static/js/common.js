@@ -39,10 +39,9 @@ window.WikiCommon = (function () {
     return e;
   }
 
-  // Mirrors util::escapeHtml (src/util/HtmlEscape.cpp) EXACTLY — same 4
-  // characters, same order, no more (notably not the single quote:
-  // matches the C++ side, which relies on every attribute in this app
-  // being double-quoted, never single-quoted).
+  // Escapes the same 4 characters md4c-html does, no more (notably not
+  // the single quote: every attribute in this app is double-quoted, never
+  // single-quoted).
   function escapeHtml(str) {
     return String(str)
       .replace(/&/g, "&amp;")

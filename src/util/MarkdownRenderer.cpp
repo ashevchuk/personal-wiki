@@ -207,9 +207,8 @@ std::string substituteQueryBlocks(std::string html) {
 // for free, and that escaped content is copied straight into the
 // data-circuit-xml attribute below, untouched — the exact same reasoning
 // as those two functions' own comments: md4c-html's render_html_escaped
-// only ever escapes & < > ", the identical set and identical replacement
-// strings this renderer's own escapeHtml uses for HTML ATTRIBUTE content,
-// so what's already between the <pre><code> markers is already valid to
+// only ever escapes & < > ", which is everything double-quoted HTML
+// ATTRIBUTE content needs, so what's already between the <pre><code> markers is already valid to
 // drop straight into any other HTML attribute, no unescape/re-escape
 // round-trip needed.
 //

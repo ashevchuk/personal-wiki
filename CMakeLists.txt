@@ -111,7 +111,6 @@ add_library(wikicore STATIC
   src/util/Time.cpp
   src/util/Uuid.cpp
   src/util/Base64.cpp
-  src/util/HtmlEscape.cpp
   src/util/Excerpt.cpp
   src/util/MarkdownRenderer.cpp
   src/util/WikiLinks.cpp
