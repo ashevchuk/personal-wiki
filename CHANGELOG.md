@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-11-23
+
 ### Fixed
 
 - Rebuilding a damaged index database at startup keeps the remote MCP
