@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-11-23
+
 ### Fixed
 
 - MCP `initialize` reports `serverInfo.version` as the bare version
