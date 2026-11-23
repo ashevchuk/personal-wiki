@@ -286,9 +286,12 @@ provider is compiled in):
   every spawn, since an MCP client may spawn it often — it trusts whatever
   index `wiki-server` already built.
 
-The vault directory — your actual markdown files — is the only thing that
-has to survive a disaster. The SQLite index is a disposable cache, rebuilt
-either on the next `wiki-server` startup or with `wiki-server --reindex`.
+The vault directory — your actual markdown files — holds every document.
+The SQLite index is rebuilt from it on the next `wiki-server` startup or
+with `wiki-server --reindex`, but the same db file also keeps the admin
+account, remote MCP tokens, agent chats and document version history; by
+default it lives inside the vault, so backing up the vault covers it (see
+[`docs/sbc-deployment.md`](docs/sbc-deployment.md)'s "Backup" section).
 
 Diagrams of components, data flow, threads and trust boundaries:
 [`docs/architecture.md`](docs/architecture.md).

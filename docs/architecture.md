@@ -47,7 +47,11 @@ flowchart LR
   the vault is backing up the wiki.
 - **The SQLite index is a disposable cache.** Search, navigation, tags,
   backlinks and embeddings all live in `index.db` and can be rebuilt from the
-  vault at any time (`wiki-server --reindex`, or simply a restart).
+  vault at any time (`wiki-server --reindex`, or simply a restart). The same
+  file also holds data the vault does not (admin account, sessions, remote
+  MCP tokens, audit log, agent chats, document version history), which is
+  why a corrupt db is rebuilt with those rows copied across rather than
+  simply deleted.
 - **One admin, no roles.** Anonymous visitors see public documents only; the
   admin sees and edits everything.
 - **The wiki is an MCP server**, not an MCP client. LLM clients connect to it.

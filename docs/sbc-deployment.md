@@ -749,12 +749,31 @@ doesn't use.
 
 ## Backup
 
-The vault directory (`[vault].path`, plus its `.trash/`) is the entire
-source of truth. The SQLite index (`[index].db_path`) is fully
-disposable — `wiki-server --reindex` rebuilds it from scratch — so
-backing it up is optional; doing so just saves a rescan on restore for a
-very large vault, nothing more. The minimum viable backup is just the
-vault directory, regularly. There are two ways to actually do that:
+The vault directory (`[vault].path`, plus its `.trash/`) holds every
+document and attachment. The SQLite index db (`[index].db_path`) is
+rebuilt from the vault for search, navigation, tags, backlinks and
+embeddings, but it also holds data the vault does not: the admin
+account, sessions, remote MCP settings and tokens, the MCP audit log,
+agent chats, and document version history. The default `db_path`
+(`vault_data/.index.db`) is inside the vault, so both backup methods
+below include it; a `db_path` outside the vault is not backed up by
+either.
+
+Both methods copy `.index.db` and its `-wal`/`-shm` files as plain files
+while the server may be writing to them, so the copied db can be
+inconsistent. If a restored db fails SQLite's integrity check,
+`wiki-server` quarantines it at startup and rebuilds it, keeping the admin account, sessions, remote MCP
+settings and tokens, the audit log and agent chats where they are still
+readable; document version history is lost in that case. For a copy
+that is known to be consistent, stop `wiki.service` before taking the
+backup.
+
+To restore: stop `wiki.service`, replace the vault directory with the
+one from the archive (it includes `.index.db*`), make sure it is owned by
+the service user, and start the service. Its startup rescan reconciles
+the index with the restored documents.
+
+There are two ways to take a backup:
 
 **Ad hoc, from the web UI:** Account page (admin only) → "Download
 backup." This hits `GET /api/admin/backup`

@@ -60,7 +60,7 @@ jobs:
         run: ./vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
       # Building Drogon+OpenSSL+trantor+everything else from scratch is
-      # NOT fast (README.md/docs/deployment.md both call this out for a
+      # NOT fast (README.md/docs/sbc-deployment.md both call this out for a
       # weak SBC; a GitHub-hosted runner is faster but still real minutes).
       # Cache the installed tree keyed on vcpkg.json's own content so a
       # dependency-only change invalidates it correctly.

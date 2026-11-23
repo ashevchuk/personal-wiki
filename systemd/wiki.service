@@ -65,7 +65,7 @@ ReadWritePaths=/opt/wiki/vault_data
 # owns fails with "attempt to write a readonly database", not a
 # permissions-sounding error. This is a
 # non-issue for the real deployment as documented here (`useradd wiki`
-# + `chown wiki:wiki vault_data`, see docs/deployment.md) since the
+# + `chown wiki:wiki vault_data`, see docs/sbc-deployment.md) since the
 # service already owns every path it writes to — but if ReadWritePaths
 # or User= ever changes, re-verify this specific dependency, don't
 # assume it still holds.

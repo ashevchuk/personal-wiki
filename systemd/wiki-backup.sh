@@ -21,7 +21,7 @@
 #                       backup that lives on the same SD card it's meant to
 #                       protect against doesn't survive that card dying,
 #                       which is the actual failure mode a backup exists
-#                       for (see docs/deployment.md's "Backup" section).
+#                       for (see docs/sbc-deployment.md's "Backup" section).
 #   RETENTION_COUNT - how many past backups to keep (default 14); older
 #                       ones are deleted after a successful new backup,
 #                       never before -- a failed run leaves the previous

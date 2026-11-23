@@ -27,7 +27,8 @@ window.WikiPages = window.WikiPages || {};
     return (
       "<h2>Backup</h2>" +
       "<p>Downloads the entire vault (documents, <code>.trash/</code>, and the " +
-      "search index) as one <code>.tar.gz</code> — see docs/deployment.md's " +
+      "index database, which also holds the admin account, MCP tokens, chats and " +
+      "version history) as one <code>.tar.gz</code> — see docs/sbc-deployment.md's " +
       '"Backup" section for the full story, including automating this on a ' +
       "schedule outside the browser.</p>" +
       '<p><button type="button" id="backup-download-btn">Download backup</button></p>'

@@ -14,13 +14,14 @@ struct BackupResult {
 // Wraps the vault directory (config.toml's [vault].path) into one
 // .tar.gz, purely read-only — no filesystem mutation, nothing written
 // anywhere. Includes `.trash/` (soft-deleted documents belong in a backup
-// too) and `.index.db*` (harmless to include even though the index is
-// disposable per docs/sbc-deployment.md's "Backup" section — a restored copy
-// just means a faster startup than a full rescan, not a correctness
-// requirement; a torn snapshot of the db mid-write is possible if this
-// runs while the server is live, but the unconditional startup rescan
-// papers over that the same way it already does after any unclean
-// shutdown). Excludes `.uploads-tmp/` — Drogon's own multipart-upload
+// too) and `.index.db*` when `db_path` sits inside the vault (the
+// default). That db is not only a rebuildable index: it also holds the
+// admin account, sessions, remote MCP tokens, the audit log, agent chats
+// and document version history. It is copied as plain files, so a backup
+// taken while the server is writing can capture an inconsistent db;
+// Database::ensureUsable() rebuilds such a db on restore and keeps the
+// auth/MCP/chat rows, but not version history (docs/sbc-deployment.md's
+// "Backup" section). Excludes `.uploads-tmp/` — Drogon's own multipart-upload
 // staging buffer (see main.cpp's setUploadPath comment), 256 pre-created
 // empty sharded subdirectories that hold nothing but transient upload
 // fragments mid-flight, never a real document; also excludes

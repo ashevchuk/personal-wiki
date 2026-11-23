@@ -397,7 +397,7 @@ endif()
 # -DCMAKE_INSTALL_PREFIX at wherever this actually gets deployed (e.g.
 # /opt/wiki); it's deliberately not hardcoded here. config.toml itself is
 # NOT installed — only the .example is, so a real one is never silently
-# materialized from defaults; see docs/deployment.md.
+# materialized from defaults; see docs/sbc-deployment.md.
 #
 # This is plain `cmake --install`, not a CPack .deb/tarball: the M5-
 # approved deployment model is a native build directly on the target

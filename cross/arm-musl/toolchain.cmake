@@ -8,7 +8,7 @@
 # what's on the target, and the binary would fail at runtime with
 # "GLIBC_2.XX not found". A fully static musl binary sidesteps this
 # entirely — it doesn't touch the target's libc at all. See
-# docs/deployment.md.
+# docs/sbc-deployment.md.
 
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR arm)
