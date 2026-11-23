@@ -806,7 +806,7 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           result["capabilities"] = capabilities;
           Json::Value serverInfo;
           serverInfo["name"] = "personal-wiki";
-          serverInfo["version"] = wikicore::versionString();
+          serverInfo["version"] = wikicore::versionNumber();
           result["serverInfo"] = serverInfo;
           callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, result)));
           return;

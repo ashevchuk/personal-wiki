@@ -17,4 +17,8 @@ const char* versionString() {
   return "personal-wiki " WIKI_VERSION;
 }
 
+const char* versionNumber() {
+  return WIKI_VERSION;
+}
+
 }  // namespace wikicore

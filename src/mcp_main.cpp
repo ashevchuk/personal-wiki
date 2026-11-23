@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
   // boundary than an anonymous web visitor. See docs/architecture.md.
   const bool includePrivate = cfg.mcpScope != "public";
 
-  wikicore::mcp::runServer("personal-wiki", wikicore::versionString(), search, nav,
+  wikicore::mcp::runServer("personal-wiki", wikicore::versionNumber(), search, nav,
                             indexUpdater, documents, attachments, auditLog, queryBlocks,
                             calendarQueries, graphQueries, includePrivate, cfg.mcpWriteAccess,
                             cfg);

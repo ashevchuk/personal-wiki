@@ -193,7 +193,7 @@ level = "warn"
             FAILURES.append("server startup")
             return 1
 
-        run_checks(sandbox, vault)
+        run_checks(sandbox, vault, server_bin)
 
     finally:
         server.send_signal(signal.SIGTERM)
@@ -217,8 +217,15 @@ level = "warn"
     return 0
 
 
-def run_checks(sandbox, vault):
+def run_checks(sandbox, vault, server_bin):
     anon = Client(HOST, PORT)
+    # `--version` prints "<name> <version>"; serverInfo.version must be the
+    # bare version, since the name has its own serverInfo.name field.
+    version_line = subprocess.run([server_bin, "--version"], capture_output=True,
+                                  text=True, check=True).stdout.strip()
+    expected_version = version_line.rsplit(" ", 1)[-1]
+    if not re.fullmatch(r"\d+\.\d+\.\d+\S*", expected_version):
+        raise RuntimeError(f"unexpected --version output: {version_line!r}")
 
     # --- 0. Shell routes always serve the same static page, no matter
     #        the path/query — the actual gating lives entirely in the
@@ -958,6 +965,26 @@ def run_checks(sandbox, vault):
         "/api/admin/mcp-remote-config/allowed-cidrs?cidr=203.0.113.0/24",
         headers={"X-CSRF-Token": csrf})
     check("remove the allowlist entry -> 200", status == 200, f"got {status}")
+    status, _, body = anon.post_json(
+        "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "initialize"}, headers=mcp_auth)
+    server_info = (json.loads(body or "{}").get("result") or {}).get("serverInfo") or {}
+    check("remote MCP initialize: serverInfo is name + bare version",
+          status == 200 and server_info.get("name") == "personal-wiki"
+          and server_info.get("version") == expected_version,
+          f"status={status} serverInfo={server_info!r} expected version={expected_version!r}")
+
+    mcp_bin = os.path.join(os.path.dirname(server_bin), "wiki-mcp")
+    stdio = subprocess.run(
+        [mcp_bin], cwd=sandbox, capture_output=True, text=True, timeout=20,
+        input=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize"}) + "\n")
+    first_line = stdio.stdout.splitlines()[0] if stdio.stdout else "{}"
+    stdio_info = (json.loads(first_line).get("result") or {}).get("serverInfo") or {}
+    check("stdio wiki-mcp initialize: serverInfo is name + bare version",
+          stdio_info.get("name") == "personal-wiki"
+          and stdio_info.get("version") == expected_version,
+          f"serverInfo={stdio_info!r} expected version={expected_version!r} "
+          f"stderr={stdio.stderr[-300:]!r}")
+
     status, _, body = admin.post_json(
         "/mcp",
         {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
