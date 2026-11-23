@@ -8,6 +8,14 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Fixed
+
+- Rebuilding a damaged index database at startup keeps the remote MCP
+  tokens (labels, agent access, last-used time). They were dropped, so
+  every remote client needed a new token, although the startup log
+  reported remote MCP as restored. The MCP audit log also keeps which
+  token made each recorded call.
+
 ## [0.15.0] - 2026-11-21
 
 ### Added

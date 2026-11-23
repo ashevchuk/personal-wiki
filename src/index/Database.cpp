@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstdint>
 #include <cstdlib>
 #include <ctime>
 #include <mutex>
@@ -126,12 +127,23 @@ struct SalvagedMcp {
   std::optional<std::string> tokenHash;
 };
 
+struct SalvagedToken {
+  int64_t id = 0;
+  std::string label;
+  std::string tokenHash;
+  std::string tokenPrefix;
+  std::string createdAt;
+  std::optional<std::string> lastUsedAt;
+  int agentAccess = 0;
+};
+
 struct SalvagedAudit {
   std::string at;
   std::string toolName;
   std::string path;
   int success = 0;
   std::optional<std::string> detail;
+  std::optional<std::string> tokenLabel;
 };
 
 struct SalvagedChat {
@@ -147,6 +159,7 @@ struct Salvage {
   std::optional<SalvagedUser> user;
   std::vector<SalvagedSession> sessions;
   std::optional<SalvagedMcp> mcp;
+  std::vector<SalvagedToken> tokens;
   std::vector<std::string> cidrs;
   std::optional<int> vectorSearchEnabled;
   std::vector<SalvagedAudit> audits;
@@ -210,6 +223,25 @@ Salvage salvageAuth(sqlite3* db) {
         out.mcp = m;
       });
 
+  run("SELECT id, label, token_hash, token_prefix, created_at, last_used_at, agent_access "
+      "FROM mcp_remote_tokens ORDER BY id",
+      [&](sqlite3_stmt* stmt) {
+        const auto label = textCol(stmt, 1);
+        const auto hash = textCol(stmt, 2);
+        const auto prefix = textCol(stmt, 3);
+        const auto created = textCol(stmt, 4);
+        if (!label || !hash || !prefix || !created) return;
+        SalvagedToken t;
+        t.id = sqlite3_column_int64(stmt, 0);
+        t.label = *label;
+        t.tokenHash = *hash;
+        t.tokenPrefix = *prefix;
+        t.createdAt = *created;
+        t.lastUsedAt = textCol(stmt, 5);
+        t.agentAccess = sqlite3_column_int(stmt, 6);
+        out.tokens.push_back(std::move(t));
+      });
+
   run("SELECT cidr FROM mcp_remote_allowed_cidrs", [&](sqlite3_stmt* stmt) {
     if (const auto c = textCol(stmt, 0)) out.cidrs.push_back(*c);
   });
@@ -217,7 +249,7 @@ Salvage salvageAuth(sqlite3* db) {
   run("SELECT vector_search_enabled FROM embeddings_runtime_config WHERE id = 1",
       [&](sqlite3_stmt* stmt) { out.vectorSearchEnabled = sqlite3_column_int(stmt, 0); });
 
-  run("SELECT at, tool_name, path, success, detail FROM mcp_audit_log ORDER BY id",
+  run("SELECT at, tool_name, path, success, detail, token_label FROM mcp_audit_log ORDER BY id",
       [&](sqlite3_stmt* stmt) {
         const auto at = textCol(stmt, 0);
         const auto tool = textCol(stmt, 1);
@@ -229,6 +261,7 @@ Salvage salvageAuth(sqlite3* db) {
         a.path = *path;
         a.success = sqlite3_column_int(stmt, 3);
         a.detail = textCol(stmt, 4);
+        a.tokenLabel = textCol(stmt, 5);
         out.audits.push_back(std::move(a));
       });
 
@@ -317,6 +350,20 @@ void restoreAuth(sqlite3* db, const Salvage& s) {
       bindTextOpt(stmt, 3, s.mcp->tokenHash);
       if (!stepDone(stmt)) throw std::runtime_error("restore mcp_remote_config failed");
     }
+    for (const auto& t : s.tokens) {
+      sqlite3_stmt* stmt = mustPrepare(
+          db,
+          "INSERT INTO mcp_remote_tokens(id, label, token_hash, token_prefix, created_at, "
+          "last_used_at, agent_access) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);");
+      sqlite3_bind_int64(stmt, 1, t.id);
+      bindText(stmt, 2, t.label);
+      bindText(stmt, 3, t.tokenHash);
+      bindText(stmt, 4, t.tokenPrefix);
+      bindText(stmt, 5, t.createdAt);
+      bindTextOpt(stmt, 6, t.lastUsedAt);
+      sqlite3_bind_int(stmt, 7, t.agentAccess);
+      if (!stepDone(stmt)) throw std::runtime_error("restore mcp_remote_tokens failed");
+    }
     for (const auto& cidr : s.cidrs) {
       sqlite3_stmt* stmt = mustPrepare(db, "INSERT OR IGNORE INTO mcp_remote_allowed_cidrs(cidr) VALUES (?1);");
       bindText(stmt, 1, cidr);
@@ -332,13 +379,14 @@ void restoreAuth(sqlite3* db, const Salvage& s) {
     }
     for (const auto& a : s.audits) {
       sqlite3_stmt* stmt = mustPrepare(db,
-                         "INSERT INTO mcp_audit_log(at, tool_name, path, success, detail) "
-                         "VALUES (?1, ?2, ?3, ?4, ?5);");
+                         "INSERT INTO mcp_audit_log(at, tool_name, path, success, detail, "
+                         "token_label) VALUES (?1, ?2, ?3, ?4, ?5, ?6);");
       bindText(stmt, 1, a.at);
       bindText(stmt, 2, a.toolName);
       bindText(stmt, 3, a.path);
       sqlite3_bind_int(stmt, 4, a.success);
       bindTextOpt(stmt, 5, a.detail);
+      bindTextOpt(stmt, 6, a.tokenLabel);
       if (!stepDone(stmt)) throw std::runtime_error("restore mcp_audit_log failed");
     }
     for (const auto& c : s.chats) {

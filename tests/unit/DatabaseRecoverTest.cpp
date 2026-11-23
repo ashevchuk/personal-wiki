@@ -86,6 +86,12 @@ void seedPreciousRows(Database& db) {
   exec(db.handle(),
        "INSERT INTO mcp_remote_config(id, enabled, write_enabled, token_hash) "
        "VALUES (1, 1, 1, 'mcp-token-hash-keep');");
+  exec(db.handle(),
+       "INSERT INTO mcp_remote_tokens(id, label, token_hash, token_prefix, created_at, "
+       "last_used_at, agent_access) VALUES "
+       "(7, 'Desktop', 'tok-hash-desktop', 'abcd1234', '2026-01-02T00:00:00Z', "
+       "'2026-01-03T00:00:00Z', 1), "
+       "(9, 'Laptop', 'tok-hash-laptop', 'efgh5678', '2026-01-04T00:00:00Z', NULL, 0);");
   exec(db.handle(), "INSERT INTO mcp_remote_allowed_cidrs(cidr) VALUES ('192.0.2.0/24');");
   exec(db.handle(),
        "INSERT INTO embeddings_runtime_config(id, vector_search_enabled) VALUES (1, 0);");
@@ -93,6 +99,10 @@ void seedPreciousRows(Database& db) {
        "INSERT INTO agent_chats(id, title, created_at, updated_at, events_json, messages_json) "
        "VALUES ('chat-keep', 'Keep me', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', "
        "'[]', '[]');");
+  exec(db.handle(),
+       "INSERT INTO mcp_audit_log(at, tool_name, path, success, detail, token_label) "
+       "VALUES ('2026-01-01T00:00:00Z', 'create_document', 'notes/remote.md', 1, "
+       "'labelled', 'Desktop');");
   // Enough rows that the file has pages past the header, so overwriting
   // the tail corrupts data without destroying the users table.
   for (int i = 0; i < 200; ++i) {
@@ -154,6 +164,17 @@ TEST_CASE("ensureUsable rebuilds a torn db and restores admin + remote MCP",
   REQUIRE(scalar(db.handle(), "SELECT csrf_token FROM sessions") == "csrf-keep");
   REQUIRE(scalar(db.handle(), "SELECT token_hash FROM mcp_remote_config WHERE id = 1") ==
           "mcp-token-hash-keep");
+  REQUIRE(countRows(db.handle(), "SELECT COUNT(*) FROM mcp_remote_tokens") == 2);
+  REQUIRE(scalar(db.handle(),
+                 "SELECT label || '|' || token_hash || '|' || token_prefix || '|' || created_at "
+                 "|| '|' || last_used_at || '|' || agent_access "
+                 "FROM mcp_remote_tokens WHERE id = 7") ==
+          "Desktop|tok-hash-desktop|abcd1234|2026-01-02T00:00:00Z|2026-01-03T00:00:00Z|1");
+  REQUIRE(scalar(db.handle(),
+                 "SELECT label || '|' || token_hash || '|' || token_prefix || '|' || created_at "
+                 "|| '|' || (last_used_at IS NULL) || '|' || agent_access "
+                 "FROM mcp_remote_tokens WHERE id = 9") ==
+          "Laptop|tok-hash-laptop|efgh5678|2026-01-04T00:00:00Z|1|0");
   REQUIRE(scalar(db.handle(), "SELECT cidr FROM mcp_remote_allowed_cidrs") == "192.0.2.0/24");
   REQUIRE(scalar(db.handle(),
                  "SELECT vector_search_enabled FROM embeddings_runtime_config WHERE id = 1") ==
@@ -161,6 +182,9 @@ TEST_CASE("ensureUsable rebuilds a torn db and restores admin + remote MCP",
   // Tail-page audit rows sitting in the overwritten 2 KiB are unreadable;
   // the rest (and every auth/MCP row, which live on earlier pages) survive.
   REQUIRE(countRows(db.handle(), "SELECT COUNT(*) FROM mcp_audit_log") > 0);
+  REQUIRE(scalar(db.handle(),
+                 "SELECT token_label FROM mcp_audit_log WHERE detail = 'labelled'") ==
+          "Desktop");
   REQUIRE(scalar(db.handle(), "SELECT title FROM agent_chats WHERE id = 'chat-keep'") ==
           "Keep me");
 }
