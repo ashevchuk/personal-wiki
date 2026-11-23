@@ -13,7 +13,7 @@ binaries — check a running/built copy with `wiki-server --version` or
 ### Fixed
 
 - MCP `initialize` reports `serverInfo.version` as the bare version
-  (`0.15.1`) instead of `personal-wiki 0.15.1`, both over stdio and
+  (`X.Y.Z`) instead of `personal-wiki X.Y.Z`, both over stdio and
   remote HTTP; the name stays in `serverInfo.name`.
 
 ## [0.15.1] - 2026-11-23
