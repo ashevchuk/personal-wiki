@@ -6,3 +6,17 @@
 # this project's own contributors wrote or decided. Excluded from graphify
 # so god-node/community reports reflect actual project architecture.
 static/js/toastui-editor/
+static/js/circuitjs1/
+static/js/katex/
+static/js/mermaid/
+static/js/prism/
+static/fonts/
+tray-app/third_party/
+# Screenshots and icons add vision-extraction cost without adding
+# architecture information.
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.svg
