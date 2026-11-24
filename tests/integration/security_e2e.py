@@ -3,8 +3,11 @@
 End-to-end security/correctness checks against a real wiki-server process:
 auth, CSRF, path traversal, session fixation, visibility gating (search/
 nav/attachments), rate limiting, admin password change (wrong-current-
-password rejection, other-session invalidation), and VaultWatcher pickup
-of external filesystem changes.
+password rejection, other-session invalidation), VaultWatcher pickup
+of external filesystem changes, and response hardening (security headers,
+cookie attributes, active content in rendered HTML, upload serving, CSRF
+variants, encoded traversal, method override, CORS). docs/security.md
+maps each check to the property it protects.
 
 This exists specifically because unit tests can't catch HTTP-layer wiring
 bugs — see the M2 postmortem in docs/architecture.md: an unauthenticated
@@ -24,6 +27,7 @@ lives.
 
 Usage: security_e2e.py <path-to-wiki-server-binary>
 """
+import html.parser
 import http.client
 import json
 import os
@@ -215,6 +219,411 @@ level = "warn"
         return 1
     print("All security/E2E checks passed.")
     return 0
+
+
+ACTIVE_TAGS = {"script", "object", "embed", "applet", "base", "meta", "link", "style",
+               "form", "frame", "frameset", "svg", "math", "template", "noscript"}
+URL_ATTRS = {"href", "src", "action", "formaction", "xlink:href", "background",
+             "poster", "data", "srcset"}
+ALLOWED_IFRAME_SRC_PREFIXES = ("https://www.youtube.com/embed/", "js/circuitjs1/")
+
+
+class ActiveContentFinder(html.parser.HTMLParser):
+    """Collects every element or attribute in server-rendered HTML that a
+    browser could execute or that changes how the page loads. The parser
+    decodes entities in attribute values, so `java&#9;script:` arrives here
+    in the form a browser would act on."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.problems = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ACTIVE_TAGS:
+            self.problems.append(f"<{tag}>")
+        for name, value in attrs:
+            value = value or ""
+            if name.startswith("on"):
+                self.problems.append(f"<{tag} {name}=...>")
+            if name == "srcdoc":
+                self.problems.append(f"<{tag} srcdoc>")
+            if name in URL_ATTRS:
+                url = re.sub(r"[\x00-\x20]", "", value).lower()
+                # Browsers never execute a script URL as an <img> source,
+                # and the renderer leaves <img src> alone on purpose
+                # (MarkdownRenderer.cpp, stripUnsafeLinkHrefs).
+                image_source = tag == "img" and name in ("src", "srcset")
+                if url.startswith(("javascript:", "vbscript:")) and not image_source:
+                    self.problems.append(f"<{tag} {name}={value!r}>")
+                if url.startswith("data:") and not (tag == "img" and name == "src"):
+                    self.problems.append(f"<{tag} {name}={value!r}>")
+        if tag == "iframe":
+            src = dict(attrs).get("src") or ""
+            if not src.startswith(ALLOWED_IFRAME_SRC_PREFIXES):
+                self.problems.append(f"<iframe src={src!r}>")
+
+
+def active_content(rendered_html):
+    finder = ActiveContentFinder()
+    finder.feed(rendered_html)
+    finder.close()
+    return finder.problems
+
+
+def lower_headers(hdrs):
+    return {k.lower(): v for k, v in hdrs.items()}
+
+
+def csp_directives(csp):
+    directives = {}
+    for part in csp.split(";"):
+        tokens = part.split()
+        if tokens:
+            directives[tokens[0]] = set(tokens[1:])
+    return directives
+
+
+XSS_BODY = """\
+<script>alert('raw-script')</script>
+<img src=x onerror=alert('raw-img')>
+<svg onload=alert('raw-svg')>
+<iframe src="https://attacker.example/"></iframe>
+[plain](javascript:alert('plain'))
+[mixed-case](JaVaScRiPt:alert('case'))
+[entity-tab](java&#9;script:alert('tab'))
+[entity-colon](javascript&colon;alert('colon'))
+[leading-space](<  javascript:alert('space')>)
+[vb](vbscript:msgbox('vb'))
+[data](data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==)
+<javascript:alert('autolink')>
+![img-js](javascript:alert('img'))
+[ref-link][evil]
+[attr-break](https://example.com/"onmouseover="alert('attr'))
+![img-attr-break](https://example.com/x.png"onerror="alert('img-attr'))
+[[<img src=x onerror=alert('wikilink')>]]
+[[xss/target]]
+[[xss/target|<script>alert('wikilink-label')</script>]]
+![youtube](https://www.youtube.com/watch?v="><script>alert('yt')</script>)
+![youtube](https://youtu.be/aaaaaaaaaaa"onload="alert('yt-attr'))
+
+```circuit
+"></iframe><script>alert('circuit')</script><iframe src="
+```
+
+[evil]: javascript:alert('ref')
+"""
+
+XSS_TITLE = "<img src=x onerror=alert('title')>"
+
+
+def run_hardening_checks(sandbox, vault, anon, admin, csrf, attach_path):
+    """Response hardening and parser-edge checks: security headers, cookie
+    attributes, active content in server-rendered HTML, upload serving,
+    CSRF variants, encoded traversal, file exposure, method override, CORS,
+    Host-header reflection. Every response body seen here is also checked
+    for the sandbox's absolute path."""
+    leaks = []
+
+    def fetch(client, method, path, **kwargs):
+        status, hdrs, body = client.request(method, path, **kwargs)
+        if sandbox.encode() in body:
+            leaks.append(f"{method} {path}")
+        return status, lower_headers(hdrs), body
+
+    csrf_header = {"X-CSRF-Token": csrf}
+
+    # --- Security headers on every kind of response ---------------------
+    header_probes = [
+        ("shell page", anon, "/"),
+        ("JSON API", anon, "/api/session"),
+        ("JSON 404", anon, "/api/documents/does-not-exist.md"),
+        ("static file", anon, "/js/common.js"),
+        ("static 404", anon, "/no-such-file.css"),
+        ("asset", admin, f"/assets/{attach_path}"),
+    ]
+    for label, client, path in header_probes:
+        status, hdrs, _ = fetch(client, "GET", path)
+        csp = csp_directives(hdrs.get("content-security-policy", ""))
+        check(f"headers ({label}): CSP default-src/object-src/base-uri/frame-ancestors locked",
+              csp.get("default-src") == {"'self'"} and csp.get("object-src") == {"'none'"}
+              and csp.get("base-uri") == {"'self'"} and csp.get("frame-ancestors") == {"'none'"},
+              f"status={status} csp={csp}")
+        check(f"headers ({label}): script-src loads no remote origin",
+              csp.get("script-src") == {"'self'", "'unsafe-inline'"},
+              f"script-src={csp.get('script-src')}")
+        check(f"headers ({label}): nosniff, X-Frame-Options DENY, Referrer-Policy",
+              hdrs.get("x-content-type-options") == "nosniff"
+              and hdrs.get("x-frame-options") == "DENY"
+              and hdrs.get("referrer-policy") == "strict-origin-when-cross-origin",
+              f"got {hdrs.get('x-content-type-options')!r} {hdrs.get('x-frame-options')!r} "
+              f"{hdrs.get('referrer-policy')!r}")
+        check(f"headers ({label}): no CORS grant without an Origin",
+              "access-control-allow-origin" not in hdrs, f"got {hdrs.get('access-control-allow-origin')!r}")
+    status, hdrs, _ = fetch(anon, "GET", "/js/circuitjs1/circuitjs.html")
+    csp = csp_directives(hdrs.get("content-security-policy", ""))
+    check("headers (circuitjs1 embed): framable by this origin only",
+          status == 200 and csp.get("frame-ancestors") == {"'self'"}
+          and hdrs.get("x-frame-options") == "SAMEORIGIN",
+          f"status={status} frame-ancestors={csp.get('frame-ancestors')} "
+          f"xfo={hdrs.get('x-frame-options')!r}")
+    status, hdrs, _ = fetch(anon, "GET", "/js/circuitjs1/../common.js")
+    # The circuitjs1 relaxation is a prefix match on the raw request path, so
+    # a dot-segment can carry it to another static file; it still only ever
+    # allows this app's own origin to frame the response.
+    check("headers: a dot-segment out of circuitjs1/ is still unframable by a foreign origin",
+          csp_directives(hdrs.get("content-security-policy", "")).get("frame-ancestors")
+          in ({"'none'"}, {"'self'"}) and hdrs.get("x-frame-options") in ("DENY", "SAMEORIGIN"),
+          f"status={status} csp={hdrs.get('content-security-policy')!r}")
+
+    # --- Cookie attributes ----------------------------------------------
+    conn = http.client.HTTPConnection(HOST, PORT, timeout=5)
+    try:
+        conn.request("POST", "/api/login",
+                     body=json.dumps({"username": "admin", "password": "SuperSecret123"}),
+                     headers={"Content-Type": "application/json"})
+        resp = conn.getresponse()
+        resp.read()
+        set_cookies = [v for k, v in resp.getheaders() if k.lower() == "set-cookie"]
+    finally:
+        conn.close()
+    by_name = {c.split("=", 1)[0]: c.lower() for c in set_cookies}
+    session_cookie = by_name.get("wiki_session", "")
+    csrf_cookie = by_name.get("wiki_csrf_token", "")
+    check("session cookie is HttpOnly and SameSite=Lax",
+          "; httponly" in session_cookie and "samesite=lax" in session_cookie,
+          f"got {session_cookie!r}")
+    check("csrf cookie is SameSite=Lax and readable by the page (not HttpOnly)",
+          csrf_cookie and "samesite=lax" in csrf_cookie and "httponly" not in csrf_cookie,
+          f"got {csrf_cookie!r}")
+
+    # --- Active content in server-rendered HTML -------------------------
+    status, _, _ = fetch(admin, "POST", "/api/documents", headers=csrf_header, json_body={
+        "path": "xss/target.md", "title": XSS_TITLE, "visibility": "public",
+        "type": "<script>alert('type')</script>", "tags": ["<script>alert('tag')</script>"],
+        "body": "target"})
+    check("create XSS-titled link target -> 201", status == 201, f"got {status}")
+    status, _, _ = fetch(admin, "POST", "/api/documents", headers=csrf_header, json_body={
+        "path": "xss/payloads.md", "title": XSS_TITLE, "visibility": "public",
+        "body": XSS_BODY})
+    check("create XSS payload doc -> 201", status == 201, f"got {status}")
+    status, hdrs, raw = fetch(anon, "GET", "/api/documents/xss/payloads.md")
+    doc = json.loads(raw) if status == 200 else {}
+    check("XSS doc JSON is served as application/json",
+          hdrs.get("content-type", "").startswith("application/json"),
+          f"got {hdrs.get('content-type')!r}")
+    problems = active_content(doc.get("renderedHtml", ""))
+    check("renderedHtml contains no executable markup, handlers or script URLs",
+          status == 200 and not problems, f"status={status} problems={problems}")
+    check("metadata round-trips as literal text in JSON (escaping is the client's job)",
+          doc.get("title") == XSS_TITLE, f"got {doc.get('title')!r}")
+    status, _, raw = fetch(anon, "GET", "/api/documents/xss/target.md")
+    target = json.loads(raw) if status == 200 else {}
+    check("type and tags round-trip as literal text in JSON",
+          target.get("type") == "<script>alert('type')</script>"
+          and target.get("tags") == ["<script>alert('tag')</script>"],
+          f"type={target.get('type')!r} tags={target.get('tags')!r}")
+
+    status, hdrs, raw = fetch(anon, "GET", "/api/documents/xss/payloads.md/raw")
+    check("raw document is served as text/plain, never as HTML",
+          status == 200 and hdrs.get("content-type", "").startswith("text/plain")
+          and hdrs.get("x-content-type-options") == "nosniff",
+          f"status={status} type={hdrs.get('content-type')!r}")
+
+    status, hdrs, raw = fetch(anon, "GET", "/d/%3Cscript%3Ealert(1)%3C/script%3E")
+    check("shell page does not reflect a script tag from the URL",
+          status == 200 and b"<script>alert(1)" not in raw, f"status={status}")
+    status, hdrs, raw = fetch(anon, "GET", "/api/documents/%3Cscript%3Ealert(1)%3C%2Fscript%3E.md")
+    check("404 for a script-shaped path is not HTML, and carries nosniff",
+          status == 404 and "html" not in hdrs.get("content-type", "")
+          and hdrs.get("x-content-type-options") == "nosniff",
+          f"status={status} type={hdrs.get('content-type')!r}")
+
+    status, _, _ = fetch(admin, "DELETE", "/api/documents/xss/payloads.md", headers=csrf_header)
+    check("trash the XSS payload doc -> 200", status == 200, f"got {status}")
+    status, _, raw = fetch(admin, "GET", "/api/admin/trash")
+    items = json.loads(raw).get("items", []) if status == 200 else []
+    excerpt = next((i.get("excerptHtml", "") for i in items if i.get("path") == "xss/payloads.md"), None)
+    check("trash excerptHtml contains no executable markup",
+          excerpt is not None and not active_content(excerpt),
+          f"excerpt={excerpt!r} problems={active_content(excerpt or '')}")
+
+    # --- Upload serving: active types are forced downloads --------------
+    active_uploads = [
+        ("evil.svg", b'<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>'),
+        ("evil.html", b"<script>alert(1)</script>"),
+        ("evil.htm", b"<script>alert(1)</script>"),
+        ("evil.xhtml", b'<html xmlns="http://www.w3.org/1999/xhtml"><script>alert(1)</script></html>'),
+        ("evil.xml", b'<x:script xmlns:x="http://www.w3.org/1999/xhtml">alert(1)</x:script>'),
+        ("EVIL.SVG", b"<svg onload=alert(1)></svg>"),
+        ("evil.png.svg", b"<svg onload=alert(1)></svg>"),
+        ("evil.js", b"alert(1)"),
+        ("noextension", b"<script>alert(1)</script>"),
+    ]
+    for filename, content in active_uploads:
+        status, _, raw = admin.upload("/api/attachments/notes/private.md", filename, content,
+                                      headers=csrf_header)
+        if status != 201:
+            check(f"upload {filename} -> 201", False, f"got {status}")
+            continue
+        stored = json.loads(raw)["path"]
+        status, hdrs, _ = fetch(admin, "GET", "/assets/" + urllib.parse.quote(stored))
+        check(f"{filename} is served as a forced download with nosniff",
+              status == 200 and hdrs.get("content-disposition", "").startswith("attachment")
+              and hdrs.get("x-content-type-options") == "nosniff",
+              f"status={status} disposition={hdrs.get('content-disposition')!r}")
+    inline_text_uploads = [("probe.txt", b"<script>alert(1)</script>"),
+                           ("probe.md", b"<script>alert(1)</script>"),
+                           ("probe.json", b'{"a":"<script>alert(1)</script>"}'),
+                           ("polyglot.png", b"<html><script>alert(1)</script></html>")]
+    for filename, content in inline_text_uploads:
+        status, _, raw = admin.upload("/api/attachments/notes/private.md", filename, content,
+                                      headers=csrf_header)
+        stored = json.loads(raw)["path"] if status == 201 else ""
+        status, hdrs, _ = fetch(admin, "GET", "/assets/" + urllib.parse.quote(stored))
+        content_type = hdrs.get("content-type", "")
+        check(f"inline {filename} is never served as HTML/SVG/XML, and carries nosniff",
+              status == 200 and "html" not in content_type and "svg" not in content_type
+              and "xml" not in content_type and hdrs.get("x-content-type-options") == "nosniff",
+              f"status={status} type={content_type!r}")
+    status, _, raw = admin.upload("/api/attachments/notes/private.md", 'q"uo;te\\d.html',
+                                  b"x", headers=csrf_header)
+    stored = json.loads(raw)["path"] if status == 201 else ""
+    check("quote/semicolon/backslash are stripped from a stored filename",
+          status == 201 and not re.search(r'["\\;]', stored.rsplit("/", 1)[-1]),
+          f"status={status} stored={stored!r}")
+    status, hdrs, _ = fetch(admin, "GET", "/assets/" + urllib.parse.quote(stored))
+    check("Content-Disposition stays one well-formed attachment value",
+          re.fullmatch(r"attachment; filename=\"[^\"\\]*\"; filename\*=UTF-8''[A-Za-z0-9%._~-]*",
+                       hdrs.get("content-disposition", "")) is not None,
+          f"got {hdrs.get('content-disposition')!r}")
+
+    # --- CSRF variants ---------------------------------------------------
+    def csrf_probe(label, path, **kwargs):
+        status, _, _ = fetch(admin, "POST", "/api/documents", **kwargs)
+        exists = os.path.exists(os.path.join(vault, path))
+        check(f"CSRF: {label} -> 403, nothing written",
+              status == 403 and not exists, f"status={status} written={exists}")
+
+    form_body = urllib.parse.urlencode({"path": "csrf/form.md", "title": "x", "body": "y"}).encode()
+    csrf_probe("form-encoded POST without token", "csrf/form.md", body=form_body,
+               headers={"Content-Type": "application/x-www-form-urlencoded"})
+    plain_body = json.dumps({"path": "csrf/plain.md", "title": "x", "body": "y"}).encode()
+    csrf_probe("text/plain JSON body without token", "csrf/plain.md", body=plain_body,
+               headers={"Content-Type": "text/plain"})
+    csrf_probe("wrong token value", "csrf/wrong.md", headers={"X-CSRF-Token": "0" * len(csrf)},
+               json_body={"path": "csrf/wrong.md", "title": "x", "body": "y"})
+    csrf_probe("empty token header", "csrf/empty.md", headers={"X-CSRF-Token": ""},
+               json_body={"path": "csrf/empty.md", "title": "x", "body": "y"})
+    csrf_probe("token sent only as a cookie", "csrf/cookie.md",
+               json_body={"path": "csrf/cookie.md", "title": "x", "body": "y"})
+    other = Client(HOST, PORT)
+    status, _, _ = other.post_json("/api/login", {"username": "admin", "password": "SuperSecret123"})
+    other_csrf = other.cookies.get("wiki_csrf_token", "")
+    check("second session login for the token-binding check -> 200",
+          status == 200 and other_csrf and other_csrf != csrf, f"got {status}")
+    csrf_probe("another session's token", "csrf/foreign.md",
+               headers={"X-CSRF-Token": other_csrf},
+               json_body={"path": "csrf/foreign.md", "title": "x", "body": "y"})
+
+    # --- Mass assignment: server-owned front-matter fields --------------
+    with open(os.path.join(vault, "notes", "private.md")) as f:
+        private_id = re.search(r"^id:\s*(\S+)", f.read(), re.M).group(1)
+    status, _, _ = fetch(admin, "POST", "/api/documents", headers=csrf_header, json_body={
+        "path": "mass/assign.md", "title": "x", "body": "y", "visibility": "public",
+        "id": private_id, "created": "2000-01-01T00:00:00Z", "updated": "2000-01-01T00:00:00Z"})
+    with open(os.path.join(vault, "mass", "assign.md")) as f:
+        written = f.read()
+    check("create ignores a client-supplied id (no uuid collision with another doc)",
+          status == 201 and private_id not in written, f"status={status}")
+    check("create ignores client-supplied created/updated timestamps",
+          "2000-01-01" not in written, f"front matter: {written[:300]!r}")
+
+    # --- Encoded path traversal over HTTP --------------------------------
+    traversal_targets = {"config.toml": b"[vault]", "etc/passwd": b"root:"}
+    traversal_shapes = [
+        "../{t}", "../../../../../../{t}", "%2e%2e/{t}", "%2e%2e%2f{t}", "..%2f{t}",
+        "%252e%252e%252f{t}", "..%5c{t}", "....//{t}", "..;/{t}", "%2e%2e%5c{t}",
+        "notes/%2e%2e/%2e%2e/{t}", "notes/..%00/../{t}", "/{t}", "%2f{t}",
+    ]
+    traversal_prefixes = ["/api/documents/", "/assets/", "/api/attachments/", "/", "/js/"]
+    leaked = []
+    for prefix in traversal_prefixes:
+        for shape in traversal_shapes:
+            for target, marker in traversal_targets.items():
+                path = prefix + shape.format(t=target)
+                for suffix in ("", "/raw") if prefix == "/api/documents/" else ("",):
+                    try:
+                        status, _, body = fetch(admin, "GET", path + suffix)
+                    except http.client.HTTPException as e:
+                        leaked.append(f"{path}{suffix}: client error {e!r}")
+                        continue
+                    if marker in body:
+                        leaked.append(f"{path}{suffix} -> {status}")
+    check("no encoded traversal shape reads config.toml or /etc/passwd (admin session)",
+          not leaked, f"leaked={leaked}")
+    status, _, _ = fetch(anon, "GET", "/healthz")
+    check("server still healthy after the traversal sweep", status == 200, f"got {status}")
+
+    # --- Files that must never be served ---------------------------------
+    for path in ("/config.toml", "/index.db", "/index.db-wal", "/server.log",
+                 "/static/shell.html", "/static/../config.toml", "/.git/HEAD",
+                 "/CMakeLists.txt", "/vault/notes/private.md", "/.uploads-tmp/",
+                 "/.trash/", "/.index.db"):
+        status, _, body = fetch(admin, "GET", path)
+        exposed = status == 200 and (b"[vault]" in body or b"SQLite format" in body
+                                     or b"systemd private content" in body)
+        check(f"{path} is not served from outside static/", not exposed, f"got {status}")
+
+    # --- Method override, TRACE, CORS -----------------------------------
+    status, _, _ = fetch(admin, "POST", "/api/documents", headers=csrf_header, json_body={
+        "path": "override/probe.md", "title": "x", "body": "y", "visibility": "public"})
+    check("create method-override probe -> 201", status == 201, f"got {status}")
+    for method, path, extra in (
+            ("POST", "/api/documents/override/probe.md", {"X-HTTP-Method-Override": "DELETE"}),
+            ("POST", "/api/documents/override/probe.md", {"X-HTTP-Method": "DELETE"}),
+            ("POST", "/api/documents/override/probe.md", {"X-Method-Override": "DELETE"}),
+            ("POST", "/api/documents/override/probe.md?_method=DELETE", {}),
+            ("GET", "/api/documents/override/probe.md?_method=DELETE", {})):
+        fetch(admin, method, path, headers={**csrf_header, **extra})
+    status, _, _ = fetch(anon, "GET", "/api/documents/override/probe.md")
+    check("method-override headers and _method do not turn a request into DELETE",
+          status == 200, f"got {status}")
+    status, _, body = fetch(admin, "TRACE", "/api/session")
+    check("TRACE does not echo the session cookie back",
+          admin.cookies.get("wiki_session", "?").encode() not in body, f"got {status}")
+
+    evil_origin = {"Origin": "https://attacker.example"}
+    for method, path in (("GET", "/api/session"), ("GET", "/api/documents/notes/private.md"),
+                         ("OPTIONS", "/api/documents")):
+        headers = dict(evil_origin)
+        if method == "OPTIONS":
+            headers.update({"Access-Control-Request-Method": "POST",
+                            "Access-Control-Request-Headers": "x-csrf-token, content-type"})
+        status, hdrs, _ = fetch(admin, method, path, headers=headers)
+        check(f"CORS: {method} {path} from a foreign Origin gets no allow-origin/credentials",
+              "access-control-allow-origin" not in hdrs
+              and "access-control-allow-credentials" not in hdrs,
+              f"status={status} acao={hdrs.get('access-control-allow-origin')!r}")
+
+    # --- Host header, open redirect, response splitting -----------------
+    for path in ("/", "/login", "/d/notes/public.md", "/api/session"):
+        status, hdrs, body = fetch(anon, "GET", path, headers={
+            "Host": "attacker.example", "X-Forwarded-Host": "attacker.example"})
+        check(f"Host/X-Forwarded-Host are not reflected ({path})",
+              b"attacker.example" not in body and "attacker.example" not in hdrs.get("location", ""),
+              f"status={status}")
+    for path in ("//attacker.example/", "/%2f%2fattacker.example", "/\\attacker.example",
+                 "/login?next=https://attacker.example", "/d/x?returnTo=//attacker.example"):
+        status, hdrs, _ = fetch(anon, "GET", path)
+        location = hdrs.get("location", "")
+        check(f"no off-site redirect for {path}",
+              "attacker.example" not in location, f"status={status} location={location!r}")
+    status, hdrs, _ = fetch(anon, "GET", "/api/documents/a%0d%0aX-Injected:%201.md")
+    check("CRLF in a path does not inject a response header",
+          "x-injected" not in hdrs, f"status={status} headers={sorted(hdrs)}")
+
+    check("no response in the hardening checks disclosed the sandbox's absolute path",
+          not leaks, f"leaks={leaks}")
 
 
 def run_checks(sandbox, vault, server_bin):
@@ -1128,6 +1537,8 @@ def run_checks(sandbox, vault, server_bin):
         {"enabled": False, "writeEnabled": False},
         headers={"X-CSRF-Token": csrf})
     check("disable remote MCP after upload checks -> 200", status == 200, f"got {status}")
+
+    run_hardening_checks(sandbox, vault, anon, admin, csrf, attach_path)
 
     # --- 8. Update, soft-delete -------------------------------------------
     status, _, _ = admin.put_json(

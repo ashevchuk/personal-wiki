@@ -250,6 +250,9 @@ MCP can and can't touch — see [`docs/behavior.md`](docs/behavior.md).
 
 ## A few things worth knowing about the security model
 
+The full threat model, every defense, the accepted risks and what each
+test checks are in [`docs/security.md`](docs/security.md).
+
 - **Path traversal** is handled in exactly one place (`PathGuard`), which
   every vault read or write goes through: a path is canonicalized and
   checked against the vault root before anything touches disk. It's tested
