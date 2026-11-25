@@ -260,3 +260,15 @@ TEST_CASE("SkillCatalog::find returns the same skill as load", "[SkillCatalog]")
   REQUIRE(two->files[1].digest == listing.skills[1].files[1].digest);
   REQUIRE_FALSE(f.catalog.find("three", true).has_value());
 }
+
+TEST_CASE("rewriteOwnAssetLinks: a stray \"](<\" does not hide later links", "[SkillCatalog]") {
+  const std::vector<std::string> files{"a.png"};
+  const std::string body = "Write `[x](<` for angle links\n![d](deploy.assets/a.png)\n> quote\n";
+  REQUIRE(rewriteOwnAssetLinks(body, "deploy.md", files) ==
+          "Write `[x](<` for angle links\n![d](assets/a.png)\n> quote\n");
+}
+
+TEST_CASE("rewriteOwnAssetLinks accepts a leading ./", "[SkillCatalog]") {
+  REQUIRE(rewriteOwnAssetLinks("![d](./deploy.assets/a.png)\n", "notes/deploy.md", {"a.png"}) ==
+          "![d](assets/a.png)\n");
+}

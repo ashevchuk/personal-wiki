@@ -104,6 +104,9 @@ code is built, just what you'll notice as someone using or running it.
   agent call can create one, edit one, change a document's type to
   `skill`, or attach a file to one. The type is matched ignoring case
   and surrounding spaces. Skill documents are edited in the web UI only.
+- **A `description` written by hand as a YAML map or list is kept as is**
+  when a save leaves the Description field empty; the app cannot show or
+  clear it. Replace it with text in the field, or edit the file.
 - **A `type: skill` document with a `description` is offered to MCP
   clients as a skill** that Claude Code and similar clients can load into
   a session as instructions (see [`docs/mcp.md`](mcp.md)'s "Skills" for

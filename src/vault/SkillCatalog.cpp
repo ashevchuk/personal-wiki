@@ -93,8 +93,9 @@ bool startsWith(std::string_view s, std::string_view prefix) {
 std::optional<std::string> ownAssetTarget(std::string_view destination,
                                           const OwnAssetPrefixes& prefixes,
                                           const std::set<std::string>& assetFiles) {
-  const std::string decoded = percentDecode(destination.substr(0, destination.find_first_of("?#")));
+  std::string decoded = percentDecode(destination.substr(0, destination.find_first_of("?#")));
   if (decoded.find("://") != std::string::npos || startsWith(decoded, "//")) return std::nullopt;
+  while (startsWith(decoded, "./")) decoded.erase(0, 2);
 
   std::optional<std::string> file;
   for (const std::string* prefix :
@@ -186,21 +187,27 @@ std::string rewriteOwnAssetLinks(std::string_view body, std::string_view documen
     std::size_t start = open + 2;
     std::size_t end;
     if (start < body.size() && body[start] == '<') {
+      // An angle-bracket destination cannot span lines (CommonMark).
       ++start;
-      end = body.find('>', start);
+      end = body.find_first_of(">\n", start);
+      if (end == std::string_view::npos || body[end] != '>') {
+        open = body.find("](", open + 2);
+        continue;
+      }
     } else {
       end = start;
       while (end < body.size() && body[end] != ')' && !isAsciiSpace(body[end])) ++end;
     }
-    if (end == std::string_view::npos) break;
     const auto target = ownAssetTarget(body.substr(start, end - start), prefixes, files);
-    if (target) {
-      out.append(body.substr(copied, start - copied));
-      out += std::string(kSkillAssetsDir) + "/" + percentEncodePathSegment(*target);
-      copied = end;
+    if (!target) {
+      open = body.find("](", open + 2);
+      continue;
     }
-    // Resume after this destination, so a "](" inside it is never treated
-    // as another link and `copied` only moves forward.
+    out.append(body.substr(copied, start - copied));
+    out += std::string(kSkillAssetsDir) + "/" + percentEncodePathSegment(*target);
+    copied = end;
+    // Past the rewritten destination: a "](" inside it is not another link,
+    // and `copied` only moves forward.
     open = body.find("](", end);
   }
   out.append(body.substr(copied));
