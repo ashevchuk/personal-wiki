@@ -2,6 +2,7 @@
 
 #include "auth/ClientIp.h"
 #include "core/McpProtocol.h"
+#include "core/McpSkills.h"
 #include "core/wikicore.h"
 #include "index/CalendarQueries.h"
 #include "index/QueryBlocks.h"
@@ -15,6 +16,8 @@
 
 #include <cctype>
 #include <filesystem>
+#include <memory>
+#include <stdexcept>
 #include <string_view>
 
 using namespace drogon;
@@ -77,6 +80,25 @@ mcp::RequestMeta readRequestMeta(const Json::Value& params) {
   }
   meta.hasClientCapabilities = m.isMember(capabilitiesKey) && m[capabilitiesKey].isObject();
   return meta;
+}
+
+// core/McpSkills builds results as nlohmann::ordered_json for both
+// transports; the bridge is a serialize/parse round trip.
+nlohmann::ordered_json toNlohmann(const Json::Value& value) {
+  Json::StreamWriterBuilder writer;
+  writer["indentation"] = "";
+  return nlohmann::ordered_json::parse(Json::writeString(writer, value));
+}
+
+Json::Value toJsonCpp(const nlohmann::ordered_json& value) {
+  const std::string text = value.dump();
+  Json::Value out;
+  std::string errors;
+  const std::unique_ptr<Json::CharReader> reader(Json::CharReaderBuilder().newCharReader());
+  if (!reader->parse(text.data(), text.data() + text.size(), &out, &errors)) {
+    throw std::runtime_error("internal JSON conversion failed: " + errors);
+  }
+  return out;
 }
 
 Json::Value modernResultMeta() {
@@ -789,11 +811,11 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
                               AttachmentService& attachments, McpUploadStaging& mcpUploads,
                               McpAuditLog& auditLog, QueryBlocks& queryBlocks,
                               CalendarQueries& calendarQueries, GraphQueries& graph,
-                              bool trustProxyHeaders) {
+                              const SkillCatalog& skills, bool trustProxyHeaders) {
   app.registerHandler(
       "/mcp",
       [&remoteConfig, &rateLimiter, &search, &nav, &indexUpdater, &documents, &attachments,
-       &mcpUploads, &auditLog, &queryBlocks, &calendarQueries, &graph,
+       &mcpUploads, &auditLog, &queryBlocks, &calendarQueries, &graph, &skills,
        trustProxyHeaders](const HttpRequestPtr& req,
                    std::function<void(const HttpResponsePtr&)>&& callback) {
         // Feature off -> plain 404, indistinguishable from "this route
@@ -945,7 +967,7 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
             Json::Value result;
             result["resultType"] = "complete";
             result["supportedVersions"] = supportedVersionsValue();
-            result["capabilities"]["tools"] = Json::Value(Json::objectValue);
+            result["capabilities"] = toJsonCpp(mcp::modernServerCapabilities());
             result["_meta"] = modernResultMeta();
             result["ttlMs"] = static_cast<Json::Int64>(mcp::kDiscoverTtlMs);
             result["cacheScope"] = "public";
@@ -977,6 +999,18 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
             (*result)["resultType"] = "complete";
             (*result)["_meta"] = modernResultMeta();
             callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, *result)));
+            return;
+          }
+          if (mcp::isSkillsMethod(method)) {
+            const mcp::MethodOutcome outcome =
+                mcp::handleSkillsMethod(method, toNlohmann(params), skills, kIncludePrivate);
+            if (outcome.error) {
+              callback(HttpResponse::newHttpJsonResponse(protocolErrorBody(id, *outcome.error)));
+              return;
+            }
+            Json::Value result = toJsonCpp(outcome.result);
+            result["_meta"] = modernResultMeta();
+            callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, result)));
             return;
           }
           callback(jsonResponse(

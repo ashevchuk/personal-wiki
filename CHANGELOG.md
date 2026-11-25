@@ -15,6 +15,12 @@ binaries — check a running/built copy with `wiki-server --version` or
   2025-03-26 `initialize` flow: `server/discover`, `tools/list` and
   `tools/call`, with the revision's version, metadata and HTTP header
   checks. Clients that use `initialize` see no change.
+- MCP skills: documents with `type: skill` and a `description` are
+  served as Agent Skills through the MCP skills extension
+  (`skills/list`, `skills/get`, `resources/list`, `resources/read`) on the
+  2026-07-28 path of both transports, with their attachments as skill
+  files. The skill name comes from the file name. The documents API reads
+  and returns the new `description` front-matter field.
 - Documents with `type: skill` are read-only to MCP and the remote
   agent: no tool can create one, edit one, change a document's type to
   `skill`, or attach a file to one, even with write access on. Each

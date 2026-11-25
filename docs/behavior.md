@@ -104,6 +104,13 @@ code is built, just what you'll notice as someone using or running it.
   agent call can create one, edit one, change a document's type to
   `skill`, or attach a file to one. The type is matched ignoring case
   and surrounding spaces. Skill documents are edited in the web UI only.
+- **A `type: skill` document with a `description` is offered to MCP
+  clients as a skill** that Claude Code and similar clients can load into
+  a session as instructions (see [`docs/mcp.md`](mcp.md)'s "Skills" for
+  the naming and size rules). Anything that can write to the vault
+  directory itself (an external editor, `git pull`, a sync tool) can
+  therefore change those instructions; the server picks the change up
+  within about a second.
 - **Every write made through MCP is logged**, whether it succeeds or
   fails, viewable from the admin panel — so you can always see what an
   AI assistant actually did to your vault.

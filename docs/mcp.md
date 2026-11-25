@@ -200,7 +200,9 @@ Both transports serve two MCP revisions side by side, chosen per request:
   unchanged from earlier releases.
 - **2026-07-28** (stateless). A request whose `params._meta` carries
   `io.modelcontextprotocol/protocolVersion` is served under this
-  revision: `server/discover`, `tools/list`, `tools/call`. Every request
+  revision: `server/discover`, `tools/list`, `tools/call`, and the skills
+  methods below (`skills/list`, `skills/get`, `resources/list`,
+  `resources/read`). Every request
   must carry `io.modelcontextprotocol/protocolVersion` and
   `io.modelcontextprotocol/clientCapabilities` in `_meta`, otherwise
   `-32602`; a version other than `2026-07-28` gets `-32022` with
@@ -226,6 +228,46 @@ Remote HTTP only, 2026-07-28 requests only:
 - `GET` and `DELETE` on `/mcp` answer `405`.
 
 The rules live in `src/core/McpProtocol.h`, shared by both transports.
+
+## Skills
+
+On the 2026-07-28 path both transports serve the MCP skills extension
+(`io.modelcontextprotocol/skills`, SEP-2640): `server/discover` declares
+`resources` and the extension, and documents with front-matter
+`type: skill` become Agent Skills that a client such as Claude Code can
+load on demand. The 2025-03-26 path does not serve them.
+
+A document is served as a skill when:
+
+- its `type` is `skill` (ignoring case and surrounding whitespace, the
+  same check as the write guard above);
+- its file name gives a valid skill name: the basename without `.md`,
+  lowercased, `_` turned into `-`, repeated `-` collapsed, leading and
+  trailing `-` dropped, and then only `a-z`, `0-9` and `-`, at most 64
+  characters (`gpg_sh.md` → `gpg-sh`; a name with a space or non-ASCII
+  letters is not served);
+- it has a non-empty `description` of at most 1024 characters (what the
+  skill does and when to use it; the client chooses skills by it);
+- no other skill document gives the same name (if two do, neither is
+  served);
+- with its attachments it stays within 512 files and 16 MiB;
+- it is visible at the transport's scope (`[mcp].scope` for stdio, admin
+  for remote), checked against the document's own front matter.
+
+Each skill is `skill://<name>/SKILL.md` plus `skill://<name>/assets/<file>`
+for every file in the document's `.assets/` folder. `SKILL.md` is
+generated: a YAML block with exactly `name` and `description`
+(double-quoted), a `# <title>` heading unless the body already starts with
+one, and the body, with links into the document's own `.assets/` folder
+rewritten to `assets/<file>`. `skills/list` and `skills/get` return each
+skill's frontmatter and the size and `sha256:` digest of every file;
+`resources/read` returns `SKILL.md` and text attachments as `text`, other
+files as base64 `blob`. Unknown skills, files and cursors are `-32602`.
+Results carry `ttlMs: 60000` and `cacheScope` `private` whenever they
+include a private skill.
+
+The catalog is `vault::SkillCatalog` (`src/vault/SkillCatalog.h`); the
+wire shapes are built once in `src/core/McpSkills.h` for both transports.
 
 ## Versioning
 

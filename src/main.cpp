@@ -44,6 +44,7 @@
 #include "vault/DocumentService.h"
 #include "vault/FolderService.h"
 #include "vault/McpUploadStaging.h"
+#include "vault/SkillCatalog.h"
 #include "vault/VaultRepository.h"
 
 #include <drogon/drogon.h>
@@ -261,6 +262,7 @@ int main(int argc, char** argv) {
   wikicore::index::NavQueries navQueries(db);
   wikicore::index::QueryBlocks queryBlocks(db, ftsSearch);
   wikicore::index::GraphQueries graphQueries(db);
+  const wikicore::vault::SkillCatalog skillCatalog(db, documentService, attachmentService, vault);
   wikicore::index::CalendarQueries calendarQueries(db);
   // Read-only from wiki-server's side — write_access is a wiki-mcp-only
   // concept (see McpServer.cpp); this exists here purely to back the
@@ -645,7 +647,7 @@ int main(int argc, char** argv) {
                                                   remoteMcpRateLimiter, ftsSearch, navQueries,
                                                   indexUpdater, documentService, attachmentService,
                                                   mcpUploadStaging, mcpAuditLog, queryBlocks,
-                                                  calendarQueries, graphQueries,
+                                                  calendarQueries, graphQueries, skillCatalog,
                                                   /*trustProxyHeaders=*/!cfg.tls.enabled);
   wikicore::controllers::registerRemoteAgentRoutes(
       drogon::app(), remoteMcpConfig, remoteMcpRateLimiter, remoteAgentChatClient.get(),

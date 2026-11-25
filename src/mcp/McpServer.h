@@ -10,6 +10,7 @@
 #include "index/QueryBlocks.h"
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
+#include "vault/SkillCatalog.h"
 
 #include <string>
 
@@ -18,7 +19,9 @@ namespace wikicore::mcp {
 // Builds and runs the MCP stdio server exposing the 6 read-only tools
 // (search_documents, get_document, list_tags, list_documents, run_query,
 // get_calendar_events), plus, when `writeAccess` is true,
-// create_document/update_document/attach_file.
+// create_document/update_document/attach_file. On the 2026-07-28 path it
+// also serves `skills` (type: skill documents) through the MCP skills
+// extension, at the same `includePrivate` scope as the tools.
 // Blocks until stdin closes.
 //
 // `includePrivate` is fixed for the whole process lifetime, from
@@ -51,7 +54,7 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
                vault::AttachmentService& attachments, index::McpAuditLog& auditLog,
                index::QueryBlocks& queryBlocks, index::CalendarQueries& calendarQueries,
-               index::GraphQueries& graph, bool includePrivate, bool writeAccess,
-               const config::AppConfig& cfg);
+               index::GraphQueries& graph, const vault::SkillCatalog& skills,
+               bool includePrivate, bool writeAccess, const config::AppConfig& cfg);
 
 }  // namespace wikicore::mcp

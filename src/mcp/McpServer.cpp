@@ -1,6 +1,7 @@
 #include "mcp/McpServer.h"
 
 #include "core/McpProtocol.h"
+#include "core/McpSkills.h"
 #include "embeddings/EmbeddingProviderFactory.h"
 #include "util/Base64.h"
 #include "vault/AttachToDocument.h"
@@ -129,6 +130,11 @@ class server {
     tools_.push_back({std::move(t), std::move(handler)});
   }
 
+  void set_skills(const vault::SkillCatalog& skills, bool includePrivate) {
+    skills_ = &skills;
+    skillsIncludePrivate_ = includePrivate;
+  }
+
   // Blocks until stdin closes. One JSON-RPC message per line.
   void start_stdio();
 
@@ -147,6 +153,8 @@ class server {
     tool_handler handler;
   };
   std::vector<ToolEntry> tools_;
+  const vault::SkillCatalog* skills_ = nullptr;
+  bool skillsIncludePrivate_ = false;
 };
 
 json server::handleInitialize() const {
@@ -243,7 +251,8 @@ json server::dispatchModern(const std::string& method, const json& params,
   if (method == "server/discover") {
     return json{{"resultType", "complete"},
                 {"supportedVersions", json::array({std::string(kModernProtocolVersion)})},
-                {"capabilities", json{{"tools", json::object()}}},
+                {"capabilities", skills_ ? modernServerCapabilities()
+                                         : json{{"tools", json::object()}}},
                 {"_meta", serverInfoMeta()},
                 {"ttlMs", kDiscoverTtlMs},
                 {"cacheScope", "public"}};
@@ -260,6 +269,12 @@ json server::dispatchModern(const std::string& method, const json& params,
     result["resultType"] = "complete";
     result["_meta"] = serverInfoMeta();
     return result;
+  }
+  if (skills_ && isSkillsMethod(method)) {
+    MethodOutcome outcome = handleSkillsMethod(method, params, *skills_, skillsIncludePrivate_);
+    if (outcome.error) throwProtocolError(*outcome.error);
+    outcome.result["_meta"] = serverInfoMeta();
+    return outcome.result;
   }
   throw mcp_exception(error_code::method_not_found, "Method not found: " + method);
 }
@@ -822,11 +837,12 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
                index::IndexUpdater& indexUpdater, vault::DocumentService& documents,
                vault::AttachmentService& attachments, index::McpAuditLog& auditLog,
                index::QueryBlocks& queryBlocks, index::CalendarQueries& calendarQueries,
-               index::GraphQueries& graph, bool includePrivate, bool writeAccess,
-               const config::AppConfig& cfg) {
+               index::GraphQueries& graph, const vault::SkillCatalog& skills,
+               bool includePrivate, bool writeAccess, const config::AppConfig& cfg) {
   LazyEmbeddingProvider lazyProvider(indexUpdater, cfg);
 
   server srv(serverName, serverVersion);
+  srv.set_skills(skills, includePrivate);
 
   tool searchDocumentsTool =
       tool_builder("search_documents")

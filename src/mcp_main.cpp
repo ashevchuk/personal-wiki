@@ -75,6 +75,7 @@ int main(int argc, char** argv) {
   wikicore::index::QueryBlocks queryBlocks(db, search);
   wikicore::index::CalendarQueries calendarQueries(db);
   wikicore::index::GraphQueries graphQueries(db);
+  const wikicore::vault::SkillCatalog skills(db, documents, attachments, vault);
 
   // "admin" (the AppConfig default) sees public+private; only an exact
   // "public" restricts it — this is the opposite direction from the HTTP
@@ -85,8 +86,8 @@ int main(int argc, char** argv) {
 
   wikicore::mcp::runServer("personal-wiki", wikicore::versionNumber(), search, nav,
                             indexUpdater, documents, attachments, auditLog, queryBlocks,
-                            calendarQueries, graphQueries, includePrivate, cfg.mcpWriteAccess,
-                            cfg);
+                            calendarQueries, graphQueries, skills, includePrivate,
+                            cfg.mcpWriteAccess, cfg);
 
   return 0;
 }

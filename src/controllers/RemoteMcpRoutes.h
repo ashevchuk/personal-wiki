@@ -12,6 +12,7 @@
 #include "vault/AttachmentService.h"
 #include "vault/DocumentService.h"
 #include "vault/McpUploadStaging.h"
+#include "vault/SkillCatalog.h"
 
 #include <drogon/HttpAppFramework.h>
 
@@ -64,6 +65,8 @@ void registerRemoteMcpRoutes(drogon::HttpAppFramework& app,
                               wikicore::index::McpAuditLog& auditLog,
                               wikicore::index::QueryBlocks& queryBlocks,
                               wikicore::index::CalendarQueries& calendarQueries,
-                              wikicore::index::GraphQueries& graph, bool trustProxyHeaders);
+                              wikicore::index::GraphQueries& graph,
+                              const wikicore::vault::SkillCatalog& skills,
+                              bool trustProxyHeaders);
 
 }  // namespace wikicore::controllers

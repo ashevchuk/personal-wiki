@@ -28,6 +28,7 @@ lives.
 Usage: security_e2e.py <path-to-wiki-server-binary>
 """
 import base64
+import hashlib
 import html.parser
 import http.client
 import json
@@ -954,6 +955,182 @@ level = "warn"
           f"skill={doc(skill_path)!r} plain={doc(plain_path)!r}")
 
 
+def run_mcp_skills_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault):
+    """type: skill documents served through the MCP skills extension on the
+    2026-07-28 path of both transports, with digests that match the bytes
+    served and the same visibility gating as every tool."""
+    csrf_hdr = {"X-CSRF-Token": csrf}
+    for path, visibility, description in (
+            ("skills/deploy_steps.md", "public", "Use when deploying: run the checklist"),
+            ("skills/private-playbook.md", "private", "Private playbook")):
+        status, _, body = admin.post_json(
+            "/api/documents",
+            {"path": path, "title": "Deploy Steps", "type": "skill", "visibility": visibility,
+             "description": description, "body": "Read the attachment.\n"},
+            headers=csrf_hdr)
+        check(f"web admin creates skill document {path}", status in (200, 201),
+              f"got {status} body={body[:200]!r}")
+    status, _, body = admin.upload("/api/attachments/skills/deploy_steps.md", "check.png",
+                                   b"\x89PNG\r\n\x1a\n-skill-asset", headers=csrf_hdr)
+    check("web admin attaches a file to the public skill", status in (200, 201),
+          f"got {status} body={body[:200]!r}")
+    status, _, raw = admin.get("/api/documents/skills/deploy_steps.md")
+    doc = json.loads(raw) if raw else {}
+    check("documents API returns the description",
+          doc.get("description") == "Use when deploying: run the checklist", f"doc={doc!r}")
+    asset_link = f"![c](/assets/skills/deploy_steps.assets/check.png)"
+    status, _, _ = admin.put_json(
+        "/api/documents/skills/deploy_steps.md",
+        {"title": "Deploy Steps", "type": "skill", "visibility": "public",
+         "body": "Read the attachment.\n" + asset_link + "\n"},
+        headers=csrf_hdr)
+    status, _, raw = admin.get("/api/documents/skills/deploy_steps.md")
+    check("update without description keeps it",
+          status == 200
+          and json.loads(raw).get("description") == "Use when deploying: run the checklist",
+          f"got {status} body={raw[:200]!r}")
+
+    def modern(method, params=None):
+        p = dict(params or {})
+        p["_meta"] = MODERN_MCP_META
+        h = {"MCP-Protocol-Version": MODERN_MCP_VERSION, "Mcp-Method": method, **mcp_auth}
+        if method == "resources/read":
+            h["Mcp-Name"] = p.get("uri", "")
+        status, _, body = anon.post_json(
+            "/mcp", {"jsonrpc": "2.0", "id": 1, "method": method, "params": p}, headers=h)
+        return status, (json.loads(body) if body else {}), body
+
+    def read_bytes(rpc):
+        contents = ((rpc.get("result") or {}).get("contents") or [{}])[0]
+        if "text" in contents:
+            return contents["text"].encode("utf-8")
+        return base64.b64decode(contents.get("blob", ""))
+
+    status, rpc, body = modern("server/discover")
+    caps = (rpc.get("result") or {}).get("capabilities") or {}
+    check("remote discover declares resources + the skills extension",
+          "resources" in caps
+          and "io.modelcontextprotocol/skills" in (caps.get("extensions") or {}),
+          f"body={body[:300]!r}")
+
+    status, rpc, body = modern("skills/list")
+    result = rpc.get("result") or {}
+    by_name = {s["frontmatter"]["name"]: s for s in result.get("skills") or []}
+    check("remote skills/list lists both skills (admin scope) and skips invalid ones",
+          status == 200 and result.get("resultType") == "complete"
+          and set(by_name) == {"deploy-steps", "private-playbook"}
+          and result.get("cacheScope") == "private" and isinstance(result.get("ttlMs"), int),
+          f"status={status} body={body[:500]!r}")
+    entry = by_name.get("deploy-steps") or {}
+    check("skill entry: SKILL.md uri, verbatim frontmatter, every file listed",
+          entry.get("uri") == "skill://deploy-steps/SKILL.md"
+          and entry.get("frontmatter") == {"name": "deploy-steps",
+                                           "description": "Use when deploying: run the checklist"}
+          and [r["uri"] for r in entry.get("resources") or []]
+          == ["skill://deploy-steps/SKILL.md", "skill://deploy-steps/assets/check.png"],
+          f"entry={entry!r}")
+
+    for res in entry.get("resources") or []:
+        status, rpc, body = modern("resources/read", {"uri": res["uri"]})
+        data = read_bytes(rpc)
+        check(f"resources/read {res['uri']}: size and sha256 match the manifest",
+              status == 200 and len(data) == res["size"]
+              and res["digest"] == "sha256:" + hashlib.sha256(data).hexdigest(),
+              f"status={status} size={len(data)} manifest={res!r} body={body[:200]!r}")
+    status, rpc, _ = modern("resources/read", {"uri": "skill://deploy-steps/SKILL.md"})
+    skill_md = read_bytes(rpc).decode("utf-8")
+    check("SKILL.md: frontmatter block, title heading, asset link rewritten to assets/",
+          skill_md.startswith('---\nname: "deploy-steps"\ndescription: "Use when deploying: run '
+                              'the checklist"\n---\n')
+          and "# Deploy Steps" in skill_md and "![c](assets/check.png)" in skill_md
+          and "deploy_steps.assets" not in skill_md,
+          f"SKILL.md={skill_md!r}")
+
+    status, rpc, body = modern("skills/get", {"uri": "skill://deploy-steps/SKILL.md"})
+    check("remote skills/get returns the same entry",
+          status == 200 and (rpc.get("result") or {}).get("skill") == entry
+          and (rpc.get("result") or {}).get("cacheScope") == "public",
+          f"body={body[:300]!r}")
+    for method, uri in (("skills/get", "skill://nope/SKILL.md"),
+                        ("skills/get", "skill://deploy-steps/assets/check.png"),
+                        ("resources/read", "skill://deploy-steps/../private-playbook/SKILL.md"),
+                        ("resources/read", "skill://deploy-steps/assets/../../deploy_steps.md"),
+                        ("resources/read", "skill://guarded/SKILL.md")):
+        status, rpc, body = modern(method, {"uri": uri})
+        check(f"remote {method} {uri} -> -32602",
+              (rpc.get("error") or {}).get("code") == -32602, f"status={status} body={body[:200]!r}")
+
+    status, rpc, body = modern("resources/list")
+    uris = [r.get("uri") for r in (rpc.get("result") or {}).get("resources") or []]
+    check("remote resources/list lists the skill files",
+          "skill://deploy-steps/SKILL.md" in uris and "skill://deploy-steps/assets/check.png" in uris,
+          f"body={body[:300]!r}")
+
+    status, _, body = anon.post_json(
+        "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "skills/list"}, headers=mcp_auth)
+    check("legacy (no _meta) skills/list is not served",
+          (json.loads(body).get("error") or {}).get("code") == -32601 if body else False,
+          f"status={status} body={body[:200]!r}")
+    status, _, body = anon.post_json(
+        "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "initialize"}, headers=mcp_auth)
+    legacy_caps = (json.loads(body).get("result") or {}).get("capabilities") or {}
+    check("legacy initialize does not advertise resources", "resources" not in legacy_caps,
+          f"caps={legacy_caps!r}")
+
+    public_dir = os.path.join(sandbox, "mcp-public")
+    os.makedirs(public_dir, exist_ok=True)
+    with open(os.path.join(public_dir, "config.toml"), "w") as f:
+        f.write(f"""
+[vault]
+path = "{vault}"
+[index]
+db_path = "{sandbox}/index.db"
+[mcp]
+scope = "public"
+[log]
+level = "warn"
+""")
+
+    def stdio_calls(cwd, calls):
+        lines = "".join(
+            json.dumps({"jsonrpc": "2.0", "id": i, "method": method,
+                        "params": {**params, "_meta": MODERN_MCP_META}}) + "\n"
+            for i, (method, params) in enumerate(calls, start=1))
+        proc = subprocess.run([mcp_bin], cwd=cwd, capture_output=True, text=True, timeout=20,
+                              input=lines)
+        out = {}
+        for line in proc.stdout.splitlines():
+            msg = json.loads(line)
+            out[msg.get("id")] = msg
+        return out, f"stdout={proc.stdout[:500]!r} stderr={proc.stderr[-300:]!r}"
+
+    responses, detail = stdio_calls(sandbox, [
+        ("skills/list", {}),
+        ("resources/read", {"uri": "skill://deploy-steps/assets/check.png"}),
+    ])
+    stdio_names = {s["frontmatter"]["name"]
+                   for s in (responses.get(1, {}).get("result") or {}).get("skills") or []}
+    stdio_entry = next((s for s in (responses.get(1, {}).get("result") or {}).get("skills") or []
+                        if s["frontmatter"]["name"] == "deploy-steps"), {})
+    check("stdio skills/list (scope admin) matches the remote entry",
+          stdio_names == {"deploy-steps", "private-playbook"} and stdio_entry == entry, detail)
+    check("stdio resources/read returns the asset bytes",
+          read_bytes(responses.get(2, {})) == b"\x89PNG\r\n\x1a\n-skill-asset", detail)
+
+    responses, detail = stdio_calls(public_dir, [
+        ("skills/list", {}),
+        ("skills/get", {"uri": "skill://private-playbook/SKILL.md"}),
+        ("resources/read", {"uri": "skill://private-playbook/SKILL.md"}),
+    ])
+    public_result = responses.get(1, {}).get("result") or {}
+    check("stdio scope=public: only the public skill, cacheScope public",
+          {s["frontmatter"]["name"] for s in public_result.get("skills") or []} == {"deploy-steps"}
+          and public_result.get("cacheScope") == "public", detail)
+    check("stdio scope=public: private skill is unknown to skills/get and resources/read",
+          (responses.get(2, {}).get("error") or {}).get("code") == -32602
+          and (responses.get(3, {}).get("error") or {}).get("code") == -32602, detail)
+
+
 def run_checks(sandbox, vault, server_bin):
     anon = Client(HOST, PORT)
     # `--version` prints "<name> <version>"; serverInfo.version must be the
@@ -1724,6 +1901,7 @@ def run_checks(sandbox, vault, server_bin):
 
     run_modern_mcp_checks(anon, mcp_auth, mcp_bin, sandbox, expected_version)
     run_skill_write_guard_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault)
+    run_mcp_skills_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault)
 
     status, _, body = admin.post_json(
         "/mcp",

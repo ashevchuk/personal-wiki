@@ -111,6 +111,10 @@ DocumentInput parseDocumentInput(const Json::Value& json) {
   input.body = json.get("body", "").asString();
   input.due = json.get("due", "").asString();
   input.recur = json.get("recur", "").asString();
+  // Absent keeps the stored value on update (see DocumentInput).
+  if (json.isMember("description") && json["description"].isString()) {
+    input.description = json["description"].asString();
+  }
   if (json.isMember("tags") && json["tags"].isArray()) {
     for (const auto& tag : json["tags"]) {
       if (tag.isString()) input.tags.push_back(tag.asString());
@@ -222,6 +226,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         body["title"] = fm.title;
         body["tags"] = tagsToJson(fm.tags);
         body["type"] = fm.type;
+        body["description"] = fm.description;
         body["visibility"] = fm.visibility;
         body["due"] = fm.due;
         body["recur"] = fm.recur;
