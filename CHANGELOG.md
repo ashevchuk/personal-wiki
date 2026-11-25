@@ -8,6 +8,8 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-25
+
 ### Added
 
 - MCP protocol revision 2026-07-28 (stateless, per-request `_meta`) on
