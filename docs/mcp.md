@@ -177,6 +177,42 @@ at 200 rows. The table itself persists regardless of `write_access`'s
 current value: turning the setting back off after some writes already
 happened doesn't erase the record of what was written while it was on.
 
+## Protocol revisions
+
+Both transports serve two MCP revisions side by side, chosen per request:
+
+- **2025-03-26** (`initialize` handshake). An `initialize` request, or
+  any request without per-request metadata, gets this behavior,
+  unchanged from earlier releases.
+- **2026-07-28** (stateless). A request whose `params._meta` carries
+  `io.modelcontextprotocol/protocolVersion` is served under this
+  revision: `server/discover`, `tools/list`, `tools/call`. Every request
+  must carry `io.modelcontextprotocol/protocolVersion` and
+  `io.modelcontextprotocol/clientCapabilities` in `_meta`, otherwise
+  `-32602`; a version other than `2026-07-28` gets `-32022` with
+  `data.supported`. Every result carries `resultType: "complete"` and
+  `io.modelcontextprotocol/serverInfo` in its `_meta`; `server/discover`
+  and `tools/list` add `ttlMs` and `cacheScope: "public"`. `ping` does
+  not exist in this revision (`-32601`).
+
+Remote HTTP only, 2026-07-28 requests only:
+
+- `MCP-Protocol-Version`, `Mcp-Method` and, for `tools/call`, `Mcp-Name`
+  must be present and equal the body values (`Mcp-Name` may use the
+  `=?base64?...?=` form); otherwise `400` with `-32020`.
+- A request whose `MCP-Protocol-Version` header names a revision newer
+  than 2025-11-25 is a 2026-07-28 request even without body `_meta`, so
+  it fails with `400` / `-32602` instead of being answered under
+  2025-03-26 rules.
+- `-32602` for missing `_meta` fields and `-32022` are `400`; an unknown
+  method is `404` with `-32601`; a notification is `202` with no body.
+- An `Origin` header that does not name the request's `Host` gets `403`.
+  Clients that send no `Origin` (non-browser clients) are unaffected.
+  Behind nginx this relies on `proxy_set_header Host $host`.
+- `GET` and `DELETE` on `/mcp` answer `405`.
+
+The rules live in `src/core/McpProtocol.h`, shared by both transports.
+
 ## Versioning
 
 Every `DocumentService::update` call — whether triggered by the HTTP

@@ -1,6 +1,7 @@
 #include "controllers/RemoteMcpRoutes.h"
 
 #include "auth/ClientIp.h"
+#include "core/McpProtocol.h"
 #include "core/wikicore.h"
 #include "index/CalendarQueries.h"
 #include "index/QueryBlocks.h"
@@ -43,6 +44,71 @@ Json::Value jsonRpcError(const Json::Value& id, int code, const std::string& mes
   err["message"] = message;
   body["error"] = err;
   return body;
+}
+
+Json::Value serverInfoValue() {
+  Json::Value serverInfo;
+  serverInfo["name"] = "personal-wiki";
+  serverInfo["version"] = wikicore::versionNumber();
+  return serverInfo;
+}
+
+// --- 2026-07-28 (modern) protocol helpers; the rules themselves live in ---
+// --- core/McpProtocol.h, shared with the stdio server ------------------
+
+std::optional<std::string> headerValue(const HttpRequestPtr& req, const std::string& name) {
+  const std::string& value = req->getHeader(name);
+  if (value.empty()) return std::nullopt;
+  return value;
+}
+
+mcp::RequestMeta readRequestMeta(const Json::Value& params) {
+  mcp::RequestMeta meta;
+  if (!params.isObject() || !params.isMember("_meta") || !params["_meta"].isObject()) {
+    return meta;
+  }
+  const Json::Value& m = params["_meta"];
+  const std::string versionKey(mcp::kMetaProtocolVersion);
+  const std::string capabilitiesKey(mcp::kMetaClientCapabilities);
+  meta.hasProtocolVersionKey = m.isMember(versionKey);
+  if (meta.hasProtocolVersionKey && m[versionKey].isString()) {
+    meta.protocolVersion = m[versionKey].asString();
+  }
+  meta.hasClientCapabilities = m.isMember(capabilitiesKey) && m[capabilitiesKey].isObject();
+  return meta;
+}
+
+Json::Value modernResultMeta() {
+  Json::Value meta;
+  meta[std::string(mcp::kMetaServerInfo)] = serverInfoValue();
+  return meta;
+}
+
+Json::Value supportedVersionsValue() {
+  Json::Value versions(Json::arrayValue);
+  versions.append(std::string(mcp::kModernProtocolVersion));
+  return versions;
+}
+
+Json::Value protocolErrorBody(const Json::Value& id, const mcp::ProtocolError& err) {
+  Json::Value body = jsonRpcError(id, err.code, err.message);
+  if (err.code == mcp::kErrorUnsupportedProtocolVersion) {
+    body["error"]["data"]["supported"] = supportedVersionsValue();
+    body["error"]["data"]["requested"] = err.requestedVersion;
+  }
+  return body;
+}
+
+HttpResponsePtr jsonResponse(const Json::Value& body, HttpStatusCode status) {
+  auto resp = HttpResponse::newHttpJsonResponse(body);
+  resp->setStatusCode(status);
+  return resp;
+}
+
+HttpResponsePtr emptyResponse(HttpStatusCode status) {
+  auto resp = HttpResponse::newHttpResponse();
+  resp->setStatusCode(status);
+  return resp;
 }
 
 // MCP tool-call result shape: {"content": [{"type":"text","text":"..."}],
@@ -788,45 +854,9 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
         const Json::Value id = isNotification ? Json::Value() : request["id"];
         const Json::Value params = request.get("params", Json::Value(Json::objectValue));
 
-        if (method == "notifications/initialized") {
-          // A notification gets no response body at all (JSON-RPC 2.0) --
-          // 202 Accepted, empty, matching the Streamable HTTP transport's
-          // documented behavior for a request with nothing to reply to.
-          auto resp = HttpResponse::newHttpResponse();
-          resp->setStatusCode(k202Accepted);
-          callback(resp);
-          return;
-        }
-
-        if (method == "initialize") {
-          Json::Value result;
-          result["protocolVersion"] = "2025-03-26";
-          Json::Value capabilities;
-          capabilities["tools"] = Json::Value(Json::objectValue);
-          result["capabilities"] = capabilities;
-          Json::Value serverInfo;
-          serverInfo["name"] = "personal-wiki";
-          serverInfo["version"] = wikicore::versionNumber();
-          result["serverInfo"] = serverInfo;
-          callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, result)));
-          return;
-        }
-
-        if (method == "tools/list") {
-          callback(HttpResponse::newHttpJsonResponse(
-              jsonRpcResult(id, buildToolsList(settings.writeEnabled))));
-          return;
-        }
-
-        if (method == "tools/call") {
-          if (!params.isMember("name") || !params["name"].isString()) {
-            callback(HttpResponse::newHttpJsonResponse(
-                jsonRpcError(id, -32602, "missing 'name'")));
-            return;
-          }
-          const std::string toolName = params["name"].asString();
-          const Json::Value args = params.get("arguments", Json::Value(Json::objectValue));
-
+        // nullopt = no such tool (a protocol error, not a tool error).
+        const auto callTool = [&](const std::string& toolName,
+                                  const Json::Value& args) -> std::optional<Json::Value> {
           Json::Value result;
           if (toolName == "search_documents") {
             result = handleSearchDocuments(search, args);
@@ -865,11 +895,134 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
                                                   tokenMatch.label)
                          : toolTextResult("write access is disabled for remote MCP", true);
           } else {
+            return std::nullopt;
+          }
+          return result;
+        };
+
+        const auto protocolVersionHeader = headerValue(req, "mcp-protocol-version");
+        const mcp::RequestMeta meta = readRequestMeta(params);
+        if (method != "initialize" && mcp::isModernRequest(meta, protocolVersionHeader)) {
+          // Bearer auth already keeps a DNS-rebinding page out; the Origin
+          // check is what 2026-07-28 additionally mandates for this transport.
+          const std::string& origin = req->getHeader("origin");
+          if (!origin.empty() && !mcp::originMatchesHost(origin, req->getHeader("host"))) {
+            callback(emptyResponse(k403Forbidden));
+            return;
+          }
+          if (isNotification) {
+            callback(emptyResponse(k202Accepted));
+            return;
+          }
+          if (const auto err = mcp::checkRequiredMeta(meta)) {
+            callback(jsonResponse(protocolErrorBody(id, *err), k400BadRequest));
+            return;
+          }
+          const std::string nameField = method == "resources/read" ? "uri" : "name";
+          std::optional<std::string> bodyName;
+          if (params.isMember(nameField) && params[nameField].isString()) {
+            bodyName = params[nameField].asString();
+          }
+          const mcp::ModernHttpHeaders headers{protocolVersionHeader,
+                                               headerValue(req, "mcp-method"),
+                                               headerValue(req, "mcp-name")};
+          if (const auto err = mcp::checkModernHttpHeaders(headers, *meta.protocolVersion, method,
+                                                           bodyName)) {
+            callback(jsonResponse(protocolErrorBody(id, *err), k400BadRequest));
+            return;
+          }
+          if (const auto err = mcp::checkProtocolVersion(*meta.protocolVersion)) {
+            callback(jsonResponse(protocolErrorBody(id, *err), k400BadRequest));
+            return;
+          }
+
+          if (method == "server/discover") {
+            Json::Value result;
+            result["resultType"] = "complete";
+            result["supportedVersions"] = supportedVersionsValue();
+            result["capabilities"]["tools"] = Json::Value(Json::objectValue);
+            result["_meta"] = modernResultMeta();
+            result["ttlMs"] = static_cast<Json::Int64>(mcp::kDiscoverTtlMs);
+            result["cacheScope"] = "public";
+            callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, result)));
+            return;
+          }
+          if (method == "tools/list") {
+            Json::Value result = buildToolsList(settings.writeEnabled);
+            result["resultType"] = "complete";
+            result["_meta"] = modernResultMeta();
+            result["ttlMs"] = static_cast<Json::Int64>(mcp::kToolsListTtlMs);
+            result["cacheScope"] = "public";
+            callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, result)));
+            return;
+          }
+          if (method == "tools/call") {
+            if (!bodyName) {
+              callback(HttpResponse::newHttpJsonResponse(
+                  jsonRpcError(id, mcp::kErrorInvalidParams, "missing 'name'")));
+              return;
+            }
+            auto result =
+                callTool(*bodyName, params.get("arguments", Json::Value(Json::objectValue)));
+            if (!result) {
+              callback(HttpResponse::newHttpJsonResponse(
+                  jsonRpcError(id, mcp::kErrorInvalidParams, "Tool not found: " + *bodyName)));
+              return;
+            }
+            (*result)["resultType"] = "complete";
+            (*result)["_meta"] = modernResultMeta();
+            callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, *result)));
+            return;
+          }
+          callback(jsonResponse(
+              jsonRpcError(id, mcp::kErrorMethodNotFound, "Method not found: " + method),
+              k404NotFound));
+          return;
+        }
+
+        if (method == "notifications/initialized") {
+          // A notification gets no response body at all (JSON-RPC 2.0) --
+          // 202 Accepted, empty, matching the Streamable HTTP transport's
+          // documented behavior for a request with nothing to reply to.
+          auto resp = HttpResponse::newHttpResponse();
+          resp->setStatusCode(k202Accepted);
+          callback(resp);
+          return;
+        }
+
+        if (method == "initialize") {
+          Json::Value result;
+          result["protocolVersion"] = std::string(mcp::kLegacyProtocolVersion);
+          Json::Value capabilities;
+          capabilities["tools"] = Json::Value(Json::objectValue);
+          result["capabilities"] = capabilities;
+          result["serverInfo"] = serverInfoValue();
+          callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, result)));
+          return;
+        }
+
+        if (method == "tools/list") {
+          callback(HttpResponse::newHttpJsonResponse(
+              jsonRpcResult(id, buildToolsList(settings.writeEnabled))));
+          return;
+        }
+
+        if (method == "tools/call") {
+          if (!params.isMember("name") || !params["name"].isString()) {
+            callback(HttpResponse::newHttpJsonResponse(
+                jsonRpcError(id, -32602, "missing 'name'")));
+            return;
+          }
+          const std::string toolName = params["name"].asString();
+          const Json::Value args = params.get("arguments", Json::Value(Json::objectValue));
+
+          const auto result = callTool(toolName, args);
+          if (!result) {
             callback(HttpResponse::newHttpJsonResponse(
                 jsonRpcError(id, -32602, "Tool not found: " + toolName)));
             return;
           }
-          callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, result)));
+          callback(HttpResponse::newHttpJsonResponse(jsonRpcResult(id, *result)));
           return;
         }
 

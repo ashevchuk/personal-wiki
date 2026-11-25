@@ -8,6 +8,14 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 ## [Unreleased]
 
+### Added
+
+- MCP protocol revision 2026-07-28 (stateless, per-request `_meta`) on
+  both `wiki-mcp` (stdio) and remote `POST /mcp`, next to the existing
+  2025-03-26 `initialize` flow: `server/discover`, `tools/list` and
+  `tools/call`, with the revision's version, metadata and HTTP header
+  checks. Clients that use `initialize` see no change.
+
 ## [0.15.2] - 2026-11-23
 
 ### Fixed

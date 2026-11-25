@@ -15,6 +15,7 @@ add_executable(unit_tests
   unit/AttachToDocumentTest.cpp
   unit/McpUploadStagingTest.cpp
   unit/Base64Test.cpp
+  unit/McpProtocolTest.cpp
   unit/ExcerptTest.cpp
   unit/FolderServiceTest.cpp
   unit/FtsSearchTest.cpp

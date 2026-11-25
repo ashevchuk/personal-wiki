@@ -27,6 +27,7 @@ lives.
 
 Usage: security_e2e.py <path-to-wiki-server-binary>
 """
+import base64
 import html.parser
 import http.client
 import json
@@ -624,6 +625,200 @@ def run_hardening_checks(sandbox, vault, anon, admin, csrf, attach_path):
 
     check("no response in the hardening checks disclosed the sandbox's absolute path",
           not leaks, f"leaks={leaks}")
+
+
+MODERN_MCP_VERSION = "2026-07-28"
+MODERN_MCP_META = {
+    "io.modelcontextprotocol/protocolVersion": MODERN_MCP_VERSION,
+    "io.modelcontextprotocol/clientInfo": {"name": "security-e2e", "version": "1"},
+    "io.modelcontextprotocol/clientCapabilities": {},
+}
+
+
+def run_modern_mcp_checks(anon, mcp_auth, mcp_bin, sandbox, expected_version):
+    """MCP 2026-07-28 (stateless, per-request _meta) served alongside the
+    2025-03-26 initialize flow on both transports."""
+
+    def modern_post(method, params=None, rid=1, meta=MODERN_MCP_META, headers=None,
+                    omit_headers=(), with_id=True):
+        p = dict(params or {})
+        if meta is not None:
+            p["_meta"] = meta
+        h = {"MCP-Protocol-Version": MODERN_MCP_VERSION, "Mcp-Method": method}
+        if method == "tools/call" and "name" in p:
+            h["Mcp-Name"] = p["name"]
+        h.update(mcp_auth)
+        h.update(headers or {})
+        for k in omit_headers:
+            h.pop(k, None)
+        msg = {"jsonrpc": "2.0", "method": method, "params": p}
+        if with_id:
+            msg["id"] = rid
+        status, _, body = anon.post_json("/mcp", msg, headers=h)
+        try:
+            return status, (json.loads(body) if body else {}), body
+        except ValueError:
+            return status, {}, body
+
+    def error_code(rpc):
+        return (rpc.get("error") or {}).get("code")
+
+    status, rpc, body = modern_post("server/discover")
+    result = rpc.get("result") or {}
+    server_info = (result.get("_meta") or {}).get("io.modelcontextprotocol/serverInfo") or {}
+    check("remote modern server/discover -> complete DiscoverResult",
+          status == 200 and result.get("resultType") == "complete"
+          and result.get("supportedVersions") == [MODERN_MCP_VERSION]
+          and "tools" in (result.get("capabilities") or {})
+          and isinstance(result.get("ttlMs"), int) and result["ttlMs"] >= 0
+          and result.get("cacheScope") == "public"
+          and server_info == {"name": "personal-wiki", "version": expected_version},
+          f"status={status} body={body[:400]!r}")
+
+    status, rpc, body = modern_post("tools/list")
+    result = rpc.get("result") or {}
+    tool_names = [t.get("name") for t in result.get("tools") or []]
+    check("remote modern tools/list -> resultType + caching hints",
+          status == 200 and result.get("resultType") == "complete"
+          and "get_document" in tool_names
+          and isinstance(result.get("ttlMs"), int) and result.get("cacheScope") == "public",
+          f"status={status} body={body[:300]!r}")
+
+    status, rpc, body = modern_post("tools/call", {"name": "list_tags", "arguments": {}})
+    result = rpc.get("result") or {}
+    check("remote modern tools/call -> resultType complete, serverInfo in _meta",
+          status == 200 and result.get("resultType") == "complete"
+          and result.get("isError") is False and isinstance(result.get("content"), list)
+          and "io.modelcontextprotocol/serverInfo" in (result.get("_meta") or {}),
+          f"status={status} body={body[:300]!r}")
+
+    sentinel = "=?base64?" + base64.b64encode(b"list_tags").decode() + "?="
+    status, rpc, body = modern_post("tools/call", {"name": "list_tags", "arguments": {}},
+                                    headers={"Mcp-Name": sentinel})
+    check("remote modern tools/call accepts a base64-sentinel Mcp-Name",
+          status == 200 and (rpc.get("result") or {}).get("resultType") == "complete",
+          f"status={status} body={body[:300]!r}")
+
+    for desc, kwargs in (
+        ("missing MCP-Protocol-Version", {"omit_headers": ("MCP-Protocol-Version",)}),
+        ("missing Mcp-Method", {"omit_headers": ("Mcp-Method",)}),
+        ("missing Mcp-Name on tools/call", {"omit_headers": ("Mcp-Name",)}),
+        ("Mcp-Name differs from params.name", {"headers": {"Mcp-Name": "get_document"}}),
+        ("Mcp-Method differs from method", {"headers": {"Mcp-Method": "tools/list"}}),
+    ):
+        status, rpc, body = modern_post("tools/call", {"name": "list_tags", "arguments": {}},
+                                        **kwargs)
+        check(f"remote modern request with {desc} -> 400 HeaderMismatch (-32020)",
+              status == 400 and error_code(rpc) == -32020, f"status={status} body={body[:300]!r}")
+
+    unsupported_meta = dict(MODERN_MCP_META)
+    unsupported_meta["io.modelcontextprotocol/protocolVersion"] = "2099-01-01"
+    status, rpc, body = modern_post("tools/list", meta=unsupported_meta,
+                                    headers={"MCP-Protocol-Version": "2099-01-01"})
+    data = (rpc.get("error") or {}).get("data") or {}
+    check("remote modern request with an unsupported version -> 400 -32022 + supported list",
+          status == 400 and error_code(rpc) == -32022
+          and data.get("supported") == [MODERN_MCP_VERSION] and data.get("requested") == "2099-01-01",
+          f"status={status} body={body[:300]!r}")
+
+    no_caps = {k: v for k, v in MODERN_MCP_META.items()
+               if k != "io.modelcontextprotocol/clientCapabilities"}
+    status, rpc, body = modern_post("tools/list", meta=no_caps)
+    check("remote modern request without clientCapabilities -> 400 -32602",
+          status == 400 and error_code(rpc) == -32602, f"status={status} body={body[:300]!r}")
+
+    status, rpc, body = modern_post("tools/list", meta=None)
+    check("remote request claiming 2026-07-28 by header only (no _meta) -> 400 -32602, "
+          "not served as legacy",
+          status == 400 and error_code(rpc) == -32602, f"status={status} body={body[:300]!r}")
+
+    status, rpc, body = modern_post("ping")
+    check("remote modern unknown/removed method (ping) -> 404 -32601",
+          status == 404 and error_code(rpc) == -32601, f"status={status} body={body[:300]!r}")
+
+    status, _, body = modern_post("notifications/cancelled", with_id=False)
+    check("remote modern notification -> 202, empty body",
+          status == 202 and not body, f"status={status} body={body[:200]!r}")
+
+    status, _, body = modern_post("tools/list", headers={"Origin": "https://evil.example"})
+    check("remote modern request with a foreign Origin -> 403",
+          status == 403, f"status={status} body={body[:200]!r}")
+    status, rpc, body = modern_post(
+        "tools/list", headers={"Origin": f"http://{anon.host}:{anon.port}"})
+    check("remote modern request with a same-host Origin -> 200",
+          status == 200 and (rpc.get("result") or {}).get("resultType") == "complete",
+          f"status={status} body={body[:200]!r}")
+
+    for verb in ("GET", "DELETE"):
+        status, _, _ = anon.request(verb, "/mcp", headers=mcp_auth)
+        check(f"{verb} /mcp -> 405", status == 405, f"got {status}")
+
+    status, _, body = anon.post_json(
+        "/mcp", {"jsonrpc": "2.0", "id": 7, "method": "tools/list"},
+        headers={**mcp_auth, "MCP-Protocol-Version": "2025-06-18"})
+    legacy = json.loads(body).get("result") or {} if body else {}
+    check("remote legacy request with a 2025-06-18 header and no _meta stays legacy",
+          status == 200 and "tools" in legacy and "resultType" not in legacy,
+          f"status={status} body={body[:200]!r}")
+
+    def line(rid, method, params=None, meta=MODERN_MCP_META):
+        p = dict(params or {})
+        if meta is not None:
+            p["_meta"] = meta
+        msg = {"jsonrpc": "2.0", "method": method, "params": p}
+        if rid is not None:
+            msg["id"] = rid
+        return json.dumps(msg)
+
+    stdio_input = "\n".join([
+        line(1, "server/discover"),
+        line(2, "tools/list"),
+        line(3, "tools/call", {"name": "list_tags", "arguments": {}}),
+        line(4, "tools/list", meta=unsupported_meta),
+        line(5, "tools/list", meta=no_caps),
+        line(6, "ping"),
+        line(None, "notifications/cancelled"),
+        line(7, "initialize", meta=None),
+        line(8, "tools/list", meta=None),
+    ]) + "\n"
+    stdio = subprocess.run([mcp_bin], cwd=sandbox, capture_output=True, text=True, timeout=20,
+                           input=stdio_input)
+    responses = {}
+    for out_line in stdio.stdout.splitlines():
+        msg = json.loads(out_line)
+        responses[msg.get("id")] = msg
+    detail = f"stdout={stdio.stdout[:600]!r} stderr={stdio.stderr[-300:]!r}"
+
+    discover = responses.get(1, {}).get("result") or {}
+    check("stdio modern server/discover -> complete DiscoverResult",
+          discover.get("resultType") == "complete"
+          and discover.get("supportedVersions") == [MODERN_MCP_VERSION]
+          and discover.get("cacheScope") == "public" and isinstance(discover.get("ttlMs"), int)
+          and ((discover.get("_meta") or {}).get("io.modelcontextprotocol/serverInfo") or {})
+          .get("version") == expected_version,
+          detail)
+    tools_list = responses.get(2, {}).get("result") or {}
+    check("stdio modern tools/list -> resultType + caching hints",
+          tools_list.get("resultType") == "complete" and tools_list.get("tools")
+          and tools_list.get("cacheScope") == "public", detail)
+    called = responses.get(3, {}).get("result") or {}
+    check("stdio modern tools/call -> resultType complete",
+          called.get("resultType") == "complete" and called.get("isError") is False, detail)
+    err4 = responses.get(4, {}).get("error") or {}
+    check("stdio modern unsupported version -> -32022 + supported list",
+          err4.get("code") == -32022
+          and (err4.get("data") or {}).get("supported") == [MODERN_MCP_VERSION], detail)
+    check("stdio modern request without clientCapabilities -> -32602",
+          (responses.get(5, {}).get("error") or {}).get("code") == -32602, detail)
+    check("stdio modern ping (removed in 2026-07-28) -> -32601",
+          (responses.get(6, {}).get("error") or {}).get("code") == -32601, detail)
+    check("stdio modern notification gets no response",
+          None not in responses and len(responses) == 8, detail)
+    init = responses.get(7, {}).get("result") or {}
+    legacy_list = responses.get(8, {}).get("result") or {}
+    check("stdio legacy initialize + tools/list still work in the same process",
+          init.get("protocolVersion") == "2025-03-26" and "tools" in legacy_list
+          and "resultType" not in legacy_list, detail)
 
 
 def run_checks(sandbox, vault, server_bin):
@@ -1393,6 +1588,8 @@ def run_checks(sandbox, vault, server_bin):
           and stdio_info.get("version") == expected_version,
           f"serverInfo={stdio_info!r} expected version={expected_version!r} "
           f"stderr={stdio.stderr[-300:]!r}")
+
+    run_modern_mcp_checks(anon, mcp_auth, mcp_bin, sandbox, expected_version)
 
     status, _, body = admin.post_json(
         "/mcp",

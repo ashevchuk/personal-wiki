@@ -1,5 +1,6 @@
 #include "mcp/McpServer.h"
 
+#include "core/McpProtocol.h"
 #include "embeddings/EmbeddingProviderFactory.h"
 #include "util/Base64.h"
 #include "vault/AttachToDocument.h"
@@ -38,16 +39,19 @@ enum class error_code : int {
   method_not_found = -32601,
   invalid_params = -32602,
   internal_error = -32603,
+  unsupported_protocol_version = kErrorUnsupportedProtocolVersion,
 };
 
 class mcp_exception : public std::runtime_error {
  public:
-  mcp_exception(error_code code, const std::string& message)
-      : std::runtime_error(message), code_(code) {}
+  mcp_exception(error_code code, const std::string& message, json data = nullptr)
+      : std::runtime_error(message), code_(code), data_(std::move(data)) {}
   error_code code() const { return code_; }
+  const json& data() const { return data_; }
 
  private:
   error_code code_;
+  json data_;
 };
 
 using tool_handler = std::function<json(const json& params)>;
@@ -129,8 +133,11 @@ class server {
 
  private:
   json dispatch(const std::string& method, const json& params);
+  json dispatchModern(const std::string& method, const json& params, const RequestMeta& meta);
   json handleInitialize() const;
   json handleToolsCall(const json& params);
+  json toolsListJson() const;
+  json serverInfoMeta() const;
 
   std::string name_;
   std::string version_;
@@ -142,7 +149,7 @@ class server {
 };
 
 json server::handleInitialize() const {
-  return json{{"protocolVersion", "2025-03-26"},
+  return json{{"protocolVersion", std::string(kLegacyProtocolVersion)},
               {"capabilities", json{{"tools", json::object()}}},
               {"serverInfo", json{{"name", name_}, {"version", version_}}}};
 }
@@ -175,15 +182,84 @@ json server::handleToolsCall(const json& params) {
   return result;
 }
 
+json server::toolsListJson() const {
+  json arr = json::array();
+  for (const auto& entry : tools_) arr.push_back(entry.def.toJson());
+  return arr;
+}
+
+json server::serverInfoMeta() const {
+  return json{{std::string(kMetaServerInfo), json{{"name", name_}, {"version", version_}}}};
+}
+
+namespace {
+
+RequestMeta readRequestMeta(const json& params) {
+  RequestMeta meta;
+  if (!params.is_object() || !params.contains("_meta") || !params["_meta"].is_object()) {
+    return meta;
+  }
+  const json& m = params["_meta"];
+  const std::string versionKey(kMetaProtocolVersion);
+  const std::string capabilitiesKey(kMetaClientCapabilities);
+  meta.hasProtocolVersionKey = m.contains(versionKey);
+  if (meta.hasProtocolVersionKey && m[versionKey].is_string()) {
+    meta.protocolVersion = m[versionKey].get<std::string>();
+  }
+  meta.hasClientCapabilities = m.contains(capabilitiesKey) && m[capabilitiesKey].is_object();
+  return meta;
+}
+
+[[noreturn]] void throwProtocolError(const ProtocolError& err) {
+  json data = nullptr;
+  if (err.code == kErrorUnsupportedProtocolVersion) {
+    data = json{{"supported", json::array({std::string(kModernProtocolVersion)})},
+                {"requested", err.requestedVersion}};
+  }
+  throw mcp_exception(static_cast<error_code>(err.code), err.message, std::move(data));
+}
+
+}  // namespace
+
 json server::dispatch(const std::string& method, const json& params) {
   if (method == "initialize") return handleInitialize();
+  const RequestMeta meta = readRequestMeta(params);
+  if (isModernRequest(meta, std::nullopt)) return dispatchModern(method, params, meta);
   if (method == "ping") return json::object();
-  if (method == "tools/list") {
-    json arr = json::array();
-    for (const auto& entry : tools_) arr.push_back(entry.def.toJson());
-    return json{{"tools", arr}};
-  }
+  if (method == "tools/list") return json{{"tools", toolsListJson()}};
   if (method == "tools/call") return handleToolsCall(params);
+  throw mcp_exception(error_code::method_not_found, "Method not found: " + method);
+}
+
+// 2026-07-28: no handshake, every request carries its own version and
+// capabilities, every result carries resultType (+ caching hints where the
+// revision requires them).
+json server::dispatchModern(const std::string& method, const json& params,
+                            const RequestMeta& meta) {
+  if (const auto err = checkRequiredMeta(meta)) throwProtocolError(*err);
+  if (const auto err = checkProtocolVersion(*meta.protocolVersion)) throwProtocolError(*err);
+
+  if (method == "server/discover") {
+    return json{{"resultType", "complete"},
+                {"supportedVersions", json::array({std::string(kModernProtocolVersion)})},
+                {"capabilities", json{{"tools", json::object()}}},
+                {"_meta", serverInfoMeta()},
+                {"ttlMs", kDiscoverTtlMs},
+                {"cacheScope", "public"}};
+  }
+  if (method == "tools/list") {
+    return json{{"resultType", "complete"},
+                {"tools", toolsListJson()},
+                {"_meta", serverInfoMeta()},
+                {"ttlMs", kToolsListTtlMs},
+                {"cacheScope", "public"}};
+  }
+  if (method == "tools/call") {
+    json result = handleToolsCall(params);
+    result["resultType"] = "complete";
+    result["_meta"] = serverInfoMeta();
+    return result;
+  }
   throw mcp_exception(error_code::method_not_found, "Method not found: " + method);
 }
 
@@ -228,10 +304,9 @@ void server::start_stdio() {
       result = dispatch(method, params);
     } catch (const mcp_exception& e) {
       if (!isNotification) {
-        std::cout << json{{"jsonrpc", "2.0"},
-                           {"id", id},
-                           {"error", json{{"code", static_cast<int>(e.code())},
-                                          {"message", e.what()}}}}
+        json error{{"code", static_cast<int>(e.code())}, {"message", e.what()}};
+        if (!e.data().is_null()) error["data"] = e.data();
+        std::cout << json{{"jsonrpc", "2.0"}, {"id", id}, {"error", error}}
                          .dump()
                   << "\n"
                   << std::flush;

@@ -86,6 +86,7 @@ option(WIKI_ENABLE_CLOUD_EMBEDDINGS
 # ---------------------------------------------------------------------------
 add_library(wikicore STATIC
   src/core/placeholder.cpp
+  src/core/McpProtocol.cpp
   src/config/AppConfig.cpp
   src/vault/PathGuard.cpp
   src/vault/FrontMatter.cpp
