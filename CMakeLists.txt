@@ -96,6 +96,7 @@ add_library(wikicore STATIC
   src/vault/AttachToDocument.cpp
   src/vault/McpUploadStaging.cpp
   src/vault/SkillDocuments.cpp
+  src/vault/SkillCatalog.cpp
   src/vault/FolderService.cpp
   src/vault/BackupService.cpp
   src/index/Database.cpp
@@ -113,6 +114,7 @@ add_library(wikicore STATIC
   src/util/Time.cpp
   src/util/Uuid.cpp
   src/util/Base64.cpp
+  src/util/Sha256.cpp
   src/util/Excerpt.cpp
   src/util/MarkdownRenderer.cpp
   src/util/WikiLinks.cpp

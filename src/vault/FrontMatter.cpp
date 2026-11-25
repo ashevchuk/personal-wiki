@@ -104,6 +104,7 @@ ParsedDocument parseFrontMatter(std::string_view rawContent) {
   fm.title = readScalarOr(doc["title"], "");
   fm.tags = readTags(doc["tags"]);
   fm.type = readScalarOr(doc["type"], "");
+  fm.description = readScalarOr(doc["description"], "");
   fm.created = readScalarOr(doc["created"], "");
   fm.updated = readScalarOr(doc["updated"], "");
   fm.due = readScalarOr(doc["due"], "");
@@ -153,8 +154,9 @@ ImportedDocument parseForImport(std::string_view rawContent) {
 
 namespace {
 
-constexpr std::array<std::string_view, 9> kModeledKeys = {
-    "id", "title", "tags", "visibility", "type", "created", "updated", "due", "recur"};
+constexpr std::array<std::string_view, 10> kModeledKeys = {
+    "id",      "title",   "tags", "visibility", "type", "description",
+    "created", "updated", "due",  "recur"};
 
 // Top-level entries of `existingRaw`'s front matter whose key FrontMatter
 // does not model, in file order. Empty when there is no usable block.
@@ -217,7 +219,7 @@ bool differsOnlyInId(std::string_view original, std::string_view rewritten,
   const FrontMatter& a = after.frontMatter;
   return a.id == newId && after.body == before.body && a.title == b.title &&
          a.tags == b.tags && a.visibility == b.visibility && a.type == b.type &&
-         a.created == b.created && a.updated == b.updated && a.due == b.due &&
+         a.description == b.description && a.created == b.created && a.updated == b.updated && a.due == b.due &&
          a.recur == b.recur;
 }
 
@@ -242,6 +244,9 @@ std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body,
   out << YAML::Key << "visibility" << YAML::Value
       << (fm.visibility == "public" ? "public" : "private");
   out << YAML::Key << "type" << YAML::Value << fm.type;
+  if (!fm.description.empty()) {
+    out << YAML::Key << "description" << YAML::Value << fm.description;
+  }
   out << YAML::Key << "created" << YAML::Value << fm.created;
   out << YAML::Key << "updated" << YAML::Value << fm.updated;
   out << YAML::Key << "due" << YAML::Value << fm.due;

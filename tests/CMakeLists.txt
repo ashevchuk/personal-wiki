@@ -17,6 +17,8 @@ add_executable(unit_tests
   unit/Base64Test.cpp
   unit/McpProtocolTest.cpp
   unit/SkillDocumentsTest.cpp
+  unit/Sha256Test.cpp
+  unit/SkillCatalogTest.cpp
   unit/ExcerptTest.cpp
   unit/FolderServiceTest.cpp
   unit/FtsSearchTest.cpp

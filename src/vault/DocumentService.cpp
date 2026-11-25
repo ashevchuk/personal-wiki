@@ -107,6 +107,7 @@ DocumentRecord DocumentService::create(const std::string& relativePathIn,
   fm.tags = input.tags;
   fm.visibility = normalizeVisibility(input.visibility);
   fm.type = input.type;
+  fm.description = input.description.value_or("");
   fm.due = input.due;
   fm.recur = input.recur;
   fm.created = now;
@@ -151,6 +152,7 @@ DocumentRecord DocumentService::update(const std::string& relativePath,
   fm.tags = input.tags;
   fm.visibility = normalizeVisibility(input.visibility);
   fm.type = input.type;
+  fm.description = input.description.value_or(existing.frontMatter.description);
   fm.due = input.due;
   fm.recur = input.recur;
   fm.created = existing.frontMatter.created.empty() ? now : existing.frontMatter.created;

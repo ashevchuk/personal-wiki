@@ -262,3 +262,18 @@ TEST_CASE("withFrontMatterId replaces an id line or adds one", "[FrontMatter]") 
     REQUIRE_FALSE(withFrontMatterId(raw, newId).has_value());
   }
 }
+
+TEST_CASE("FrontMatter description: parsed, written only when non-empty, round-trips",
+          "[FrontMatter]") {
+  const auto parsed = parseFrontMatter(
+      "---\ntitle: T\ntype: skill\ndescription: \"Use when: a # b\"\n---\nbody\n");
+  REQUIRE(parsed.frontMatter.description == "Use when: a # b");
+
+  FrontMatter fm = parsed.frontMatter;
+  const std::string withDescription = serializeFrontMatter(fm, "body\n");
+  REQUIRE(parseFrontMatter(withDescription).frontMatter.description == "Use when: a # b");
+
+  fm.description.clear();
+  const std::string withoutDescription = serializeFrontMatter(fm, "body\n");
+  REQUIRE(withoutDescription.find("description") == std::string::npos);
+}

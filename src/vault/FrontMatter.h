@@ -16,6 +16,11 @@ struct FrontMatter {
   // "Visibility is fail-safe-private" in CLAUDE.md.
   std::string visibility = "private";
   std::string type;
+  // What the document is for and when to use it. Required for a
+  // `type: skill` document to be served as an MCP skill (its SKILL.md
+  // `description`); optional and unused otherwise. Written to disk only
+  // when non-empty.
+  std::string description;
   std::string created;
   std::string updated;
   // Calendar fields -- both plain, unvalidated strings at this layer,

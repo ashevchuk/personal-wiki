@@ -5,6 +5,7 @@
 #include "vault/FrontMatter.h"
 #include "vault/VaultRepository.h"
 
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -35,6 +36,9 @@ struct DocumentInput {
   std::vector<std::string> tags;
   std::string visibility;  // "public" | "private"; anything else -> private
   std::string type;
+  // nullopt keeps the existing value on update (empty on create), so the
+  // many callers that never edit it cannot erase it by omission.
+  std::optional<std::string> description;
   std::string body;
   std::string due;    // ISO8601 date, or empty -- see FrontMatter.h
   std::string recur;  // CalendarQueries' own DSL, or empty

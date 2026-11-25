@@ -556,3 +556,37 @@ TEST_CASE("DocumentService::rename rewrites only the body of a linker",
           "---\nid: " + noIdId + "\ntitle: No id\naliases: [a]\n---\nsee [[moved]]\n");
   REQUIRE(indexUpdater.findPathByUuid(noIdId) == std::string("no-id.md"));
 }
+
+TEST_CASE("DocumentService description: unset input keeps it on update, set input "
+          "replaces it",
+          "[DocumentService]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService svc(repo, indexUpdater, snapshots);
+
+  vault::DocumentInput input;
+  input.title = "S";
+  input.type = "skill";
+  input.body = "v1";
+  input.description = "Use when testing";
+  REQUIRE(svc.create("s.md", input).frontMatter.description == "Use when testing");
+
+  vault::DocumentInput untouched;
+  untouched.title = "S";
+  untouched.type = "skill";
+  untouched.body = "v2";
+  svc.update("s.md", untouched);
+  REQUIRE(svc.get("s.md").frontMatter.description == "Use when testing");
+
+  untouched.description = "";
+  svc.update("s.md", untouched);
+  REQUIRE(svc.get("s.md").frontMatter.description.empty());
+
+  vault::DocumentInput none;
+  none.title = "N";
+  REQUIRE(svc.create("n.md", none).frontMatter.description.empty());
+}
