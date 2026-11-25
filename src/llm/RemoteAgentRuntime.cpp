@@ -1,5 +1,7 @@
 #include "llm/RemoteAgentRuntime.h"
 
+#include "vault/SkillDocuments.h"
+
 #include <nlohmann/json.hpp>
 
 #include <filesystem>
@@ -369,6 +371,7 @@ RemoteAgentTurn RemoteAgentRuntime::run(const std::vector<ChatMessage>& history,
         }
 
         try {
+          vault::rejectSkillType(input.type);
           const auto rec = documents_.create(path, input);
           auditLog_.record("remote-agent:create_document", path, true, "created", tokenLabel);
           turn.reply = "Created " + rec.path;

@@ -108,6 +108,28 @@ TEST_CASE("RemoteAgentRuntime: create_document on the first tool call, audited "
   REQUIRE(entries[0].tokenLabel == "tray-app");
 }
 
+TEST_CASE("RemoteAgentRuntime: create_document with type skill is refused, fed back to "
+          "the model, and audited as a failure",
+          "[RemoteAgentRuntime]") {
+  Fixture f;
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall(
+      "create_document", R"({"path":"notes/s.md","title":"S","body":"x","type":"Skill"})"));
+  chat.replies.push_back(textReply("could not create it"));
+
+  llm::RemoteAgentRuntime agent(chat, f.documents, f.search, f.nav, f.calendar, f.indexUpdater,
+                                f.auditLog, "");
+  const auto turn = agent.run({llm::ChatMessage{"user", "create a skill", "", {}}}, "tray-app");
+
+  REQUIRE(turn.documentsCreated.empty());
+  REQUIRE_FALSE(fs::exists(f.env.vaultRoot() / "notes" / "s.md"));
+  const auto entries = f.auditLog.listRecent(10);
+  REQUIRE(entries.size() == 1);
+  REQUIRE(entries[0].toolName == "remote-agent:create_document");
+  REQUIRE_FALSE(entries[0].success);
+  REQUIRE(entries[0].detail == "skill documents are read-only over MCP");
+}
+
 TEST_CASE("RemoteAgentRuntime: a path collision is fed back to the model, which "
           "retries at a different path instead of failing the turn",
           "[RemoteAgentRuntime]") {

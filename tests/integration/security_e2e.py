@@ -821,6 +821,139 @@ def run_modern_mcp_checks(anon, mcp_auth, mcp_bin, sandbox, expected_version):
           and "resultType" not in legacy_list, detail)
 
 
+SKILL_READ_ONLY = "skill documents are read-only over MCP"
+
+
+def run_skill_write_guard_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault):
+    """`type: skill` documents are instructions served to MCP clients, so no
+    model-facing write path may create, change or attach to one. The web UI
+    (admin session) still can."""
+    csrf_hdr = {"X-CSRF-Token": csrf}
+    skill_path, plain_path, flip_path = (
+        "skills/guarded.md", "notes/guard-plain.md", "notes/guard-flip.md")
+    for path, doc_type in ((skill_path, "skill"), (plain_path, "note"), (flip_path, "note")):
+        status, _, body = admin.post_json(
+            "/api/documents", {"path": path, "title": path, "body": "original", "type": doc_type},
+            headers=csrf_hdr)
+        check(f"web admin creates {path} (type {doc_type})", status in (200, 201),
+              f"got {status} body={body[:200]!r}")
+
+    def doc(path):
+        status, _, body = admin.get(f"/api/documents/{path}")
+        return json.loads(body) if status == 200 and body else {}
+
+    def remote_tool(name, arguments):
+        status, _, body = anon.post_json(
+            "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                     "params": {"name": name, "arguments": arguments}},
+            headers=mcp_auth)
+        result = (json.loads(body) if body else {}).get("result") or {}
+        text = (result.get("content") or [{}])[0].get("text", "")
+        return status, result.get("isError") is True, text
+
+    def refused(desc, outcome):
+        status, is_error, text = outcome
+        check(desc, status == 200 and is_error and SKILL_READ_ONLY in text,
+              f"status={status} isError={is_error} text={text!r}")
+
+    refused("remote create_document with type Skill is refused",
+            remote_tool("create_document",
+                        {"path": "skills/new.md", "title": "x", "body": "x", "type": "Skill"}))
+    check("refused remote create left no file",
+          not os.path.exists(os.path.join(vault, "skills", "new.md")))
+    refused("remote update_document of a skill document is refused",
+            remote_tool("update_document", {"path": skill_path, "body": "rewritten"}))
+    refused("remote update_document turning a document into a skill is refused",
+            remote_tool("update_document", {"path": plain_path, "type": "skill"}))
+    check("refused remote updates changed nothing",
+          doc(skill_path).get("body", "").strip() == "original"
+          and doc(plain_path).get("type") == "note",
+          f"skill={doc(skill_path)!r} plain={doc(plain_path)!r}")
+    refused("remote attach_file to a skill document is refused",
+            remote_tool("attach_file", {"path": skill_path, "filename": "a.txt",
+                                        "content_base64": base64.b64encode(b"x").decode()}))
+    status, is_error, text = remote_tool("attach_file_begin",
+                                         {"path": skill_path, "filename": "a.txt"})
+    check("remote attach_file_begin on a skill document is refused, no ticket issued",
+          is_error and SKILL_READ_ONLY in text and "upload_id" not in text,
+          f"status={status} text={text!r}")
+
+    status, is_error, text = remote_tool("attach_file_begin",
+                                         {"path": flip_path, "filename": "late.txt"})
+    ticket = re.search(r"upload_id:\s*([0-9a-fA-F-]{36})", text)
+    check("attach_file_begin on a plain document issues a ticket",
+          not is_error and ticket is not None, f"text={text!r}")
+    status, _, _ = admin.put_json(f"/api/documents/{flip_path}",
+                                  {"title": flip_path, "body": "original", "type": "skill"},
+                                  headers=csrf_hdr)
+    check("web admin turns that document into a skill -> 200", status == 200, f"got {status}")
+    status, _, body = anon.request("PUT", f"/mcp/uploads/{ticket.group(1) if ticket else 'x'}",
+                                   body=b"late", headers={"Content-Type": "text/plain"})
+    check("upload PUT to a document that became a skill after begin -> 403",
+          status == 403 and not os.path.exists(os.path.join(vault, "notes", "guard-flip.assets")),
+          f"got {status} body={body[:200]!r}")
+
+    status, _, _ = admin.put_json(f"/api/documents/{skill_path}",
+                                  {"title": skill_path, "body": "edited on the web", "type": "skill"},
+                                  headers=csrf_hdr)
+    check("web admin can still edit a skill document -> 200",
+          status == 200 and doc(skill_path).get("body", "").strip() == "edited on the web",
+          f"got {status}")
+
+    status, _, audit = admin.get_json("/api/admin/mcp-audit-log")
+    refusals = [e for e in (audit or {}).get("entries", [])
+                if e.get("detail") == SKILL_READ_ONLY and not e.get("success")]
+    check("every refused remote skill write is in the audit log",
+          {e.get("toolName") for e in refusals} >= {
+              "remote:create_document", "remote:update_document", "remote:attach_file",
+              "remote:attach_file_begin"},
+          f"refusals={[(e.get('toolName'), e.get('path')) for e in refusals]!r}")
+
+    write_dir = os.path.join(sandbox, "mcp-write")
+    os.makedirs(write_dir, exist_ok=True)
+    with open(os.path.join(write_dir, "config.toml"), "w") as f:
+        f.write(f"""
+[vault]
+path = "{vault}"
+[index]
+db_path = "{sandbox}/index.db"
+[mcp]
+scope = "admin"
+write_access = true
+[log]
+level = "warn"
+""")
+    calls = [
+        ("create_document", {"path": "skills/stdio.md", "title": "x", "body": "x",
+                             "type": "skill"}),
+        ("update_document", {"path": skill_path, "body": "stdio rewrite"}),
+        ("update_document", {"path": plain_path, "type": " SKILL "}),
+        ("attach_file", {"path": skill_path, "filename": "a.txt",
+                         "content_base64": base64.b64encode(b"x").decode()}),
+    ]
+    stdio_input = "".join(
+        json.dumps({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                    "params": {"name": name, "arguments": args}}) + "\n"
+        for i, (name, args) in enumerate(calls, start=1))
+    stdio = subprocess.run([mcp_bin], cwd=write_dir, capture_output=True, text=True, timeout=20,
+                           input=stdio_input)
+    responses = {}
+    for out_line in stdio.stdout.splitlines():
+        msg = json.loads(out_line)
+        responses[msg.get("id")] = msg.get("result") or {}
+    for i, (name, args) in enumerate(calls, start=1):
+        result = responses.get(i, {})
+        text = (result.get("content") or [{}])[0].get("text", "")
+        check(f"stdio {name} on/into a skill document is refused ({args.get('path')})",
+              result.get("isError") is True and SKILL_READ_ONLY in text,
+              f"result={result!r} stderr={stdio.stderr[-300:]!r}")
+    check("refused stdio writes changed nothing",
+          not os.path.exists(os.path.join(vault, "skills", "stdio.md"))
+          and doc(skill_path).get("body", "").strip() == "edited on the web"
+          and doc(plain_path).get("type") == "note",
+          f"skill={doc(skill_path)!r} plain={doc(plain_path)!r}")
+
+
 def run_checks(sandbox, vault, server_bin):
     anon = Client(HOST, PORT)
     # `--version` prints "<name> <version>"; serverInfo.version must be the
@@ -1590,6 +1723,7 @@ def run_checks(sandbox, vault, server_bin):
           f"stderr={stdio.stderr[-300:]!r}")
 
     run_modern_mcp_checks(anon, mcp_auth, mcp_bin, sandbox, expected_version)
+    run_skill_write_guard_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault)
 
     status, _, body = admin.post_json(
         "/mcp",

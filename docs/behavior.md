@@ -99,6 +99,11 @@ code is built, just what you'll notice as someone using or running it.
   are opt-in and off by default.** An MCP client can't create or modify
   documents unless you explicitly turn that on in `config.toml` or the
   Account page.
+- **Documents with `type: skill` can't be written through MCP at all**,
+  even with write access on: no MCP tool (stdio or remote) and no remote
+  agent call can create one, edit one, change a document's type to
+  `skill`, or attach a file to one. The type is matched ignoring case
+  and surrounding spaces. Skill documents are edited in the web UI only.
 - **Every write made through MCP is logged**, whether it succeeds or
   fails, viewable from the admin panel — so you can always see what an
   AI assistant actually did to your vault.

@@ -8,6 +8,7 @@
 #include "util/Base64.h"
 #include "vault/AttachToDocument.h"
 #include "vault/McpUploadStaging.h"
+#include "vault/SkillDocuments.h"
 
 #include <drogon/HttpResponse.h>
 #include <drogon/MultiPart.h>
@@ -585,6 +586,7 @@ Json::Value handleCreateDocument(DocumentService& documents, McpAuditLog& auditL
   }
 
   try {
+    rejectSkillType(input.type);
     const auto rec = documents.create(path, input);
     auditLog.record("remote:create_document", path, true, "created", tokenLabel);
     return toolTextResult("Created " + rec.path);
@@ -621,6 +623,7 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
 
   try {
     const DocumentRecord existing = documents.get(path);
+    rejectSkillType(existing.frontMatter.type);
 
     DocumentInput input;
     input.title = args.get("title", existing.frontMatter.title).asString();
@@ -637,6 +640,7 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
       }
     }
 
+    rejectSkillType(input.type);
     const auto rec = documents.update(path, input);
     auditLog.record("remote:update_document", path, true, "updated", tokenLabel);
     return toolTextResult("Updated " + rec.path);
@@ -706,6 +710,7 @@ Json::Value handleAttachFile(DocumentService& documents, AttachmentService& atta
   }
 
   try {
+    rejectSkillType(documents.get(path).frontMatter.type);
     const auto attached =
         attachFileAndLink(documents, attachments, path, filename, *decoded);
     auditLog.record("remote:attach_file", path, true, attached.info.relativePath, tokenLabel);
@@ -744,7 +749,7 @@ Json::Value handleAttachFileBegin(DocumentService& documents, McpUploadStaging& 
   const std::string path = args["path"].asString();
   const std::string filename = args["filename"].asString();
   try {
-    (void)documents.get(path);  // must exist, same as attach_file
+    rejectSkillType(documents.get(path).frontMatter.type);  // must exist, same as attach_file
     const std::string id = staging.begin(path, filename, tokenLabel);
     auditLog.record("remote:attach_file_begin", path, true, id, tokenLabel);
     std::string msg;
@@ -1114,6 +1119,9 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
         }
 
         try {
+          // Re-checked here: the document may have become a skill after
+          // attach_file_begin issued the ticket.
+          rejectSkillType(documents.get(ticket->documentPath).frontMatter.type);
           const auto attached = attachFileAndLink(documents, attachments,
                                                    ticket->documentPath, filename, bytes);
           mcpUploads.remove(uploadId);
@@ -1134,6 +1142,14 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           err["error"] = "owning document not found";
           auto resp = HttpResponse::newHttpJsonResponse(err);
           resp->setStatusCode(k404NotFound);
+          callback(resp);
+        } catch (const SkillDocumentReadOnlyError& e) {
+          auditLog.record("remote:attach_file", ticket->documentPath, false, e.what(),
+                           ticket->tokenLabel);
+          Json::Value err;
+          err["error"] = e.what();
+          auto resp = HttpResponse::newHttpJsonResponse(err);
+          resp->setStatusCode(k403Forbidden);
           callback(resp);
         } catch (const AttachmentRejectedError& e) {
           auditLog.record("remote:attach_file", ticket->documentPath, false, e.what(), ticket->tokenLabel);

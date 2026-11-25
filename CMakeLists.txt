@@ -95,6 +95,7 @@ add_library(wikicore STATIC
   src/vault/AttachmentService.cpp
   src/vault/AttachToDocument.cpp
   src/vault/McpUploadStaging.cpp
+  src/vault/SkillDocuments.cpp
   src/vault/FolderService.cpp
   src/vault/BackupService.cpp
   src/index/Database.cpp

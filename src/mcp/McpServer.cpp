@@ -4,6 +4,7 @@
 #include "embeddings/EmbeddingProviderFactory.h"
 #include "util/Base64.h"
 #include "vault/AttachToDocument.h"
+#include "vault/SkillDocuments.h"
 
 #include <nlohmann/json.hpp>
 
@@ -650,6 +651,7 @@ tool_handler makeCreateDocumentHandler(vault::DocumentService& documents,
     }
 
     try {
+      vault::rejectSkillType(input.type);
       const auto rec = documents.create(path, input);
       auditLog.record("create_document", rec.path, true, "created");
       return textContent("Created " + rec.path);
@@ -686,6 +688,7 @@ tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
 
     try {
       const vault::DocumentRecord existing = documents.get(path);
+      vault::rejectSkillType(existing.frontMatter.type);
 
       vault::DocumentInput input;
       input.title = params.value("title", existing.frontMatter.title);
@@ -699,6 +702,7 @@ tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
         input.tags = params["tags"].get<std::vector<std::string>>();
       }
 
+      vault::rejectSkillType(input.type);
       const auto rec = documents.update(path, input);
       auditLog.record("update_document", path, true, "updated");
       return textContent("Updated " + rec.path);
@@ -774,6 +778,7 @@ tool_handler makeAttachFileHandler(vault::DocumentService& documents,
     lazyProvider.ensureLoaded();
 
     try {
+      vault::rejectSkillType(documents.get(path).frontMatter.type);
       vault::AttachedFile attached;
       if (hasSource) {
         attached = vault::attachFileAndLinkFromPath(

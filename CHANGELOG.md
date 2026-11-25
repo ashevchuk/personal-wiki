@@ -15,6 +15,10 @@ binaries — check a running/built copy with `wiki-server --version` or
   2025-03-26 `initialize` flow: `server/discover`, `tools/list` and
   `tools/call`, with the revision's version, metadata and HTTP header
   checks. Clients that use `initialize` see no change.
+- Documents with `type: skill` are read-only to MCP and the remote
+  agent: no tool can create one, edit one, change a document's type to
+  `skill`, or attach a file to one, even with write access on. Each
+  refusal is audit-logged. They are edited in the web UI only.
 
 ## [0.15.2] - 2026-11-23
 

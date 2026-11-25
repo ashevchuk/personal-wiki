@@ -161,6 +161,20 @@ snapshot into `document_snapshots` that every other save gets (see
 "Versioning" below) — an MCP-driven edit is just as undoable through
 `/history/{path}` as a human-made one.
 
+**Skill documents are read-only to every model-facing write path.** A
+document whose front-matter `type` is `skill` (ignoring case and
+surrounding whitespace) is instructions that MCP clients may load into
+later sessions, so `create_document` and `update_document` refuse to
+produce one, `update_document` refuses to touch one, and `attach_file`,
+`attach_file_begin` and the `PUT /mcp/uploads/{id}` follow-up refuse to
+attach to one; the upload re-checks at `PUT` time, so a document that
+became a skill after `attach_file_begin` is refused with `403`. The same
+applies to `create_document` in the remote agent endpoint. Each refusal
+returns `skill documents are read-only over MCP` and is audit-logged as a
+failure. The web UI (admin session) is the only way to write a skill
+document. The check is `vault::rejectSkillType` in
+`src/vault/SkillDocuments.h`.
+
 When `write_access` is `false` (the default), these three tools aren't
 registered at all — they're absent from `tools/list`, not present and
 simply erroring when called. An MCP client asking "what can you do" never
