@@ -204,7 +204,7 @@ Json::Value buildToolsList(bool writeEnabled) {
     props["query"] = stringParam("Search text");
     props["tags"] = stringArrayParam("Require all of these tags");
     props["type"] = stringParam("Filter by document type");
-    props["limit"] = numberParam("Max results (default 20)");
+    props["limit"] = numberParam("Max results (default 20, at most 200)");
     tools.append(toolSchema(
         "search_documents",
         "Full-text search over the wiki's documents (FTS5, ranked). Returns "
@@ -230,7 +230,7 @@ Json::Value buildToolsList(bool writeEnabled) {
     props["tag"] = stringParam("Filter by exact tag");
     props["type"] = stringParam("Filter by document type");
     props["folder"] = stringParam("Filter by path prefix, e.g. \"notes/\"");
-    props["limit"] = numberParam("Page size (default 50)");
+    props["limit"] = numberParam("Page size (default 50, at most 200)");
     props["offset"] = numberParam("Page offset (default 0)");
     tools.append(toolSchema(
         "list_documents",
@@ -399,7 +399,7 @@ Json::Value handleSearchDocuments(FtsSearch& search, const Json::Value& args) {
   SearchQuery q;
   q.text = args["query"].asString();
   q.includePrivate = kIncludePrivate;
-  q.limit = args.get("limit", 20).asInt();
+  q.limit = mcp::clampToolLimit(args.get("limit", 20).asInt64(), 20);
   if (args.isMember("type") && args["type"].isString()) q.docType = args["type"].asString();
   if (args.isMember("tags") && args["tags"].isArray()) {
     for (const auto& t : args["tags"]) {
@@ -494,8 +494,8 @@ Json::Value handleListTags(NavQueries& nav) {
 Json::Value handleListDocuments(FtsSearch& search, const Json::Value& args) {
   SearchQuery q;
   q.includePrivate = kIncludePrivate;
-  q.limit = args.get("limit", 50).asInt();
-  q.offset = args.get("offset", 0).asInt();
+  q.limit = mcp::clampToolLimit(args.get("limit", 50).asInt64(), 50);
+  q.offset = mcp::clampToolOffset(args.get("offset", 0).asInt64());
   if (args.isMember("tag") && args["tag"].isString()) q.tag = args["tag"].asString();
   if (args.isMember("type") && args["type"].isString()) q.docType = args["type"].asString();
   if (args.isMember("folder") && args["folder"].isString()) {
@@ -677,6 +677,9 @@ Json::Value handleUpdateDocument(DocumentService& documents, McpAuditLog& auditL
     // fall through to the generic e.what() catch below.
     auditLog.record("remote:update_document", path, false, e.what(), tokenLabel);
     return toolTextResult("invalid path", true);
+  } catch (const Json::Exception&) {
+    auditLog.record("remote:update_document", path, false, "invalid arguments", tokenLabel);
+    return toolTextResult(std::string(mcp::kInvalidToolArguments), true);
   } catch (const std::exception& e) {
     auditLog.record("remote:update_document", path, false, e.what(), tokenLabel);
     return toolTextResult(e.what(), true);
@@ -719,7 +722,7 @@ Json::Value handleAttachFile(DocumentService& documents, AttachmentService& atta
   const std::string raw = args["content_base64"].asString();
   if (raw.size() > kMaxEncodedAttachmentBytes) {
     auditLog.record("remote:attach_file", path, false,
-                     "content_base64 is too large; use attach_file_begin");
+                     "content_base64 is too large; use attach_file_begin", tokenLabel);
     return toolTextResult(
         "content_base64 is too large for this JSON transport; call "
         "attach_file_begin and PUT the raw bytes to /mcp/uploads/{upload_id}",
@@ -876,53 +879,82 @@ void registerRemoteMcpRoutes(HttpAppFramework& app, McpRemoteConfig& remoteConfi
           return;
         }
         const Json::Value& request = *json;
-        const std::string method = request["method"].asString();
         const bool isNotification = !request.isMember("id");
         const Json::Value id = isNotification ? Json::Value() : request["id"];
-        const Json::Value params = request.get("params", Json::Value(Json::objectValue));
+        if (!request["method"].isString()) {
+          callback(HttpResponse::newHttpJsonResponse(
+              jsonRpcError(id, -32600, "Invalid Request: 'method' must be a string")));
+          return;
+        }
+        const std::string method = request["method"].asString();
+        Json::Value params = request.get("params", Json::Value(Json::objectValue));
+        if (params.isNull()) params = Json::Value(Json::objectValue);
+        if (!params.isObject()) {
+          callback(HttpResponse::newHttpJsonResponse(
+              jsonRpcError(id, -32602, "Invalid params: 'params' must be an object")));
+          return;
+        }
 
         // nullopt = no such tool (a protocol error, not a tool error).
         const auto callTool = [&](const std::string& toolName,
                                   const Json::Value& args) -> std::optional<Json::Value> {
           Json::Value result;
-          if (toolName == "search_documents") {
-            result = handleSearchDocuments(search, args);
-          } else if (toolName == "get_document") {
-            result = handleGetDocument(documents, indexUpdater, graph, args);
-          } else if (toolName == "list_tags") {
-            result = handleListTags(nav);
-          } else if (toolName == "list_documents") {
-            result = handleListDocuments(search, args);
-          } else if (toolName == "run_query") {
-            result = handleRunQuery(queryBlocks, args);
-          } else if (toolName == "get_calendar_events") {
-            result = handleGetCalendarEvents(calendarQueries, args);
-          } else if (toolName == "create_document") {
-            // Enforced HERE too, not just by omitting it from
-            // tools/list -- a client that calls a tool by name it was
-            // never advertised must still be refused, the same
-            // "listing something as protected proves nothing on its
-            // own" discipline as every filter/route check elsewhere in
-            // this app.
-            result = settings.writeEnabled
-                         ? handleCreateDocument(documents, auditLog, args, tokenMatch.label)
-                         : toolTextResult("write access is disabled for remote MCP", true);
-          } else if (toolName == "update_document") {
-            result = settings.writeEnabled
-                         ? handleUpdateDocument(documents, auditLog, args, tokenMatch.label)
-                         : toolTextResult("write access is disabled for remote MCP", true);
-          } else if (toolName == "attach_file") {
-            result = settings.writeEnabled
-                         ? handleAttachFile(documents, attachments, auditLog, args,
-                                             tokenMatch.label)
-                         : toolTextResult("write access is disabled for remote MCP", true);
-          } else if (toolName == "attach_file_begin") {
-            result = settings.writeEnabled
-                         ? handleAttachFileBegin(documents, mcpUploads, auditLog, args,
-                                                  tokenMatch.label)
-                         : toolTextResult("write access is disabled for remote MCP", true);
-          } else {
-            return std::nullopt;
+          // jsoncpp throws on a type mismatch (asInt() of an object, isMember()
+          // of a string). Wrong-type input is a tool error the model can
+          // correct, not a server failure.
+          try {
+            if (toolName == "search_documents") {
+              result = handleSearchDocuments(search, args);
+            } else if (toolName == "get_document") {
+              result = handleGetDocument(documents, indexUpdater, graph, args);
+            } else if (toolName == "list_tags") {
+              result = handleListTags(nav);
+            } else if (toolName == "list_documents") {
+              result = handleListDocuments(search, args);
+            } else if (toolName == "run_query") {
+              result = handleRunQuery(queryBlocks, args);
+            } else if (toolName == "get_calendar_events") {
+              result = handleGetCalendarEvents(calendarQueries, args);
+            } else if (toolName == "create_document") {
+              // Enforced HERE too, not just by omitting it from
+              // tools/list -- a client that calls a tool by name it was
+              // never advertised must still be refused, the same
+              // "listing something as protected proves nothing on its
+              // own" discipline as every filter/route check elsewhere in
+              // this app.
+              result = settings.writeEnabled
+                           ? handleCreateDocument(documents, auditLog, args, tokenMatch.label)
+                           : toolTextResult("write access is disabled for remote MCP", true);
+            } else if (toolName == "update_document") {
+              result = settings.writeEnabled
+                           ? handleUpdateDocument(documents, auditLog, args, tokenMatch.label)
+                           : toolTextResult("write access is disabled for remote MCP", true);
+            } else if (toolName == "attach_file") {
+              result = settings.writeEnabled
+                           ? handleAttachFile(documents, attachments, auditLog, args,
+                                               tokenMatch.label)
+                           : toolTextResult("write access is disabled for remote MCP", true);
+            } else if (toolName == "attach_file_begin") {
+              result = settings.writeEnabled
+                           ? handleAttachFileBegin(documents, mcpUploads, auditLog, args,
+                                                    tokenMatch.label)
+                           : toolTextResult("write access is disabled for remote MCP", true);
+            } else {
+              return std::nullopt;
+            }
+          } catch (const Json::Exception&) {
+            const bool isWriteTool = toolName == "create_document" ||
+                                     toolName == "update_document" ||
+                                     toolName == "attach_file" ||
+                                     toolName == "attach_file_begin";
+            if (isWriteTool) {
+              const std::string path = args.isObject() && args["path"].isString()
+                                           ? args["path"].asString()
+                                           : std::string();
+              auditLog.record("remote:" + toolName, path, false, "invalid arguments",
+                               tokenMatch.label);
+            }
+            return toolTextResult(std::string(mcp::kInvalidToolArguments), true);
           }
           return result;
         };

@@ -163,3 +163,13 @@ TEST_CASE("originMatchesHost", "[McpProtocol]") {
   REQUIRE_FALSE(originMatchesHost("null", "wiki.example"));
   REQUIRE_FALSE(originMatchesHost("https://wiki.example", ""));
 }
+
+TEST_CASE("clampToolLimit / clampToolOffset", "[McpProtocol]") {
+  REQUIRE(clampToolLimit(-1, 20) == 20);  // SQLite reads LIMIT -1 as "no limit"
+  REQUIRE(clampToolLimit(0, 20) == 20);
+  REQUIRE(clampToolLimit(5, 20) == 5);
+  REQUIRE(clampToolLimit(1000000, 20) == kMaxToolLimit);
+  REQUIRE(clampToolOffset(-5) == 0);
+  REQUIRE(clampToolOffset(40) == 40);
+  REQUIRE(clampToolOffset(1LL << 40) == 1'000'000'000);
+}

@@ -272,3 +272,16 @@ TEST_CASE("rewriteOwnAssetLinks accepts a leading ./", "[SkillCatalog]") {
   REQUIRE(rewriteOwnAssetLinks("![d](./deploy.assets/a.png)\n", "notes/deploy.md", {"a.png"}) ==
           "![d](assets/a.png)\n");
 }
+
+TEST_CASE("rewriteOwnAssetLinks: angle-bracket destinations follow CommonMark", "[SkillCatalog]") {
+  const std::vector<std::string> files{"a.png", "a>b.png"};
+  // A closed destination that is not an own asset is skipped whole.
+  REQUIRE(rewriteOwnAssetLinks("[a](<https://ext/a b](deploy.assets/a.png>)\n", "deploy.md",
+                               files) == "[a](<https://ext/a b](deploy.assets/a.png>)\n");
+  // `\>` is a literal '>' inside the destination.
+  REQUIRE(rewriteOwnAssetLinks("![d](<deploy.assets/a\\>b.png>)\n", "deploy.md", files) ==
+          "![d](<assets/a%3Eb.png>)\n");
+  // An unescaped '<' means it is not a destination at all.
+  REQUIRE(rewriteOwnAssetLinks("[x](<deploy.assets/a<b.png>)\n", "deploy.md", files) ==
+          "[x](<deploy.assets/a<b.png>)\n");
+}

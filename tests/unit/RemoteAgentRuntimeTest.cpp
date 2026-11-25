@@ -250,3 +250,21 @@ TEST_CASE("RemoteAgentRuntime: hitting the step limit without ever writing "
   REQUIRE(turn.documentsCreated.empty());
   REQUIRE_FALSE(turn.reply.empty());
 }
+
+TEST_CASE("RemoteAgentRuntime: wrong-type tool arguments from the model are fed back as an "
+          "error instead of ending the turn",
+          "[RemoteAgentRuntime]") {
+  Fixture f;
+  ScriptedChatClient chat;
+  chat.replies.push_back(toolCall("search_documents", R"({"query":5})"));
+  chat.replies.push_back(toolCall("get_document", R"({"id_or_path":[]})"));
+  chat.replies.push_back(toolCall("create_document", R"({"path":123,"title":{}})"));
+  chat.replies.push_back(textReply("gave up"));
+
+  llm::RemoteAgentRuntime agent(chat, f.documents, f.search, f.nav, f.calendar, f.indexUpdater,
+                                f.auditLog, "");
+  llm::RemoteAgentTurn turn;
+  REQUIRE_NOTHROW(turn = agent.run({llm::ChatMessage{"user", "do things", "", {}}}, "tray-app"));
+  REQUIRE(turn.documentsCreated.empty());
+  REQUIRE(turn.reply == "gave up");
+}

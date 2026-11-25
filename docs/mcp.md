@@ -56,7 +56,7 @@ first MCP client connection.
 - **search_documents**(query, tags?, type?, limit?) — full-text search
   (FTS5, BM25 ranking), returning a snippet with matches highlighted as
   `**term**` (markdown bold, not HTML — an MCP client reads text, it
-  doesn't render a page).
+  doesn't render a page). `limit` defaults to 20 and is capped at 200.
 - **get_document**(id_or_path) — the full document body plus metadata,
   including its direct `[[wiki-link]]` neighbors (`Links`: outgoing,
   `Backlinks`: other documents linking to this one — one hop only, so a
@@ -78,6 +78,8 @@ first MCP client connection.
 - **list_documents**(tag?, type?, folder?, limit?, offset?) — browsing
   without a search query, with pagination. `folder` is a path prefix
   (`"notes/"` matches both `notes/foo.md` and `notes/sub/bar.md`).
+  `limit` defaults to 50 and is capped at 200; a zero or negative `limit`
+  means the default, a negative `offset` means 0.
 - **run_query**(query) — executes a ` ```query ` fenced block's body
   (the `key: value` DSL — `type`, `tag`, `folder`, `search`, `sort`,
   `order`, `limit`, `orphans`, `todos`, `links`; see
@@ -105,6 +107,11 @@ default). Setting `scope = "public"` restricts the MCP client to public
 content only — the same fail-safe-private principle the HTTP layer
 follows, applied to a different trust boundary (a local process the
 machine's owner chose to spawn, rather than an anonymous web visit).
+
+Arguments of the wrong JSON type (`arguments` that is not an object, a
+number where a string is expected, `limit: {}`) get an `isError` result
+saying so, on both transports, so the model can retry with corrected
+arguments; they never make the server fail the request.
 
 ## Write tools (off by default)
 
@@ -181,7 +188,8 @@ simply erroring when called. An MCP client asking "what can you do" never
 even learns they exist unless the admin has opted in.
 
 **Every call through any of these tools is recorded in the
-`mcp_audit_log` SQLite table, whether it succeeds or fails.** This is the
+`mcp_audit_log` SQLite table, whether it succeeds or fails**, including
+one rejected for wrong-type arguments (detail `invalid arguments`). This is the
 accountability half of turning `write_access` on: an LLM writing to your
 vault unsupervised carries a different risk than it reading from one, and
 this log is what lets you find out, after the fact, what it actually
@@ -433,7 +441,9 @@ Request body: `{"messages": [{"role": "user" | "assistant", "content":
 `system`/`tool` roles; those are this endpoint's own internal bookkeeping
 for one call and are never echoed back). Response:
 `{"reply": "...", "documentsCreated": ["path", ...]}` — `documentsCreated`
-is empty unless `create_document` actually ran this turn. The model may ask
+is empty unless `create_document` actually ran this turn. A tool call the
+model makes with wrong-type arguments is answered to the model as a tool
+error, and the turn goes on. The model may ask
 one clarifying question instead of creating anything immediately (e.g. "public
 or private?"); the client answers by sending the whole conversation again
 with that answer appended as a `user` turn — the server has no memory of

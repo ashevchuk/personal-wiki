@@ -104,6 +104,17 @@ std::optional<ProtocolError> checkModernHttpHeaders(const ModernHttpHeaders& hea
   return std::nullopt;
 }
 
+int clampToolLimit(long long requested, int fallback) {
+  if (requested <= 0) return fallback;
+  return requested > kMaxToolLimit ? kMaxToolLimit : static_cast<int>(requested);
+}
+
+int clampToolOffset(long long requested) {
+  if (requested < 0) return 0;
+  constexpr long long kMaxOffset = 1'000'000'000;
+  return static_cast<int>(requested > kMaxOffset ? kMaxOffset : requested);
+}
+
 std::optional<std::string> decodeHeaderValue(std::string_view raw) {
   if (!isPlainHeaderValue(raw)) return std::nullopt;
   const bool isSentinel =

@@ -86,6 +86,19 @@ std::optional<ProtocolError> checkModernHttpHeaders(const ModernHttpHeaders& hea
                                                     std::string_view bodyMethod,
                                                     const std::optional<std::string>& bodyName);
 
+// Page size and offset of the search/list tools. A negative limit would
+// reach SQLite as "no limit", so anything outside [1, kMaxToolLimit] falls
+// back or is capped; a negative offset becomes 0.
+inline constexpr int kMaxToolLimit = 200;
+int clampToolLimit(long long requested, int fallback);
+int clampToolOffset(long long requested);
+
+// Tool error text for arguments of the wrong JSON type, same on both
+// transports.
+inline constexpr std::string_view kInvalidToolArguments =
+    "invalid arguments: 'arguments' must be an object and each parameter must have the type its "
+    "input schema gives";
+
 // Decodes a header value that may use the `=?base64?...?=` sentinel.
 // nullopt when the value contains characters not allowed in a plain header
 // value, or the sentinel payload is not valid Base64.

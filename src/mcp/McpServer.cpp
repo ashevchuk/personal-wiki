@@ -442,7 +442,7 @@ tool_handler makeSearchDocumentsHandler(index::FtsSearch& search,
     index::SearchQuery q;
     q.text = params["query"].get<std::string>();
     q.includePrivate = includePrivate;
-    q.limit = params.value("limit", 20);
+    q.limit = clampToolLimit(params.value("limit", 20LL), 20);
     if (params.contains("type") && params["type"].is_string()) {
       q.docType = params["type"].get<std::string>();
     }
@@ -543,8 +543,8 @@ tool_handler makeListDocumentsHandler(index::FtsSearch& search,
   return [&search, includePrivate](const json& params) -> json {
     index::SearchQuery q;
     q.includePrivate = includePrivate;
-    q.limit = params.value("limit", 50);
-    q.offset = params.value("offset", 0);
+    q.limit = clampToolLimit(params.value("limit", 50LL), 50);
+    q.offset = clampToolOffset(params.value("offset", 0LL));
     if (params.contains("tag") && params["tag"].is_string()) {
       q.tag = params["tag"].get<std::string>();
     }
@@ -634,6 +634,17 @@ tool_handler makeGetCalendarEventsHandler(index::CalendarQueries& calendarQuerie
   };
 }
 
+// The string elements of a JSON array; anything else is skipped, the same
+// as the remote transport does for `tags`.
+std::vector<std::string> stringItems(const json& value) {
+  std::vector<std::string> out;
+  if (!value.is_array()) return out;
+  for (const auto& item : value) {
+    if (item.is_string()) out.push_back(item.get<std::string>());
+  }
+  return out;
+}
+
 // A path an LLM client hands us is exactly as untrusted as one from an
 // anonymous HTTP request — DocumentService/VaultRepository already
 // reject traversal (PathTraversalError), this just makes sure the
@@ -651,19 +662,22 @@ tool_handler makeCreateDocumentHandler(vault::DocumentService& documents,
     lazyProvider.ensureLoaded();
 
     vault::DocumentInput input;
-    input.title = params.value("title", std::string());
-    input.body = params.value("body", std::string());
-    input.type = params.value("type", std::string());
-    input.due = params.value("due", std::string());
-    input.recur = params.value("recur", std::string());
-    // Fail-safe-private applies here exactly as it does to a
-    // human-authored save through the HTTP API — an LLM omitting
-    // "visibility" (or getting the exact string wrong) must not
-    // accidentally publish something.
-    input.visibility = params.value("visibility", std::string("private"));
-    if (params.contains("tags") && params["tags"].is_array()) {
-      input.tags = params["tags"].get<std::vector<std::string>>();
+    try {
+      input.title = params.value("title", std::string());
+      input.body = params.value("body", std::string());
+      input.type = params.value("type", std::string());
+      input.due = params.value("due", std::string());
+      input.recur = params.value("recur", std::string());
+      // Fail-safe-private applies here exactly as it does to a
+      // human-authored save through the HTTP API — an LLM omitting
+      // "visibility" (or getting the exact string wrong) must not
+      // accidentally publish something.
+      input.visibility = params.value("visibility", std::string("private"));
+    } catch (const json::type_error&) {
+      auditLog.record("create_document", path, false, "invalid arguments");
+      throw mcp_exception(error_code::invalid_params, std::string(kInvalidToolArguments));
     }
+    if (params.contains("tags")) input.tags = stringItems(params["tags"]);
 
     try {
       vault::rejectSkillType(input.type);
@@ -714,7 +728,7 @@ tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
       input.visibility = params.value("visibility", existing.frontMatter.visibility);
       input.tags = existing.frontMatter.tags;
       if (params.contains("tags") && params["tags"].is_array()) {
-        input.tags = params["tags"].get<std::vector<std::string>>();
+        input.tags = stringItems(params["tags"]);
       }
 
       vault::rejectSkillType(input.type);
@@ -727,6 +741,9 @@ tool_handler makeUpdateDocumentHandler(vault::DocumentService& documents,
     } catch (const vault::PathTraversalError&) {
       auditLog.record("update_document", path, false, "path traversal rejected");
       throw mcp_exception(error_code::invalid_params, "invalid path");
+    } catch (const json::type_error&) {
+      auditLog.record("update_document", path, false, "invalid arguments");
+      throw mcp_exception(error_code::invalid_params, std::string(kInvalidToolArguments));
     } catch (const std::exception& e) {
       auditLog.record("update_document", path, false, e.what());
       throw mcp_exception(error_code::internal_error, e.what());
@@ -852,7 +869,7 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
           .with_string_param("query", "Search text", true)
           .with_array_param("tags", "Require all of these tags", "string", false)
           .with_string_param("type", "Filter by document type", false)
-          .with_number_param("limit", "Max results (default 20)", false)
+          .with_number_param("limit", "Max results (default 20, at most 200)", false)
           .build();
   srv.register_tool(searchDocumentsTool,
                      makeSearchDocumentsHandler(search, includePrivate));
@@ -885,7 +902,7 @@ void runServer(const std::string& serverName, const std::string& serverVersion,
           .with_string_param("tag", "Filter by exact tag", false)
           .with_string_param("type", "Filter by document type", false)
           .with_string_param("folder", "Filter by path prefix, e.g. \"notes/\"", false)
-          .with_number_param("limit", "Page size (default 50)", false)
+          .with_number_param("limit", "Page size (default 50, at most 200)", false)
           .with_number_param("offset", "Page offset (default 0)", false)
           .build();
   srv.register_tool(listDocumentsTool,

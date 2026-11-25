@@ -185,29 +185,47 @@ std::string rewriteOwnAssetLinks(std::string_view body, std::string_view documen
   std::size_t open = body.find("](");
   while (open != std::string_view::npos) {
     std::size_t start = open + 2;
-    std::size_t end;
+    std::size_t end = start;
+    std::string destination;
     if (start < body.size() && body[start] == '<') {
-      // An angle-bracket destination cannot span lines (CommonMark).
+      // CommonMark: no line break or unescaped '<' inside, `\>` is a
+      // literal '>'. Anything else is not a link destination.
       ++start;
-      end = body.find_first_of(">\n", start);
-      if (end == std::string_view::npos || body[end] != '>') {
+      end = start;
+      bool closed = false;
+      while (end < body.size()) {
+        const char c = body[end];
+        if (c == '\\' && end + 1 < body.size() && body[end + 1] != '\n') {
+          destination += body[end + 1];
+          end += 2;
+          continue;
+        }
+        if (c == '>') {
+          closed = true;
+          break;
+        }
+        if (c == '<' || c == '\n') break;
+        destination += c;
+        ++end;
+      }
+      if (!closed) {
         open = body.find("](", open + 2);
         continue;
       }
     } else {
-      end = start;
       while (end < body.size() && body[end] != ')' && !isAsciiSpace(body[end])) ++end;
+      destination = std::string(body.substr(start, end - start));
     }
-    const auto target = ownAssetTarget(body.substr(start, end - start), prefixes, files);
+    // Past this destination either way: a "](" inside it is not another
+    // link, and `copied` only moves forward.
+    const auto target = ownAssetTarget(destination, prefixes, files);
     if (!target) {
-      open = body.find("](", open + 2);
+      open = body.find("](", end);
       continue;
     }
     out.append(body.substr(copied, start - copied));
     out += std::string(kSkillAssetsDir) + "/" + percentEncodePathSegment(*target);
     copied = end;
-    // Past the rewritten destination: a "](" inside it is not another link,
-    // and `copied` only moves forward.
     open = body.find("](", end);
   }
   out.append(body.substr(copied));

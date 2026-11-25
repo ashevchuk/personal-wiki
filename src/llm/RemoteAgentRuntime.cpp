@@ -204,196 +204,204 @@ RemoteAgentTurn RemoteAgentRuntime::run(const std::vector<ChatMessage>& history,
           }
         }
 
-        if (call.name == "search_documents") {
-          const std::string query = args.value("query", "");
-          if (query.empty()) {
-            messages.push_back(ChatMessage{"tool", "error: missing 'query'", call.id, {}});
-            continue;
-          }
-          index::SearchQuery q;
-          q.text = query;
-          q.includePrivate = true;
-          q.limit = kSearchLimit;
-          if (args.contains("type") && args["type"].is_string()) {
-            q.docType = args["type"].get<std::string>();
-          }
-          if (args.contains("tags") && args["tags"].is_array()) {
-            for (const auto& t : args["tags"]) {
-              if (t.is_string()) q.tags.push_back(t.get<std::string>());
-            }
-          }
-          const auto results = search_.search(q);
-          nlohmann::json arr = nlohmann::json::array();
-          for (const auto& item : results) {
-            arr.push_back(nlohmann::json{{"path", item.path},
-                                          {"title", item.title},
-                                          {"type", item.docType},
-                                          {"tags", item.tags},
-                                          {"snippet", snippetForModel(item)}});
-          }
-          auditLog_.record("remote-agent:search_documents", "", true, query, tokenLabel);
-          messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
-          continue;
-        }
-
-        if (call.name == "list_documents") {
-          index::SearchQuery q;
-          q.includePrivate = true;
-          q.limit = kListLimit;
-          if (args.contains("tag") && args["tag"].is_string()) {
-            q.tag = args["tag"].get<std::string>();
-          }
-          if (args.contains("type") && args["type"].is_string()) {
-            q.docType = args["type"].get<std::string>();
-          }
-          if (args.contains("folder") && args["folder"].is_string()) {
-            q.folderPrefix = args["folder"].get<std::string>();
-          }
-          const auto results = search_.search(q);
-          nlohmann::json arr = nlohmann::json::array();
-          for (const auto& item : results) {
-            arr.push_back(nlohmann::json{{"path", item.path},
-                                          {"title", item.title},
-                                          {"type", item.docType},
-                                          {"tags", item.tags}});
-          }
-          auditLog_.record("remote-agent:list_documents", q.folderPrefix.value_or(""), true, "",
-                            tokenLabel);
-          messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
-          continue;
-        }
-
-        if (call.name == "list_tags") {
-          const auto tagCounts = nav_.tagCounts(true);
-          nlohmann::json arr = nlohmann::json::array();
-          for (const auto& t : tagCounts) {
-            arr.push_back(nlohmann::json{{"tag", t.tag}, {"count", t.count}});
-          }
-          auditLog_.record("remote-agent:list_tags", "", true, "", tokenLabel);
-          messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
-          continue;
-        }
-
-        if (call.name == "get_document") {
-          const std::string idOrPath = args.value("id_or_path", "");
-          if (idOrPath.empty()) {
-            messages.push_back(ChatMessage{"tool", "error: missing 'id_or_path'", call.id, {}});
-            continue;
-          }
-          auto tryGet = [&](const std::string& path) -> std::optional<vault::DocumentRecord> {
-            try {
-              return documents_.get(path);
-            } catch (const vault::DocumentNotFoundError&) {
-              return std::nullopt;
-            } catch (const vault::PathTraversalError&) {
-              return std::nullopt;
-            }
-          };
-          auto record = tryGet(idOrPath);
-          if (!record) {
-            if (const auto resolved = indexUpdater_.findPathByUuid(idOrPath)) {
-              record = tryGet(*resolved);
-            }
-          }
-          if (!record) {
-            auditLog_.record("remote-agent:get_document", idOrPath, false, "not found",
-                              tokenLabel);
-            messages.push_back(
-                ChatMessage{"tool", "error: document not found: " + idOrPath, call.id, {}});
-            continue;
-          }
-          std::string out;
-          out += "Path: " + record->path + "\n";
-          out += "Title: " + record->frontMatter.title + "\n";
-          out += "Type: " + record->frontMatter.type + "\n";
-          out += "Tags: ";
-          for (size_t i = 0; i < record->frontMatter.tags.size(); ++i) {
-            if (i) out += ", ";
-            out += record->frontMatter.tags[i];
-          }
-          out += "\n\n---\n\n";
-          out += record->body;
-          auditLog_.record("remote-agent:get_document", record->path, true, "", tokenLabel);
-          messages.push_back(ChatMessage{"tool", out, call.id, {}});
-          continue;
-        }
-
-        if (call.name == "get_calendar_events") {
-          const std::string start = args.value("start", "");
-          const std::string end = args.value("end", "");
-          if (start.empty() || end.empty()) {
-            messages.push_back(
-                ChatMessage{"tool", "error: 'start' and 'end' are required", call.id, {}});
-            continue;
-          }
-          const std::string folder = args.value("folder", "");
-          std::vector<std::string> tags;
-          if (args.contains("tags") && args["tags"].is_array()) {
-            for (const auto& t : args["tags"]) {
-              if (t.is_string()) tags.push_back(t.get<std::string>());
-            }
-          }
-          const auto events = calendar_.eventsBetween(start, end, true, folder, tags);
-          nlohmann::json arr = nlohmann::json::array();
-          for (const auto& ev : events) {
-            arr.push_back(nlohmann::json{{"path", ev.path},
-                                          {"title", ev.title},
-                                          {"visibility", ev.visibility},
-                                          {"date", ev.date},
-                                          {"time", ev.time}});
-          }
-          auditLog_.record("remote-agent:get_calendar_events", folder, true,
-                            start + ".." + end, tokenLabel);
-          messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
-          continue;
-        }
-
-        if (call.name != "create_document") {
-          messages.push_back(ChatMessage{"tool", "error: unknown tool", call.id, {}});
-          continue;
-        }
-
-        const std::string path = args.value("path", "");
-        if (path.empty()) {
-          messages.push_back(ChatMessage{"tool", "error: missing 'path'", call.id, {}});
-          continue;
-        }
-
-        vault::DocumentInput input;
-        input.title = args.value("title", "");
-        input.body = args.value("body", "");
-        input.type = args.value("type", "");
-        input.visibility = args.value("visibility", "private");
-        if (args.contains("tags") && args["tags"].is_array()) {
-          for (const auto& t : args["tags"]) {
-            if (t.is_string()) input.tags.push_back(t.get<std::string>());
-          }
-        }
-
+        // A parameter of the wrong type (or arguments that are not an
+        // object) makes nlohmann's value()/get() throw type_error; the
+        // model gets that back as a correctable tool error.
         try {
-          vault::rejectSkillType(input.type);
-          const auto rec = documents_.create(path, input);
-          auditLog_.record("remote-agent:create_document", path, true, "created", tokenLabel);
-          turn.reply = "Created " + rec.path;
-          turn.documentsCreated.push_back(rec.path);
-          return turn;
-        } catch (const vault::DocumentAlreadyExistsError&) {
-          auditLog_.record("remote-agent:create_document", path, false,
-                            "a document already exists at that path", tokenLabel);
+          if (call.name == "search_documents") {
+            const std::string query = args.value("query", "");
+            if (query.empty()) {
+              messages.push_back(ChatMessage{"tool", "error: missing 'query'", call.id, {}});
+              continue;
+            }
+            index::SearchQuery q;
+            q.text = query;
+            q.includePrivate = true;
+            q.limit = kSearchLimit;
+            if (args.contains("type") && args["type"].is_string()) {
+              q.docType = args["type"].get<std::string>();
+            }
+            if (args.contains("tags") && args["tags"].is_array()) {
+              for (const auto& t : args["tags"]) {
+                if (t.is_string()) q.tags.push_back(t.get<std::string>());
+              }
+            }
+            const auto results = search_.search(q);
+            nlohmann::json arr = nlohmann::json::array();
+            for (const auto& item : results) {
+              arr.push_back(nlohmann::json{{"path", item.path},
+                                            {"title", item.title},
+                                            {"type", item.docType},
+                                            {"tags", item.tags},
+                                            {"snippet", snippetForModel(item)}});
+            }
+            auditLog_.record("remote-agent:search_documents", "", true, query, tokenLabel);
+            messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
+            continue;
+          }
+
+          if (call.name == "list_documents") {
+            index::SearchQuery q;
+            q.includePrivate = true;
+            q.limit = kListLimit;
+            if (args.contains("tag") && args["tag"].is_string()) {
+              q.tag = args["tag"].get<std::string>();
+            }
+            if (args.contains("type") && args["type"].is_string()) {
+              q.docType = args["type"].get<std::string>();
+            }
+            if (args.contains("folder") && args["folder"].is_string()) {
+              q.folderPrefix = args["folder"].get<std::string>();
+            }
+            const auto results = search_.search(q);
+            nlohmann::json arr = nlohmann::json::array();
+            for (const auto& item : results) {
+              arr.push_back(nlohmann::json{{"path", item.path},
+                                            {"title", item.title},
+                                            {"type", item.docType},
+                                            {"tags", item.tags}});
+            }
+            auditLog_.record("remote-agent:list_documents", q.folderPrefix.value_or(""), true, "",
+                              tokenLabel);
+            messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
+            continue;
+          }
+
+          if (call.name == "list_tags") {
+            const auto tagCounts = nav_.tagCounts(true);
+            nlohmann::json arr = nlohmann::json::array();
+            for (const auto& t : tagCounts) {
+              arr.push_back(nlohmann::json{{"tag", t.tag}, {"count", t.count}});
+            }
+            auditLog_.record("remote-agent:list_tags", "", true, "", tokenLabel);
+            messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
+            continue;
+          }
+
+          if (call.name == "get_document") {
+            const std::string idOrPath = args.value("id_or_path", "");
+            if (idOrPath.empty()) {
+              messages.push_back(ChatMessage{"tool", "error: missing 'id_or_path'", call.id, {}});
+              continue;
+            }
+            auto tryGet = [&](const std::string& path) -> std::optional<vault::DocumentRecord> {
+              try {
+                return documents_.get(path);
+              } catch (const vault::DocumentNotFoundError&) {
+                return std::nullopt;
+              } catch (const vault::PathTraversalError&) {
+                return std::nullopt;
+              }
+            };
+            auto record = tryGet(idOrPath);
+            if (!record) {
+              if (const auto resolved = indexUpdater_.findPathByUuid(idOrPath)) {
+                record = tryGet(*resolved);
+              }
+            }
+            if (!record) {
+              auditLog_.record("remote-agent:get_document", idOrPath, false, "not found",
+                                tokenLabel);
+              messages.push_back(
+                  ChatMessage{"tool", "error: document not found: " + idOrPath, call.id, {}});
+              continue;
+            }
+            std::string out;
+            out += "Path: " + record->path + "\n";
+            out += "Title: " + record->frontMatter.title + "\n";
+            out += "Type: " + record->frontMatter.type + "\n";
+            out += "Tags: ";
+            for (size_t i = 0; i < record->frontMatter.tags.size(); ++i) {
+              if (i) out += ", ";
+              out += record->frontMatter.tags[i];
+            }
+            out += "\n\n---\n\n";
+            out += record->body;
+            auditLog_.record("remote-agent:get_document", record->path, true, "", tokenLabel);
+            messages.push_back(ChatMessage{"tool", out, call.id, {}});
+            continue;
+          }
+
+          if (call.name == "get_calendar_events") {
+            const std::string start = args.value("start", "");
+            const std::string end = args.value("end", "");
+            if (start.empty() || end.empty()) {
+              messages.push_back(
+                  ChatMessage{"tool", "error: 'start' and 'end' are required", call.id, {}});
+              continue;
+            }
+            const std::string folder = args.value("folder", "");
+            std::vector<std::string> tags;
+            if (args.contains("tags") && args["tags"].is_array()) {
+              for (const auto& t : args["tags"]) {
+                if (t.is_string()) tags.push_back(t.get<std::string>());
+              }
+            }
+            const auto events = calendar_.eventsBetween(start, end, true, folder, tags);
+            nlohmann::json arr = nlohmann::json::array();
+            for (const auto& ev : events) {
+              arr.push_back(nlohmann::json{{"path", ev.path},
+                                            {"title", ev.title},
+                                            {"visibility", ev.visibility},
+                                            {"date", ev.date},
+                                            {"time", ev.time}});
+            }
+            auditLog_.record("remote-agent:get_calendar_events", folder, true,
+                              start + ".." + end, tokenLabel);
+            messages.push_back(ChatMessage{"tool", arr.dump(2), call.id, {}});
+            continue;
+          }
+
+          if (call.name != "create_document") {
+            messages.push_back(ChatMessage{"tool", "error: unknown tool", call.id, {}});
+            continue;
+          }
+
+          const std::string path = args.value("path", "");
+          if (path.empty()) {
+            messages.push_back(ChatMessage{"tool", "error: missing 'path'", call.id, {}});
+            continue;
+          }
+
+          vault::DocumentInput input;
+          input.title = args.value("title", "");
+          input.body = args.value("body", "");
+          input.type = args.value("type", "");
+          input.visibility = args.value("visibility", "private");
+          if (args.contains("tags") && args["tags"].is_array()) {
+            for (const auto& t : args["tags"]) {
+              if (t.is_string()) input.tags.push_back(t.get<std::string>());
+            }
+          }
+
+          try {
+            vault::rejectSkillType(input.type);
+            const auto rec = documents_.create(path, input);
+            auditLog_.record("remote-agent:create_document", path, true, "created", tokenLabel);
+            turn.reply = "Created " + rec.path;
+            turn.documentsCreated.push_back(rec.path);
+            return turn;
+          } catch (const vault::DocumentAlreadyExistsError&) {
+            auditLog_.record("remote-agent:create_document", path, false,
+                              "a document already exists at that path", tokenLabel);
+            messages.push_back(ChatMessage{
+                "tool", "error: a document already exists at that path", call.id, {}});
+          } catch (const vault::PathTraversalError&) {
+            auditLog_.record("remote-agent:create_document", path, false,
+                              "path traversal rejected", tokenLabel);
+            messages.push_back(ChatMessage{"tool", "error: invalid path", call.id, {}});
+          } catch (const std::filesystem::filesystem_error& e) {
+            // Same "never leak the absolute vault path" rule as every other
+            // write route -- see RemoteMcpRoutes.cpp's handleCreateDocument.
+            auditLog_.record("remote-agent:create_document", path, false, e.what(), tokenLabel);
+            messages.push_back(ChatMessage{"tool", "error: invalid path", call.id, {}});
+          } catch (const std::exception& e) {
+            auditLog_.record("remote-agent:create_document", path, false, e.what(), tokenLabel);
+            messages.push_back(ChatMessage{"tool", std::string("error: ") + e.what(), call.id, {}});
+          }
+        } catch (const nlohmann::json::type_error&) {
           messages.push_back(ChatMessage{
-              "tool", "error: a document already exists at that path", call.id, {}});
-        } catch (const vault::PathTraversalError&) {
-          auditLog_.record("remote-agent:create_document", path, false,
-                            "path traversal rejected", tokenLabel);
-          messages.push_back(ChatMessage{"tool", "error: invalid path", call.id, {}});
-        } catch (const std::filesystem::filesystem_error& e) {
-          // Same "never leak the absolute vault path" rule as every other
-          // write route -- see RemoteMcpRoutes.cpp's handleCreateDocument.
-          auditLog_.record("remote-agent:create_document", path, false, e.what(), tokenLabel);
-          messages.push_back(ChatMessage{"tool", "error: invalid path", call.id, {}});
-        } catch (const std::exception& e) {
-          auditLog_.record("remote-agent:create_document", path, false, e.what(), tokenLabel);
-          messages.push_back(ChatMessage{"tool", std::string("error: ") + e.what(), call.id, {}});
+              "tool", "error: invalid arguments, check each parameter's type", call.id, {}});
         }
       }
     }

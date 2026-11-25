@@ -1167,6 +1167,215 @@ level = "warn"
           and (responses.get(3, {}).get("error") or {}).get("code") == -32602, detail)
 
 
+def run_mcp_input_checks(anon, admin, csrf, mcp_token, mcp_bin, sandbox):
+    """Checks taken from the vulnerability-scanner skill's checklists: bearer
+    handling fails closed (A07/A10), tool arguments are attacker input
+    (LLM03/ASI02), and an MCP scope never returns more than it may (MCP10)."""
+    # Each rejected credential gets its own client address (the test server
+    # trusts X-Real-IP), so the per-IP login backoff does not leak into
+    # later checks.
+    def mcp_status(path, headers, ip):
+        status, _, _ = anon.post_json(path, {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                                      headers={**headers, "X-Real-IP": ip})
+        return status
+
+    bad_credentials = [
+        ("token in ?token=", f"/mcp?token={mcp_token}", {}),
+        ("token in ?access_token=", f"/mcp?access_token={mcp_token}", {}),
+        ("token without its last character", "/mcp", {"Authorization": f"Bearer {mcp_token[:-1]}"}),
+        ("token with an extra character", "/mcp", {"Authorization": f"Bearer {mcp_token}0"}),
+        ("token followed by another word", "/mcp", {"Authorization": f"Bearer {mcp_token} extra"}),
+        ("two spaces after Bearer", "/mcp", {"Authorization": f"Bearer  {mcp_token}"}),
+        ("empty Bearer", "/mcp", {"Authorization": "Bearer "}),
+        ("Basic scheme", "/mcp", {"Authorization": "Basic " + base64.b64encode(
+            f"admin:{mcp_token}".encode()).decode()}),
+        ("8 KiB bogus token", "/mcp", {"Authorization": "Bearer " + "a" * 8192}),
+    ]
+    for i, (desc, path, headers) in enumerate(bad_credentials):
+        status = mcp_status(path, headers, f"198.51.100.{10 + i}")
+        check(f"remote MCP rejects {desc} -> 401", status == 401, f"got {status}")
+    status = mcp_status("/mcp", {"Authorization": f"Bearer {mcp_token}"}, "198.51.100.99")
+    check("remote MCP still accepts the exact token -> 200", status == 200, f"got {status}")
+
+    mcp_auth = {"Authorization": f"Bearer {mcp_token}"}
+    _, _, body = anon.post_json("/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+                                headers=mcp_auth)
+    tools = {t["name"]: list(t["inputSchema"].get("properties", {}))
+             for t in json.loads(body)["result"]["tools"]}
+    bad_values = [123, -1.5, None, True, {}, [], {"nested": ["x"]}]
+    calls = [(name, {param: bad}) for name, params in tools.items()
+             for param in params for bad in bad_values]
+    calls += [(name, bad) for name in tools for bad in (123, "text", ["x"], None)]
+
+    unstructured = []
+    for name, arguments in calls:
+        status, _, raw = anon.post_json(
+            "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                     "params": {"name": name, "arguments": arguments}},
+            headers=mcp_auth)
+        try:
+            rpc = json.loads(raw)
+            structured = status == 200 and ("result" in rpc or "error" in rpc)
+        except ValueError:
+            structured = False
+        if not structured:
+            unstructured.append((name, arguments, status, raw[:80]))
+    check(f"remote MCP: {len(calls)} wrong-type tool arguments all get a JSON-RPC answer",
+          not unstructured and len(calls) > 100, f"first failures: {unstructured[:5]!r}")
+    status, _, _ = anon.get("/healthz")
+    check("server healthy after the wrong-type argument sweep", status == 200, f"got {status}")
+
+    def remote_call(name, arguments):
+        _, _, raw = anon.post_json(
+            "/mcp", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                     "params": {"name": name, "arguments": arguments}}, headers=mcp_auth)
+        result = json.loads(raw).get("result") or {}
+        return result.get("isError"), (result.get("content") or [{}])[0].get("text", "")
+
+    create_err = remote_call("create_document", {"path": "notes/badtype.md", "title": {}})
+    update_err = remote_call("update_document", {"path": "notes/guard-plain.md", "title": {}})
+    check("remote create/update with a wrong-type field: same isError text on both",
+          create_err[0] is True and create_err == update_err, f"{create_err!r} vs {update_err!r}")
+    for status, desc, body in (
+            *[(None, f"params {bad!r}", {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                         "params": bad}) for bad in ("x", 5, ["x"])],
+            (None, "method {}", {"jsonrpc": "2.0", "id": 1, "method": {}})):
+        status, _, raw = anon.post_json("/mcp", body, headers=mcp_auth)
+        try:
+            code = (json.loads(raw).get("error") or {}).get("code")
+        except ValueError:
+            code = None
+        check(f"legacy request with {desc} -> JSON-RPC error, not 500",
+              status == 200 and code in (-32600, -32602), f"status={status} body={raw[:120]!r}")
+
+    write_dir = os.path.join(sandbox, "mcp-write")
+    stdio_writes = "".join(json.dumps(m) + "\n" for m in (
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "create_document", "arguments": {"path": "notes/stdio-tags.md",
+                                                     "tags": [1, "ok", None]}}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "create_document", "arguments": {"path": "notes/stdio-bad.md", "title": {}}}},
+    ))
+    proc = subprocess.run([mcp_bin], cwd=write_dir, capture_output=True, text=True, timeout=30,
+                          input=stdio_writes)
+    replies = {}
+    for line in proc.stdout.splitlines():
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        replies[msg.get("id")] = msg.get("result") or {}
+    status, _, raw = admin.get("/api/documents/notes/stdio-tags.md")
+    tagged = json.loads(raw) if status == 200 and raw else {}
+    check("stdio create_document keeps only the string tags",
+          (replies.get(1) or {}).get("isError") is False and (tagged or {}).get("tags") == ["ok"],
+          f"reply={replies.get(1)!r} doc={tagged!r}")
+    check("stdio create_document with a wrong-type field -> isError with the shared text",
+          (replies.get(2) or {}).get("isError") is True
+          and (replies.get(2).get("content") or [{}])[0].get("text") == create_err[1],
+          f"reply={replies.get(2)!r}")
+
+    _, _, audit = admin.get_json("/api/admin/mcp-audit-log")
+    invalid = {(e.get("toolName"), e.get("path")) for e in (audit or {}).get("entries", [])
+               if e.get("detail") == "invalid arguments" and not e.get("success")}
+    check("every rejected wrong-type write is in the audit log, on both transports",
+          {("remote:create_document", "notes/badtype.md"),
+           ("remote:update_document", "notes/guard-plain.md"),
+           ("create_document", "notes/stdio-bad.md")} <= invalid,
+          f"invalid-argument rows={sorted(invalid)!r}")
+
+    stdio_lines = "".join(
+        json.dumps({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments}}) + "\n"
+        for i, (name, arguments) in enumerate(calls, start=1))
+    proc = subprocess.run([mcp_bin], cwd=os.path.join(sandbox, "mcp-write"), capture_output=True,
+                          text=True, timeout=60, input=stdio_lines)
+    answered = set()
+    for line in proc.stdout.splitlines():
+        try:
+            msg = json.loads(line)
+        except ValueError:
+            continue
+        if "result" in msg or "error" in msg:
+            answered.add(msg.get("id"))
+    check("stdio MCP (write access on): every wrong-type tool call answered, process exits 0",
+          proc.returncode == 0 and answered == set(range(1, len(calls) + 1)),
+          f"rc={proc.returncode} answered={len(answered)}/{len(calls)} "
+          f"stderr={proc.stderr[-300:]!r}")
+
+    markers = ("zq-private-marker", "ZqPrivTitle", "zqprivbody", "zqprivtag", "zqprivtype")
+    status, _, body = admin.post_json(
+        "/api/documents",
+        {"path": "notes/zq-private-marker.md", "title": "ZqPrivTitle", "body": "zqprivbody\n",
+         "tags": ["zqprivtag"], "type": "zqprivtype", "due": "2026-12-03",
+         "visibility": "private"},
+        headers={"X-CSRF-Token": csrf})
+    check("web admin creates a private marker document", status in (200, 201),
+          f"got {status} body={body[:200]!r}")
+    probes = [
+        ("search_documents", {"query": "zqprivbody"}),
+        ("search_documents", {"query": "ZqPrivTitle"}),
+        ("list_documents", {}),
+        ("list_documents", {"tag": "zqprivtag"}),
+        ("list_documents", {"type": "zqprivtype"}),
+        ("list_documents", {"folder": "notes/"}),
+        ("run_query", {"query": "tag: zqprivtag"}),
+        ("run_query", {"query": "type: zqprivtype"}),
+        ("list_tags", {}),
+        ("get_calendar_events", {"start": "2026-12-01", "end": "2026-12-31"}),
+    ]
+    probe_lines = "".join(
+        json.dumps({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                    "params": {"name": name, "arguments": arguments}}) + "\n"
+        for i, (name, arguments) in enumerate(probes, start=1))
+
+    def run_probes(cwd):
+        return subprocess.run([mcp_bin], cwd=cwd, capture_output=True, text=True, timeout=30,
+                              input=probe_lines).stdout
+
+    admin_out = run_probes(sandbox)
+    found_by_admin = [m for m in markers if m in admin_out]
+    check("stdio scope=admin finds the private marker document (positive control)",
+          len(found_by_admin) == len(markers), f"found={found_by_admin!r}")
+    public_out = run_probes(os.path.join(sandbox, "mcp-public"))
+    leaked = [m for m in markers if m in public_out]
+    check("stdio scope=public: no tool reveals any trace of a private document",
+          not leaked and public_out.count('"jsonrpc"') == len(probes),
+          f"leaked={leaked!r} out={public_out[:300]!r}")
+
+    # get_document echoes the requested path, so the check is that a private
+    # document and a missing one get the same answer.
+    lookups = "".join(
+        json.dumps({"jsonrpc": "2.0", "id": i, "method": "tools/call",
+                    "params": {"name": "get_document", "arguments": {"id_or_path": path}}}) + "\n"
+        for i, path in enumerate(("notes/zq-private-marker.md", "notes/zq-missing-marker.md"),
+                                 start=1))
+    out = subprocess.run([mcp_bin], cwd=os.path.join(sandbox, "mcp-public"), capture_output=True,
+                         text=True, timeout=30, input=lookups).stdout.splitlines()
+    answers = [json.loads(line).get("result") for line in out]
+    check("stdio scope=public: get_document of a private document reads exactly like a missing one",
+          len(answers) == 2 and answers[0] and answers[0].get("isError") is True
+          and json.dumps(answers[0]).replace("zq-private-marker", "X")
+          == json.dumps(answers[1]).replace("zq-missing-marker", "X"),
+          f"answers={answers!r}")
+
+
+def check_secrets_not_stored(sandbox, secrets, stored_label):
+    """No raw credential in the SQLite files: tokens are kept as SHA-256,
+    passwords as argon2 hashes."""
+    db_bytes = b""
+    for suffix in ("", "-wal", "-shm"):
+        path = os.path.join(sandbox, "index.db" + suffix)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                db_bytes += f.read()
+    check("index.db is readable and holds a known plain value (positive control)",
+          stored_label.encode() in db_bytes, f"read {len(db_bytes)} bytes")
+    found = [desc for desc, value in secrets if value and value.encode() in db_bytes]
+    check("no raw bearer token or admin password in index.db / -wal / -shm",
+          not found, f"found={found!r}")
+
+
 def run_checks(sandbox, vault, server_bin):
     anon = Client(HOST, PORT)
     # `--version` prints "<name> <version>"; serverInfo.version must be the
@@ -1938,6 +2147,7 @@ def run_checks(sandbox, vault, server_bin):
     run_modern_mcp_checks(anon, mcp_auth, mcp_bin, sandbox, expected_version)
     run_skill_write_guard_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault)
     run_mcp_skills_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault)
+    run_mcp_input_checks(anon, admin, csrf, mcp_token, mcp_bin, sandbox)
 
     status, _, body = admin.post_json(
         "/mcp",
@@ -2267,6 +2477,12 @@ def run_checks(sandbox, vault, server_bin):
         statuses.append(s)
     check("rate limiter engages after repeated failed logins (429 seen)",
           429 in statuses, f"statuses={statuses}")
+
+    check_secrets_not_stored(
+        sandbox,
+        [("primary MCP token", mcp_token), ("deleted second MCP token", second_token),
+         ("first admin password", "SuperSecret123"), ("changed admin password", "NewSecret456")],
+        stored_label="e2e-primary")
 
 
 if __name__ == "__main__":

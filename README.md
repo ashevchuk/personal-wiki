@@ -135,7 +135,11 @@ to touch.
   MCP transport (bearer token, optional IP allowlist, its own rate limiter)
   for reaching the same tools over HTTPS. Read tools are always on; write
   tools are an explicit opt-in, and every write attempt is audit-logged
-  regardless of outcome.
+  regardless of outcome. Both speak MCP 2025-03-26 and 2026-07-28.
+- MCP skills: a document with `type: skill` and a `description` is served
+  to Claude Code and other MCP clients as an Agent Skill, attachments
+  included. Skills are written in the web UI only; no MCP tool can create
+  or change one.
 - Built for ARM SBCs: one static, cross-compiled binary, verified running
   natively on real armv7 (Raspberry Pi–class) hardware, not just in theory.
 
@@ -225,6 +229,11 @@ local spawn? Turn on **Remote MCP** in the admin panel — it has its own
 bearer token, an optional CIDR allowlist, its own rate limiter, and an
 independent write-access toggle. Full protocol details, tool schemas, and a
 client config example: [`docs/mcp.md`](docs/mcp.md#connecting-a-client).
+
+Documents with `type: skill` become MCP skills: a client that supports the
+skills extension (Claude Code over MCP 2026-07-28) lists them and loads one
+when a task matches its `description`. See
+[`docs/mcp.md`](docs/mcp.md#skills).
 
 ## Writing ` ```query ` blocks
 

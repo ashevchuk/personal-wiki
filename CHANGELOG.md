@@ -34,6 +34,20 @@ binaries — check a running/built copy with `wiki-server --version` or
 
 - Attaching a file through MCP (`attach_file`, `attach_file_begin` +
   upload) no longer clears the document's `due` date and `recur` rule.
+- Remote MCP answers a request whose `params` or `arguments` is not an
+  object, whose `method` is not a string, or whose tool parameter has the
+  wrong type (for example `limit: {}`), with a JSON-RPC error or an
+  `isError` tool result instead of an empty `500`. A rejected write of
+  this kind is audit-logged like any other failed write, on both
+  transports.
+- MCP `search_documents` and `list_documents` cap `limit` at 200 and
+  treat a negative `limit` or `offset` as the default; a negative limit
+  used to return every match.
+- stdio `create_document` / `update_document` skip non-string tags, as
+  the remote transport does, instead of failing the call.
+- The remote agent endpoint (`POST /mcp/agent`) hands a tool call with a
+  wrong-type argument back to the model as a tool error instead of ending
+  the whole turn with an error.
 
 ## [0.15.2] - 2026-11-23
 

@@ -195,6 +195,13 @@ sink.
 - **The remote agent may create `public` documents.** The model chooses
   `visibility` (default `private`). Text injected into its input can make
   it publish content it read from private documents.
+- **Remote MCP `Origin` behind a port-dropping proxy.** When `Host`
+  arrives without a port (nginx `$host`), an `Origin` on any port of the
+  same host name passes the 2026-07-28 `Origin` check. The bearer token is
+  still required on every request.
+- **`type: skill` documents are instructions for MCP clients.** No MCP
+  tool or remote agent call can write one, but anything with write access
+  to the vault directory (external editor, sync, `git pull`) can.
 - **`img-src https:`.** A document can embed any external image, which
   tells that host the viewer's IP and can carry data in the URL. Markdown
   links to external images are a normal use case.
@@ -265,7 +272,19 @@ sink.
   `updated` ignored on create, no absolute sandbox path in any response.
 - Remote MCP: token lifecycle, independent revocation, write and agent
   toggles, dot-path refusal, host-file `source_path` refusal, single-use
-  upload tickets.
+  upload tickets; the bearer token is rejected from the query string and
+  in any altered form (truncated, extended, extra words, wrong scheme,
+  oversized); every tool answers wrong-type arguments with a JSON-RPC
+  result or error, on both transports, and the server stays up.
+- MCP protocol: both revisions (2025-03-26 and 2026-07-28) on both
+  transports, header and version validation, `type: skill` documents
+  read-only to every model-facing write path, skills served with digests
+  that match the served bytes.
+- MCP visibility at stdio `scope = "public"`: no tool reveals a private
+  document (search, browse, query, tags, calendar, skills), and looking
+  one up reads exactly like looking up a missing path.
+- Stored secrets: no raw bearer token or admin password in the SQLite
+  files (`index.db`, `-wal`, `-shm`).
 
 ## External scanners
 
