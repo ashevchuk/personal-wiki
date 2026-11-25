@@ -223,8 +223,9 @@ Remote HTTP only, 2026-07-28 requests only:
 - `-32602` for missing `_meta` fields and `-32022` are `400`; an unknown
   method is `404` with `-32601`; a notification is `202` with no body.
 - An `Origin` header that does not name the request's `Host` gets `403`.
-  Clients that send no `Origin` (non-browser clients) are unaffected.
-  Behind nginx this relies on `proxy_set_header Host $host`.
+  When `Host` carries no port (nginx's `proxy_set_header Host $host`
+  drops it), only the host names are compared. Clients that send no
+  `Origin` (non-browser clients, the claude.ai connector) are unaffected.
 - `GET` and `DELETE` on `/mcp` answer `405`.
 
 The rules live in `src/core/McpProtocol.h`, shared by both transports.
@@ -259,7 +260,10 @@ for every file in the document's `.assets/` folder. `SKILL.md` is
 generated: a YAML block with exactly `name` and `description`
 (double-quoted), a `# <title>` heading unless the body already starts with
 one, and the body, with links into the document's own `.assets/` folder
-rewritten to `assets/<file>`. `skills/list` and `skills/get` return each
+rewritten to `assets/<file>` (every form the app writes: `<stem>.assets/`,
+`<vault path>.assets/`, `assets/<vault path>.assets/` and a path-absolute
+`/.../assets/<vault path>.assets/`; links with a scheme or host are left
+alone). `skills/list` and `skills/get` return each
 skill's frontmatter and the size and `sha256:` digest of every file;
 `resources/read` returns `SKILL.md` and text attachments as `text`, other
 files as base64 `blob`. Unknown skills, files and cursors are `-32602`.

@@ -67,18 +67,45 @@ std::string assetsDirOf(std::string_view documentPath) {
   return (doc.parent_path() / (doc.stem().string() + ".assets")).generic_string();
 }
 
+// The document's own assets folder as every link form the app writes or
+// keeps up to date on rename (DocumentService::rewriteAssetHrefs).
+struct OwnAssetPrefixes {
+  std::string sameFolder;    // "foo.assets/"
+  std::string vaultPath;     // "notes/foo.assets/"
+  std::string baseRelative;  // "assets/notes/foo.assets/"
+  std::string pathAbsolute;  // "/assets/notes/foo.assets/", after any base path
+};
+
+OwnAssetPrefixes ownAssetPrefixes(std::string_view documentPath) {
+  const std::string dir = assetsDirOf(documentPath);
+  return {fs::path{std::string(documentPath)}.stem().string() + ".assets/", dir + "/",
+          "assets/" + dir + "/", "/assets/" + dir + "/"};
+}
+
+bool startsWith(std::string_view s, std::string_view prefix) {
+  return s.substr(0, prefix.size()) == prefix;
+}
+
 // The asset file a link destination points at, when it is one of
-// `assetFiles` in the document's own assets folder.
-std::optional<std::string> ownAssetTarget(std::string_view destination, const std::string& needle,
+// `assetFiles` in the document's own assets folder. Destinations with a
+// scheme or a host (`https://...`, `//host/...`) point elsewhere, even when
+// their path looks the same.
+std::optional<std::string> ownAssetTarget(std::string_view destination,
+                                          const OwnAssetPrefixes& prefixes,
                                           const std::set<std::string>& assetFiles) {
-  const std::size_t cut = destination.find_first_of("?#");
-  const std::string decoded = percentDecode(destination.substr(0, cut));
-  for (std::size_t pos = decoded.find(needle); pos != std::string::npos;
-       pos = decoded.find(needle, pos + 1)) {
-    if (pos != 0 && decoded[pos - 1] != '/') continue;
-    const std::string file = decoded.substr(pos + needle.size());
-    if (assetFiles.count(file) != 0) return file;
+  const std::string decoded = percentDecode(destination.substr(0, destination.find_first_of("?#")));
+  if (decoded.find("://") != std::string::npos || startsWith(decoded, "//")) return std::nullopt;
+
+  std::optional<std::string> file;
+  for (const std::string* prefix :
+       {&prefixes.sameFolder, &prefixes.vaultPath, &prefixes.baseRelative}) {
+    if (startsWith(decoded, *prefix)) file = decoded.substr(prefix->size());
   }
+  if (!file && startsWith(decoded, "/")) {
+    const std::size_t pos = decoded.rfind(prefixes.pathAbsolute);
+    if (pos != std::string::npos) file = decoded.substr(pos + prefixes.pathAbsolute.size());
+  }
+  if (file && assetFiles.count(*file) != 0) return file;
   return std::nullopt;
 }
 
@@ -149,13 +176,13 @@ std::string rewriteOwnAssetLinks(std::string_view body, std::string_view documen
                                  const std::vector<std::string>& assetFiles) {
   if (assetFiles.empty()) return std::string(body);
   const std::set<std::string> files(assetFiles.begin(), assetFiles.end());
-  const std::string needle = "assets/" + assetsDirOf(documentPath) + "/";
+  const OwnAssetPrefixes prefixes = ownAssetPrefixes(documentPath);
 
   std::string out;
   out.reserve(body.size());
   std::size_t copied = 0;
-  for (std::size_t open = body.find("]("); open != std::string_view::npos;
-       open = body.find("](", open + 2)) {
+  std::size_t open = body.find("](");
+  while (open != std::string_view::npos) {
     std::size_t start = open + 2;
     std::size_t end;
     if (start < body.size() && body[start] == '<') {
@@ -165,12 +192,16 @@ std::string rewriteOwnAssetLinks(std::string_view body, std::string_view documen
       end = start;
       while (end < body.size() && body[end] != ')' && !isAsciiSpace(body[end])) ++end;
     }
-    if (end == std::string_view::npos || end > body.size()) break;
-    const auto target = ownAssetTarget(body.substr(start, end - start), needle, files);
-    if (!target) continue;
-    out.append(body.substr(copied, start - copied));
-    out += std::string(kSkillAssetsDir) + "/" + percentEncodePathSegment(*target);
-    copied = end;
+    if (end == std::string_view::npos) break;
+    const auto target = ownAssetTarget(body.substr(start, end - start), prefixes, files);
+    if (target) {
+      out.append(body.substr(copied, start - copied));
+      out += std::string(kSkillAssetsDir) + "/" + percentEncodePathSegment(*target);
+      copied = end;
+    }
+    // Resume after this destination, so a "](" inside it is never treated
+    // as another link and `copied` only moves forward.
+    open = body.find("](", end);
   }
   out.append(body.substr(copied));
   return out;
@@ -193,115 +224,131 @@ std::string renderSkillMarkdown(std::string_view name, std::string_view descript
   return out;
 }
 
-SkillListing SkillCatalog::load(bool includePrivate) const {
+namespace {
+
+// Every type: skill document, with its derived name. Reads each document's
+// markdown (small), never its attachments.
+std::vector<Candidate> skillCandidates(const index::Database& db,
+                                       const DocumentService& documents) {
   // The LIKE only narrows the scan; isSkillType decides, so the catalog and
   // the write guard (SkillDocuments.h) agree on what a skill is.
-  index::Statement stmt(db_.handle(),
+  index::Statement stmt(db.handle(),
                         "SELECT path FROM documents WHERE doc_type LIKE '%skill%' ORDER BY path;");
   std::vector<Candidate> candidates;
   while (stmt.step()) {
     const std::string path = stmt.columnText(0);
     try {
-      DocumentRecord record = documents_.get(path);
+      DocumentRecord record = documents.get(path);
       if (!isSkillType(record.frontMatter.type)) continue;
       candidates.push_back(Candidate{path, std::move(record), skillNameForPath(path)});
     } catch (const std::exception&) {
       // Index ahead of the vault (file just removed); the next rescan fixes it.
     }
   }
+  return candidates;
+}
 
-  std::map<std::string, int> nameUses;
+std::map<std::string, int> countNames(const std::vector<Candidate>& candidates) {
+  std::map<std::string, int> uses;
   for (const auto& c : candidates) {
-    if (c.name) ++nameUses[*c.name];
+    if (c.name) ++uses[*c.name];
   }
+  return uses;
+}
+
+bool visibleAt(const Candidate& c, bool includePrivate) {
+  return includePrivate || c.record.frontMatter.visibility == "public";
+}
+
+struct BuildResult {
+  std::optional<Skill> skill;
+  std::string skipReason;  // set when `skill` is not
+};
+
+// Validates one candidate and reads its attachments.
+BuildResult buildSkill(const Candidate& c, const std::map<std::string, int>& nameUses,
+                       const AttachmentService& attachments, const VaultRepository& vault) {
+  const FrontMatter& fm = c.record.frontMatter;
+  if (!c.name) {
+    return {std::nullopt,
+            "file name does not give a valid skill name (a-z, 0-9 and '-', at most 64)"};
+  }
+  if (nameUses.at(*c.name) > 1) {
+    return {std::nullopt, "skill name '" + *c.name + "' is used by more than one document"};
+  }
+  const std::string_view description = trimAscii(fm.description);
+  if (description.empty()) return {std::nullopt, "missing description"};
+  if (utf8CodePoints(description) > kMaxSkillDescriptionChars) {
+    return {std::nullopt, "description is longer than 1024 characters"};
+  }
+
+  std::vector<AttachmentInfo> assets;
+  try {
+    assets = attachments.listForDocument(c.path);
+  } catch (const std::exception&) {
+    return {std::nullopt, "its attachments could not be listed"};
+  }
+  if (assets.size() + 1 > kMaxSkillFiles) {
+    return {std::nullopt, "more than 512 files including attachments"};
+  }
+  std::vector<std::string> assetNames;
+  for (const auto& a : assets) assetNames.push_back(fs::path(a.relativePath).filename().string());
+
+  Skill skill;
+  skill.name = *c.name;
+  skill.description = std::string(description);
+  skill.documentPath = c.path;
+  skill.isPublic = fm.visibility == "public";
+  skill.files.push_back(makeFile(
+      std::string(kSkillMarkdownFile), std::string(kMarkdownMimeType),
+      renderSkillMarkdown(skill.name, skill.description, fm.title,
+                          rewriteOwnAssetLinks(c.record.body, c.path, assetNames))));
+
+  std::size_t totalBytes = skill.files.front().bytes.size();
+  for (std::size_t i = 0; i < assets.size() && totalBytes <= kMaxSkillBytes; ++i) {
+    std::string bytes;
+    try {
+      bytes = vault.readRaw(assets[i].relativePath);
+    } catch (const std::exception&) {
+      return {std::nullopt, "an attachment could not be read"};
+    }
+    totalBytes += bytes.size();
+    skill.files.push_back(makeFile(
+        std::string(kSkillAssetsDir) + "/" + percentEncodePathSegment(assetNames[i]),
+        assets[i].mimeType, std::move(bytes)));
+  }
+  if (totalBytes > kMaxSkillBytes) return {std::nullopt, "more than 16 MiB including attachments"};
+  return {std::move(skill), {}};
+}
+
+}  // namespace
+
+SkillListing SkillCatalog::load(bool includePrivate) const {
+  const std::vector<Candidate> candidates = skillCandidates(db_, documents_);
+  const std::map<std::string, int> nameUses = countNames(candidates);
 
   SkillListing listing;
-  for (auto& c : candidates) {
-    const FrontMatter& fm = c.record.frontMatter;
-    const bool isPublic = fm.visibility == "public";
-    if (!includePrivate && !isPublic) continue;
-    const auto skip = [&](std::string reason) {
-      listing.skipped.push_back(SkippedSkill{c.path, std::move(reason)});
-    };
-
-    if (!c.name) {
-      skip("file name does not give a valid skill name (a-z, 0-9 and '-', at most 64)");
-      continue;
+  for (const auto& c : candidates) {
+    if (!visibleAt(c, includePrivate)) continue;
+    BuildResult built = buildSkill(c, nameUses, attachments_, vault_);
+    if (built.skill) {
+      listing.skills.push_back(std::move(*built.skill));
+    } else {
+      listing.skipped.push_back(SkippedSkill{c.path, std::move(built.skipReason)});
     }
-    if (nameUses[*c.name] > 1) {
-      skip("skill name '" + *c.name + "' is used by more than one document");
-      continue;
-    }
-    const std::string_view description = trimAscii(fm.description);
-    if (description.empty()) {
-      skip("missing description");
-      continue;
-    }
-    if (utf8CodePoints(description) > kMaxSkillDescriptionChars) {
-      skip("description is longer than 1024 characters");
-      continue;
-    }
-
-    std::vector<AttachmentInfo> assets;
-    try {
-      assets = attachments_.listForDocument(c.path);
-    } catch (const std::exception&) {
-      skip("its attachments could not be listed");
-      continue;
-    }
-    if (assets.size() + 1 > kMaxSkillFiles) {
-      skip("more than 512 files including attachments");
-      continue;
-    }
-    std::vector<std::string> assetNames;
-    for (const auto& a : assets) {
-      assetNames.push_back(fs::path(a.relativePath).filename().string());
-    }
-
-    Skill skill;
-    skill.name = *c.name;
-    skill.description = std::string(description);
-    skill.documentPath = c.path;
-    skill.isPublic = isPublic;
-    skill.files.push_back(makeFile(
-        std::string(kSkillMarkdownFile), std::string(kMarkdownMimeType),
-        renderSkillMarkdown(skill.name, skill.description, fm.title,
-                            rewriteOwnAssetLinks(c.record.body, c.path, assetNames))));
-
-    std::size_t totalBytes = skill.files.front().bytes.size();
-    bool readFailed = false;
-    for (std::size_t i = 0; i < assets.size() && totalBytes <= kMaxSkillBytes; ++i) {
-      try {
-        std::string bytes = vault_.readRaw(assets[i].relativePath);
-        totalBytes += bytes.size();
-        skill.files.push_back(makeFile(std::string(kSkillAssetsDir) + "/" +
-                                           percentEncodePathSegment(assetNames[i]),
-                                       assets[i].mimeType, std::move(bytes)));
-      } catch (const std::exception&) {
-        readFailed = true;
-        break;
-      }
-    }
-    if (readFailed) {
-      skip("an attachment could not be read");
-      continue;
-    }
-    if (totalBytes > kMaxSkillBytes) {
-      skip("more than 16 MiB including attachments");
-      continue;
-    }
-    listing.skills.push_back(std::move(skill));
   }
-
   std::sort(listing.skills.begin(), listing.skills.end(),
             [](const Skill& a, const Skill& b) { return a.name < b.name; });
   return listing;
 }
 
+// Builds only the named skill: attachments of other skills are never read.
 std::optional<Skill> SkillCatalog::find(std::string_view name, bool includePrivate) const {
-  SkillListing listing = load(includePrivate);
-  for (auto& skill : listing.skills) {
-    if (skill.name == name) return std::move(skill);
+  const std::vector<Candidate> candidates = skillCandidates(db_, documents_);
+  const std::map<std::string, int> nameUses = countNames(candidates);
+  for (const auto& c : candidates) {
+    if (c.name != name || !visibleAt(c, includePrivate)) continue;
+    return buildSkill(c, nameUses, attachments_, vault_).skill;
   }
   return std::nullopt;
 }

@@ -30,6 +30,11 @@ binaries — check a running/built copy with `wiki-server --version` or
   `skill`, or attach a file to one, even with write access on. Each
   refusal is audit-logged. They are edited in the web UI only.
 
+### Fixed
+
+- Attaching a file through MCP (`attach_file`, `attach_file_begin` +
+  upload) no longer clears the document's `due` date and `recur` rule.
+
 ## [0.15.2] - 2026-11-23
 
 ### Fixed

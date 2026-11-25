@@ -34,6 +34,15 @@ std::string toLowerAscii(std::string_view s) {
   return out;
 }
 
+// "host:port" -> "host"; "[::1]:8080" -> "[::1]"; no port -> unchanged.
+std::string_view hostWithoutPort(std::string_view hostPort) {
+  if (!hostPort.empty() && hostPort.front() == '[') {
+    const std::size_t close = hostPort.find(']');
+    return close == std::string_view::npos ? hostPort : hostPort.substr(0, close + 1);
+  }
+  return hostPort.substr(0, hostPort.find(':'));
+}
+
 }  // namespace
 
 bool isLegacyProtocolVersion(std::string_view version) {
@@ -111,7 +120,13 @@ bool originMatchesHost(std::string_view origin, std::string_view host) {
   if (host.empty()) return false;
   const auto schemeEnd = origin.find("://");
   if (schemeEnd == std::string_view::npos) return false;
-  return toLowerAscii(origin.substr(schemeEnd + 3)) == toLowerAscii(host);
+  const std::string originHost = toLowerAscii(origin.substr(schemeEnd + 3));
+  const std::string requestHost = toLowerAscii(host);
+  if (originHost == requestHost) return true;
+  // A reverse proxy may forward Host without the port (nginx `$host`); then
+  // only the host names can be compared.
+  return hostWithoutPort(requestHost) == requestHost &&
+         hostWithoutPort(originHost) == requestHost;
 }
 
 }  // namespace wikicore::mcp

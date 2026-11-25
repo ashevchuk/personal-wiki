@@ -1703,7 +1703,7 @@ window.WikiPages = window.WikiPages || {};
               if (f.title !== undefined) titleInput.value = f.title;
               if (f.type !== undefined) typeInput.value = f.type;
               if (f.description !== undefined) descriptionInput.value = f.description;
-                if (f.due !== undefined) setDueFields(f.due);
+              if (f.due !== undefined) setDueFields(f.due);
               if (f.recur !== undefined) setRecurFields(f.recur);
               if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
               if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");

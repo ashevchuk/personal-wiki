@@ -159,3 +159,30 @@ TEST_CASE("attachFileAndLinkFromPath copies a host file and links it",
   REQUIRE(docs.get("notes/a.md").body.find(attached.markdownLink) != std::string::npos);
   REQUIRE(repo.readRaw("notes/a.assets/paper.pdf") == "%PDF-fake");
 }
+
+TEST_CASE("attachFileAndLink keeps the document's due date, recurrence and description",
+          "[AttachToDocument]") {
+  TempEnv env;
+  index::Database db(env.dbPath());
+  db.migrate();
+  index::IndexUpdater indexUpdater(db);
+  index::SnapshotStore snapshots(db);
+  vault::VaultRepository repo(env.vaultRoot());
+  vault::DocumentService docs(repo, indexUpdater, snapshots);
+  vault::AttachmentService attachments(repo);
+
+  vault::DocumentInput input;
+  input.title = "Standup";
+  input.body = "Agenda.\n";
+  input.due = "2026-12-01";
+  input.recur = "weekly";
+  input.description = "Weekly standup notes";
+  docs.create("notes/standup.md", input);
+
+  vault::attachFileAndLink(docs, attachments, "notes/standup.md", "a.txt", "x");
+
+  const auto after = docs.get("notes/standup.md");
+  REQUIRE(after.frontMatter.due == "2026-12-01");
+  REQUIRE(after.frontMatter.recur == "weekly");
+  REQUIRE(after.frontMatter.description == "Weekly standup notes");
+}

@@ -153,6 +153,13 @@ TEST_CASE("originMatchesHost", "[McpProtocol]") {
   REQUIRE_FALSE(originMatchesHost("https://evil.example", "wiki.example"));
   REQUIRE_FALSE(originMatchesHost("https://wiki.example.evil", "wiki.example"));
   REQUIRE_FALSE(originMatchesHost("http://127.0.0.1:9999", "127.0.0.1:8080"));
+  // Proxy forwarded Host without the port (nginx $host).
+  REQUIRE(originMatchesHost("https://wiki.example:8443", "wiki.example"));
+  REQUIRE(originMatchesHost("http://[::1]:8080", "[::1]"));
+  REQUIRE_FALSE(originMatchesHost("https://evil.example:8443", "wiki.example"));
+  REQUIRE_FALSE(originMatchesHost("https://wiki.example.evil:8443", "wiki.example"));
+  // Host with a port must match the Origin's port exactly.
+  REQUIRE_FALSE(originMatchesHost("https://wiki.example", "wiki.example:8443"));
   REQUIRE_FALSE(originMatchesHost("null", "wiki.example"));
   REQUIRE_FALSE(originMatchesHost("https://wiki.example", ""));
 }

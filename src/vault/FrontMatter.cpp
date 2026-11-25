@@ -161,7 +161,11 @@ constexpr std::array<std::string_view, 10> kModeledKeys = {
 
 // Top-level entries of `existingRaw`'s front matter whose key FrontMatter
 // does not model, in file order. Empty when there is no usable block.
-std::vector<std::pair<YAML::Node, YAML::Node>> unmodeledEntries(std::string_view existingRaw) {
+// A hand-written non-scalar `description` (map, list) is something
+// FrontMatter cannot represent; it is carried over like an unmodeled key
+// unless the new front matter sets a description of its own.
+std::vector<std::pair<YAML::Node, YAML::Node>> unmodeledEntries(std::string_view existingRaw,
+                                                                bool replacesDescription) {
   std::vector<std::pair<YAML::Node, YAML::Node>> entries;
   const auto split = splitFrontMatterBlock(existingRaw);
   if (!split) return entries;
@@ -177,7 +181,11 @@ std::vector<std::pair<YAML::Node, YAML::Node>> unmodeledEntries(std::string_view
         entry.first.IsScalar() &&
         std::find(kModeledKeys.begin(), kModeledKeys.end(), entry.first.Scalar()) !=
             kModeledKeys.end();
-    if (!modeled) entries.emplace_back(entry.first, entry.second);
+    const bool keepsNonScalarDescription = entry.first.IsScalar() &&
+                                           entry.first.Scalar() == "description" &&
+                                           !replacesDescription &&
+                                           (entry.second.IsMap() || entry.second.IsSequence());
+    if (!modeled || keepsNonScalarDescription) entries.emplace_back(entry.first, entry.second);
   }
   return entries;
 }
@@ -220,8 +228,8 @@ bool differsOnlyInId(std::string_view original, std::string_view rewritten,
   const FrontMatter& a = after.frontMatter;
   return a.id == newId && after.body == before.body && a.title == b.title &&
          a.tags == b.tags && a.visibility == b.visibility && a.type == b.type &&
-         a.description == b.description && a.created == b.created && a.updated == b.updated && a.due == b.due &&
-         a.recur == b.recur;
+         a.description == b.description && a.created == b.created && a.updated == b.updated &&
+         a.due == b.due && a.recur == b.recur;
 }
 
 }  // namespace
@@ -252,7 +260,7 @@ std::string serializeFrontMatter(const FrontMatter& fm, const std::string& body,
   out << YAML::Key << "updated" << YAML::Value << fm.updated;
   out << YAML::Key << "due" << YAML::Value << fm.due;
   out << YAML::Key << "recur" << YAML::Value << fm.recur;
-  for (const auto& [key, value] : unmodeledEntries(existingRaw)) {
+  for (const auto& [key, value] : unmodeledEntries(existingRaw, !fm.description.empty())) {
     out << YAML::Key << key << YAML::Value << value;
   }
   out << YAML::EndMap;

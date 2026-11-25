@@ -990,6 +990,23 @@ def run_mcp_skills_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault):
           and json.loads(raw).get("description") == "Use when deploying: run the checklist",
           f"got {status} body={raw[:200]!r}")
 
+    restore_path = "notes/restore-description.md"
+    admin.post_json("/api/documents", {"path": restore_path, "title": "R", "body": "v1\n",
+                                       "description": "first description"}, headers=csrf_hdr)
+    admin.put_json(f"/api/documents/{restore_path}",
+                   {"title": "R", "body": "v2\n", "description": "second description"},
+                   headers=csrf_hdr)
+    _, _, history = admin.get_json(f"/api/document-history/{restore_path}")
+    snapshot_id = ((history or {}).get("snapshots") or [{}])[0].get("id")
+    status, _, _ = admin.request(
+        "POST", f"/api/document-restore/{restore_path}?id={snapshot_id}", json_body={},
+        headers=csrf_hdr)
+    _, _, restored = admin.get_json(f"/api/documents/{restore_path}")
+    check("restoring a version brings back its description",
+          status == 200 and (restored or {}).get("body", "").strip() == "v1"
+          and (restored or {}).get("description") == "first description",
+          f"status={status} snapshot={snapshot_id} doc={restored!r}")
+
     status, _, _ = anon.get("/api/admin/skills")
     check("anon GET /api/admin/skills -> 401", status == 401, f"got {status}")
     status, _, admin_skills = admin.get_json("/api/admin/skills")

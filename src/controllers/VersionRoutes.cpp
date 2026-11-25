@@ -142,6 +142,7 @@ void registerVersionRoutes(HttpAppFramework& app, IndexUpdater& indexUpdater,
         input.tags = parsed.frontMatter.tags;
         input.visibility = parsed.frontMatter.visibility;
         input.type = parsed.frontMatter.type;
+        input.description = parsed.frontMatter.description;
         input.due = parsed.frontMatter.due;
         input.recur = parsed.frontMatter.recur;
         input.body = parsed.body;

@@ -92,7 +92,9 @@ std::optional<ProtocolError> checkModernHttpHeaders(const ModernHttpHeaders& hea
 std::optional<std::string> decodeHeaderValue(std::string_view raw);
 
 // True when an Origin header value names the same host[:port] as the Host
-// header. Used to reject cross-origin browser requests (DNS rebinding).
+// header, or the same host when Host carries no port (a proxy forwarding
+// nginx's `$host`). Used to reject cross-origin browser requests (DNS
+// rebinding).
 bool originMatchesHost(std::string_view origin, std::string_view host);
 
 }  // namespace wikicore::mcp

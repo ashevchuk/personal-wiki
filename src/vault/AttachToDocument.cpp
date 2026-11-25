@@ -61,6 +61,8 @@ AttachedFile finishAttach(DocumentService& documents, AttachmentService& attachm
   input.tags = existing.frontMatter.tags;
   input.visibility = existing.frontMatter.visibility;
   input.type = existing.frontMatter.type;
+  input.due = existing.frontMatter.due;
+  input.recur = existing.frontMatter.recur;
   input.body = appendLink(existing.body, markdownLink);
   documents.update(documentPath, input);
 

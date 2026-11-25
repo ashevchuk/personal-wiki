@@ -121,7 +121,10 @@ TEST_CASE("rewriteOwnAssetLinks maps every app link form to assets/<file>", "[Sk
       "![d](/wiki/assets/notes/deploy.assets/diagram.png)\n"
       "![d](assets/notes/deploy.assets/diagram.png)\n"
       "[f](/assets/notes/deploy.assets/my%20file.pdf \"title\")\n"
-      "[f](<https://h/wiki/assets/notes/deploy.assets/my file.pdf>)\n"
+      "[f](<notes/deploy.assets/my file.pdf>)\n"
+      "[s](deploy.assets/diagram.png)\n"
+      "[host](https://other.host/wiki/assets/notes/deploy.assets/diagram.png)\n"
+      "[proto](//other.host/assets/notes/deploy.assets/diagram.png)\n"
       "[other](/wiki/assets/notes/other.assets/diagram.png)\n"
       "[missing](/wiki/assets/notes/deploy.assets/gone.png)\n"
       "[web](https://example.com/x.png)\n"
@@ -132,6 +135,9 @@ TEST_CASE("rewriteOwnAssetLinks maps every app link form to assets/<file>", "[Sk
           "![d](assets/diagram.png)\n"
           "[f](assets/my%20file.pdf \"title\")\n"
           "[f](<assets/my%20file.pdf>)\n"
+          "[s](assets/diagram.png)\n"
+          "[host](https://other.host/wiki/assets/notes/deploy.assets/diagram.png)\n"
+          "[proto](//other.host/assets/notes/deploy.assets/diagram.png)\n"
           "[other](/wiki/assets/notes/other.assets/diagram.png)\n"
           "[missing](/wiki/assets/notes/deploy.assets/gone.png)\n"
           "[web](https://example.com/x.png)\n"
@@ -230,4 +236,27 @@ TEST_CASE("SkillCatalog counts description length in characters, not bytes",
   for (int i = 0; i < 1024; ++i) cyrillic += "\xd1\x8f";  // 2048 bytes, 1024 characters
   f.add("a/ua.md", "skill", cyrillic);
   REQUIRE(names(f.catalog.load(true)) == std::vector<std::string>{"ua"});
+}
+
+TEST_CASE("rewriteOwnAssetLinks: a \"](\" inside a rewritten destination is not a second link",
+          "[SkillCatalog]") {
+  // Names a file dropped into the assets folder by hand could have; the
+  // outer destination matches one, its inner "](" text matches the other.
+  const std::vector<std::string> files{"q](assets/s.assets/w", "w>"};
+  const std::string body = "[a](<assets/s.assets/q](assets/s.assets/w>) tail\n";
+  const std::string out = rewriteOwnAssetLinks(body, "s.md", files);
+  REQUIRE(out == "[a](<assets/q%5D%28assets%2Fs.assets%2Fw>) tail\n");
+}
+
+TEST_CASE("SkillCatalog::find returns the same skill as load", "[SkillCatalog]") {
+  Fixture f;
+  f.add("a/one.md", "skill", "first");
+  f.add("a/two.md", "skill", "second");
+  f.attachments.store("a/two.md", "n.txt", "note\n");
+  const SkillListing listing = f.catalog.load(true);
+  const auto two = f.catalog.find("two", true);
+  REQUIRE(two.has_value());
+  REQUIRE(two->files.size() == listing.skills[1].files.size());
+  REQUIRE(two->files[1].digest == listing.skills[1].files[1].digest);
+  REQUIRE_FALSE(f.catalog.find("three", true).has_value());
 }

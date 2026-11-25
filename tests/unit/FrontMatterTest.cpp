@@ -283,3 +283,20 @@ TEST_CASE("parseForImport reads description only when the key is present", "[Fro
           std::string("Use when X"));
   REQUIRE_FALSE(parseForImport("---\ntitle: T\n---\nb\n").fields.description.has_value());
 }
+
+TEST_CASE("A hand-written non-scalar description survives a save with an empty description",
+          "[FrontMatter]") {
+  const std::string existing =
+      "---\ntitle: T\ndescription:\n  short: x\n  long: y\n---\nbody\n";
+  FrontMatter fm = parseFrontMatter(existing).frontMatter;
+  REQUIRE(fm.description.empty());
+
+  const YAML::Node kept = YAML::Load(
+      serializeFrontMatter(fm, "body\n", existing).substr(4));
+  REQUIRE(kept["description"]["short"].as<std::string>() == "x");
+
+  fm.description = "now a string";
+  const std::string replaced = serializeFrontMatter(fm, "body\n", existing);
+  REQUIRE(parseFrontMatter(replaced).frontMatter.description == "now a string");
+  REQUIRE(replaced.find("short:") == std::string::npos);
+}
