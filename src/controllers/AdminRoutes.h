@@ -5,6 +5,7 @@
 #include "index/Database.h"
 #include "index/IndexBuilder.h"
 #include "index/McpAuditLog.h"
+#include "vault/SkillCatalog.h"
 #include "vault/VaultRepository.h"
 
 #include <drogon/HttpAppFramework.h>
@@ -153,6 +154,7 @@ void registerAdminRoutes(drogon::HttpAppFramework& app, wikicore::vault::VaultRe
                           wikicore::auth::McpRemoteConfig& mcpRemoteConfig,
                           const std::string& vaultPath, wikicore::index::Database& db,
                           wikicore::embeddings::EmbeddingProvider* embeddingProvider,
-                          wikicore::index::RescanProgress& rescanProgress);
+                          wikicore::index::RescanProgress& rescanProgress,
+                          const wikicore::vault::SkillCatalog& skillCatalog);
 
 }  // namespace wikicore::controllers

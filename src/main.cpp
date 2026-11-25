@@ -639,7 +639,8 @@ int main(int argc, char** argv) {
   wikicore::controllers::registerCalendarRoutes(drogon::app(), calendarQueries);
   wikicore::controllers::registerAdminRoutes(drogon::app(), vault, indexBuilder, mcpAuditLog,
                                               remoteMcpConfig, cfg.vaultPath, db,
-                                              embeddingProvider.get(), rescanProgress);
+                                              embeddingProvider.get(), rescanProgress,
+                                              skillCatalog);
   wikicore::controllers::registerFolderRoutes(drogon::app(), folderService);
   wikicore::controllers::registerVersionRoutes(drogon::app(), indexUpdater, snapshotStore,
                                                 documentService);

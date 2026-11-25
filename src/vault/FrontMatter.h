@@ -88,6 +88,7 @@ std::optional<std::string> withFrontMatterId(std::string_view rawContent,
 struct ImportedFields {
   std::optional<std::string> title;
   std::optional<std::string> type;
+  std::optional<std::string> description;
   std::optional<std::string> visibility;  // "public" or "private" only
   std::optional<std::string> due;
   std::optional<std::string> recur;

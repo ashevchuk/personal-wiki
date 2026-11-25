@@ -277,3 +277,9 @@ TEST_CASE("FrontMatter description: parsed, written only when non-empty, round-t
   const std::string withoutDescription = serializeFrontMatter(fm, "body\n");
   REQUIRE(withoutDescription.find("description") == std::string::npos);
 }
+
+TEST_CASE("parseForImport reads description only when the key is present", "[FrontMatter]") {
+  REQUIRE(parseForImport("---\ndescription: Use when X\n---\nb\n").fields.description ==
+          std::string("Use when X"));
+  REQUIRE_FALSE(parseForImport("---\ntitle: T\n---\nb\n").fields.description.has_value());
+}

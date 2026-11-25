@@ -427,6 +427,12 @@ window.WikiPages = window.WikiPages || {};
       '<button type="button" id="f-schedule-btn" class="btn dtp-trigger">No due date</button>' +
       "</label>" +
       "</div>" +
+      '<div class="field-row" id="f-skill-row" hidden>' +
+      '<label>Skill description' +
+      '<textarea id="f-description" rows="2" placeholder="What this skill does and when to use it"></textarea>' +
+      "</label>" +
+      '<span id="f-skill-status" class="skill-status" role="status"></span>' +
+      "</div>" +
       "</div>" +
       '<div class="edit-attachments-slot" hidden>' +
       '<div id="edit-attachments" class="edit-attachments" hidden></div>' +
@@ -461,6 +467,45 @@ window.WikiPages = window.WikiPages || {};
     var tagsInput = document.getElementById("f-tags");
     var typeInput = document.getElementById("f-type");
     var visibilityInput = document.getElementById("f-visibility");
+    var descriptionInput = document.getElementById("f-description");
+    var skillRow = document.getElementById("f-skill-row");
+    var skillStatus = document.getElementById("f-skill-status");
+    // Same rule as the server's isSkillType (src/vault/SkillDocuments.h).
+    function isSkillType() {
+      return typeInput.value.trim().toLowerCase() === "skill";
+    }
+    // Whether MCP clients get this document as a skill, from
+    // GET /api/admin/skills, which reflects the last save.
+    function refreshSkillStatus() {
+      skillStatus.textContent = "";
+      if (isNew || !isSkillType()) return;
+      fetch(basePath() + "/api/admin/skills", { credentials: "same-origin" })
+        .then(function (resp) {
+          return resp.ok ? resp.json() : null;
+        })
+        .then(function (listing) {
+          if (!listing) return;
+          var path = pathInput.value.trim();
+          var served = (listing.skills || []).filter(function (s) {
+            return s.documentPath === path;
+          })[0];
+          var skipped = (listing.skipped || []).filter(function (s) {
+            return s.documentPath === path;
+          })[0];
+          if (served) {
+            skillStatus.textContent = "Served to MCP clients as skill \u201c" + served.name + "\u201d.";
+            skillStatus.className = "skill-status ok";
+          } else if (skipped) {
+            skillStatus.textContent = "Not served to MCP clients: " + skipped.reason + ".";
+            skillStatus.className = "skill-status error";
+          }
+        })
+        .catch(function () {});
+    }
+    function refreshSkillRow() {
+      skillRow.hidden = !isSkillType();
+      refreshSkillStatus();
+    }
     // Due/Time/Repeats live in one custom modal (date-time-picker.js)
     // instead of three native inputs — see that file's own header
     // comment for why. setDueFields/currentDueValue/setRecurFields/
@@ -504,11 +549,18 @@ window.WikiPages = window.WikiPages || {};
     titleInput.value = data.title || "";
     tagsInput.value = (data.tags || []).join(", ");
     typeInput.value = data.type || "";
+    descriptionInput.value = data.description || "";
     setDueFields(data.due || "");
     setRecurFields(data.recur || "");
     visibilityInput.checked = data.visibility === "public";
 
     createTypeahead(typeInput, "/api/nav/types", "type", "single");
+    ["input", "change", "blur"].forEach(function (ev) {
+      typeInput.addEventListener(ev, function () {
+        skillRow.hidden = !isSkillType();
+      });
+    });
+    refreshSkillRow();
     createTypeahead(tagsInput, "/api/nav/tags", "tag", "token");
 
     // Attachments (POST /api/attachments/{docPath}) belong to an OWNING
@@ -908,6 +960,7 @@ window.WikiPages = window.WikiPages || {};
         path: pathInput.value.trim(),
         title: titleInput.value.trim(),
         type: typeInput.value.trim(),
+        description: isSkillType() ? descriptionInput.value.trim() : "",
         due: currentDueValue(),
         recur: currentRecurValue(),
         tags: tagsInput.value
@@ -1401,6 +1454,7 @@ window.WikiPages = window.WikiPages || {};
             }
             titleInput.value = state.title || "";
             typeInput.value = state.type || "";
+            skillRow.hidden = !isSkillType();
             setDueFields(state.due || "");
             setRecurFields(state.recur || "");
             tagsInput.value = state.tags || "";
@@ -1422,6 +1476,7 @@ window.WikiPages = window.WikiPages || {};
             }
             if (draft.title) titleInput.value = draft.title;
             if (draft.type) typeInput.value = draft.type;
+            skillRow.hidden = !isSkillType();
             if (draft.tags && draft.tags.length) {
               tagsInput.value = draft.tags.join(", ");
             }
@@ -1519,6 +1574,9 @@ window.WikiPages = window.WikiPages || {};
         visibility: visibilityInput.checked ? "public" : "private",
         body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
       };
+      // Only sent for a skill: for any other type the field is hidden, and
+      // leaving it out keeps whatever the file already has.
+      if (isSkillType()) payload.description = descriptionInput.value.trim();
 
       var url = isNew
         ? basePath() + "/api/documents"
@@ -1584,6 +1642,7 @@ window.WikiPages = window.WikiPages || {};
             }
             setStatus("Saved.", "ok");
             markSaved();
+            refreshSkillStatus();
           });
         })
         .catch(function (err) {
@@ -1654,6 +1713,8 @@ window.WikiPages = window.WikiPages || {};
               var f = parsed.fields;
               if (f.title !== undefined) titleInput.value = f.title;
               if (f.type !== undefined) typeInput.value = f.type;
+              if (f.description !== undefined) descriptionInput.value = f.description;
+              skillRow.hidden = !isSkillType();
               if (f.due !== undefined) setDueFields(f.due);
               if (f.recur !== undefined) setRecurFields(f.recur);
               if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";

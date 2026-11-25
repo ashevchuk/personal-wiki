@@ -322,6 +322,7 @@ void registerDocumentRoutes(HttpAppFramework& app, VaultRepository& vault,
         const auto& f = imported.fields;
         if (f.title) fields["title"] = *f.title;
         if (f.type) fields["type"] = *f.type;
+        if (f.description) fields["description"] = *f.description;
         if (f.visibility) fields["visibility"] = *f.visibility;
         if (f.due) fields["due"] = *f.due;
         if (f.recur) fields["recur"] = *f.recur;

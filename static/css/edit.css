@@ -325,6 +325,27 @@
   width: 25rem;
   text-align: left;
 }
+#f-description {
+  width: 25rem;
+  padding: 0.35rem;
+  font: inherit;
+  font-size: 0.95rem;
+  resize: vertical;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+}
+.skill-status {
+  font-size: 0.85rem;
+  color: var(--fg-dim);
+  max-width: 25rem;
+}
+.skill-status.error {
+  color: var(--error, #ff5555);
+}
+.skill-status.ok {
+  color: var(--ok, #55ff99);
+}
 .visibility-toggle {
   flex-direction: row !important;
   align-items: center;

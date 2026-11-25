@@ -138,6 +138,7 @@ ImportedDocument parseForImport(std::string_view rawContent) {
   ImportedFields& fields = result.fields;
   fields.title = readScalarIfPresent(doc["title"]);
   fields.type = readScalarIfPresent(doc["type"]);
+  fields.description = readScalarIfPresent(doc["description"]);
   fields.due = readScalarIfPresent(doc["due"]);
   fields.recur = readScalarIfPresent(doc["recur"]);
   if (const auto visibility = readScalarIfPresent(doc["visibility"])) {

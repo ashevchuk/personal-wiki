@@ -990,6 +990,25 @@ def run_mcp_skills_checks(admin, anon, csrf, mcp_auth, mcp_bin, sandbox, vault):
           and json.loads(raw).get("description") == "Use when deploying: run the checklist",
           f"got {status} body={raw[:200]!r}")
 
+    status, _, _ = anon.get("/api/admin/skills")
+    check("anon GET /api/admin/skills -> 401", status == 401, f"got {status}")
+    status, _, admin_skills = admin.get_json("/api/admin/skills")
+    served = {s["documentPath"]: s for s in (admin_skills or {}).get("skills", [])}
+    skipped = {s["documentPath"]: s["reason"] for s in (admin_skills or {}).get("skipped", [])}
+    check("admin GET /api/admin/skills: served skills and skip reasons",
+          status == 200
+          and served.get("skills/deploy_steps.md", {}).get("name") == "deploy-steps"
+          and served.get("skills/private-playbook.md", {}).get("visibility") == "private"
+          and skipped.get("skills/guarded.md") == "missing description",
+          f"status={status} body={admin_skills!r}")
+    status, _, parsed = admin.request(
+        "POST", "/api/documents/parse-import",
+        json_body={"content": "---\ntype: skill\ndescription: Use when importing\n---\nb\n"},
+        headers=csrf_hdr)
+    check("parse-import returns description",
+          status == 200 and json.loads(parsed)["fields"].get("description") == "Use when importing",
+          f"status={status} body={parsed[:200]!r}")
+
     def modern(method, params=None):
         p = dict(params or {})
         p["_meta"] = MODERN_MCP_META

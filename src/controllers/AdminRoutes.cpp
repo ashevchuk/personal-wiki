@@ -6,6 +6,7 @@
 #include "vault/BackupService.h"
 #include "vault/FrontMatter.h"
 #include "vault/PathGuard.h"
+#include "vault/SkillCatalog.h"
 
 #ifdef WIKI_ENABLE_SQLITE_VEC
 #include "index/EmbeddingIndexer.h"
@@ -108,7 +109,7 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
                           McpRemoteConfig& mcpRemoteConfig, const std::string& vaultPath,
                           [[maybe_unused]] Database& db,
                           [[maybe_unused]] EmbeddingProvider* embeddingProvider,
-                          RescanProgress& rescanProgress) {
+                          RescanProgress& rescanProgress, const SkillCatalog& skillCatalog) {
   app.registerHandler(
       "/api/admin/reindex",
       [&indexBuilder, &rescanProgress](const HttpRequestPtr& req,
@@ -168,6 +169,39 @@ void registerAdminRoutes(HttpAppFramework& app, VaultRepository& vault,
         }
         Json::Value body;
         body["entries"] = arr;
+        callback(HttpResponse::newHttpJsonResponse(body));
+      },
+      {Get, "wikicore::auth::AuthFilter"});
+
+  // Which type: skill documents MCP clients get as skills, and why the
+  // others are skipped. Admin-only: the reasons name private documents.
+  app.registerHandler(
+      "/api/admin/skills",
+      [&skillCatalog](const HttpRequestPtr& req,
+                       std::function<void(const HttpResponsePtr&)>&& callback) {
+        if (auto rejection = requireAdminApi(req)) {
+          callback(*rejection);
+          return;
+        }
+        const SkillListing listing = skillCatalog.load(/*includePrivate=*/true);
+        Json::Value skills(Json::arrayValue);
+        for (const auto& s : listing.skills) {
+          Json::Value item;
+          item["name"] = s.name;
+          item["documentPath"] = s.documentPath;
+          item["visibility"] = s.isPublic ? "public" : "private";
+          skills.append(item);
+        }
+        Json::Value skipped(Json::arrayValue);
+        for (const auto& s : listing.skipped) {
+          Json::Value item;
+          item["documentPath"] = s.documentPath;
+          item["reason"] = s.reason;
+          skipped.append(item);
+        }
+        Json::Value body;
+        body["skills"] = skills;
+        body["skipped"] = skipped;
         callback(HttpResponse::newHttpJsonResponse(body));
       },
       {Get, "wikicore::auth::AuthFilter"});
