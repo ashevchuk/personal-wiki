@@ -427,9 +427,9 @@ window.WikiPages = window.WikiPages || {};
       '<button type="button" id="f-schedule-btn" class="btn dtp-trigger">No due date</button>' +
       "</label>" +
       "</div>" +
-      '<div class="field-row" id="f-skill-row" hidden>' +
-      '<label>Skill description' +
-      '<textarea id="f-description" rows="2" placeholder="What this skill does and when to use it"></textarea>' +
+      '<div class="field-row">' +
+      '<label>Description' +
+      '<textarea id="f-description" rows="2" placeholder="What this document is about (for a skill: what it does and when to use it)"></textarea>' +
       "</label>" +
       '<span id="f-skill-status" class="skill-status" role="status"></span>' +
       "</div>" +
@@ -468,7 +468,6 @@ window.WikiPages = window.WikiPages || {};
     var typeInput = document.getElementById("f-type");
     var visibilityInput = document.getElementById("f-visibility");
     var descriptionInput = document.getElementById("f-description");
-    var skillRow = document.getElementById("f-skill-row");
     var skillStatus = document.getElementById("f-skill-status");
     // Same rule as the server's isSkillType (src/vault/SkillDocuments.h).
     function isSkillType() {
@@ -501,10 +500,6 @@ window.WikiPages = window.WikiPages || {};
           }
         })
         .catch(function () {});
-    }
-    function refreshSkillRow() {
-      skillRow.hidden = !isSkillType();
-      refreshSkillStatus();
     }
     // Due/Time/Repeats live in one custom modal (date-time-picker.js)
     // instead of three native inputs — see that file's own header
@@ -555,12 +550,10 @@ window.WikiPages = window.WikiPages || {};
     visibilityInput.checked = data.visibility === "public";
 
     createTypeahead(typeInput, "/api/nav/types", "type", "single");
-    ["input", "change", "blur"].forEach(function (ev) {
-      typeInput.addEventListener(ev, function () {
-        skillRow.hidden = !isSkillType();
-      });
+    ["change", "blur"].forEach(function (ev) {
+      typeInput.addEventListener(ev, refreshSkillStatus);
     });
-    refreshSkillRow();
+    refreshSkillStatus();
     createTypeahead(tagsInput, "/api/nav/tags", "tag", "token");
 
     // Attachments (POST /api/attachments/{docPath}) belong to an OWNING
@@ -960,7 +953,7 @@ window.WikiPages = window.WikiPages || {};
         path: pathInput.value.trim(),
         title: titleInput.value.trim(),
         type: typeInput.value.trim(),
-        description: isSkillType() ? descriptionInput.value.trim() : "",
+        description: descriptionInput.value.trim(),
         due: currentDueValue(),
         recur: currentRecurValue(),
         tags: tagsInput.value
@@ -1454,7 +1447,6 @@ window.WikiPages = window.WikiPages || {};
             }
             titleInput.value = state.title || "";
             typeInput.value = state.type || "";
-            skillRow.hidden = !isSkillType();
             setDueFields(state.due || "");
             setRecurFields(state.recur || "");
             tagsInput.value = state.tags || "";
@@ -1476,7 +1468,6 @@ window.WikiPages = window.WikiPages || {};
             }
             if (draft.title) titleInput.value = draft.title;
             if (draft.type) typeInput.value = draft.type;
-            skillRow.hidden = !isSkillType();
             if (draft.tags && draft.tags.length) {
               tagsInput.value = draft.tags.join(", ");
             }
@@ -1569,14 +1560,12 @@ window.WikiPages = window.WikiPages || {};
             return t.length > 0;
           }),
         type: typeInput.value.trim(),
+        description: descriptionInput.value.trim(),
         due: currentDueValue(),
         recur: currentRecurValue(),
         visibility: visibilityInput.checked ? "public" : "private",
         body: window.WikiCommon.wikiBodyFromEditor(editor.getMarkdown()),
       };
-      // Only sent for a skill: for any other type the field is hidden, and
-      // leaving it out keeps whatever the file already has.
-      if (isSkillType()) payload.description = descriptionInput.value.trim();
 
       var url = isNew
         ? basePath() + "/api/documents"
@@ -1714,8 +1703,7 @@ window.WikiPages = window.WikiPages || {};
               if (f.title !== undefined) titleInput.value = f.title;
               if (f.type !== undefined) typeInput.value = f.type;
               if (f.description !== undefined) descriptionInput.value = f.description;
-              skillRow.hidden = !isSkillType();
-              if (f.due !== undefined) setDueFields(f.due);
+                if (f.due !== undefined) setDueFields(f.due);
               if (f.recur !== undefined) setRecurFields(f.recur);
               if (f.visibility !== undefined) visibilityInput.checked = f.visibility === "public";
               if (f.tags !== undefined) tagsInput.value = f.tags.join(", ");

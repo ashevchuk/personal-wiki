@@ -22,9 +22,9 @@ binaries — check a running/built copy with `wiki-server --version` or
   files. The skill name comes from the file name. The documents API reads
   and returns the new `description` front-matter field, and `.md` import
   carries it.
-- Editor: for `type: skill` a "Skill description" field and a line saying
-  whether MCP clients get the document as a skill, or why not
-  (`GET /api/admin/skills`).
+- Editor: a Description field for every document and, for `type: skill`,
+  a line saying whether MCP clients get the document as a skill, or why
+  not (`GET /api/admin/skills`).
 - Documents with `type: skill` are read-only to MCP and the remote
   agent: no tool can create one, edit one, change a document's type to
   `skill`, or attach a file to one, even with write access on. Each

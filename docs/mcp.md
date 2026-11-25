@@ -266,8 +266,9 @@ files as base64 `blob`. Unknown skills, files and cursors are `-32602`.
 Results carry `ttlMs: 60000` and `cacheScope` `private` whenever they
 include a private skill.
 
-In the editor, setting Type to `skill` shows a "Skill description"
-field and whether the saved document is served, or why not.
+In the editor, the Description field edits `description`; for
+`type: skill` a line next to it says whether the saved document is
+served, or why not.
 `GET /api/admin/skills` (admin session) returns the same: the served
 skills with their names, and every skipped `type: skill` document with
 its reason.
